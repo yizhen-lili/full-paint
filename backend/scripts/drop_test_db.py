@@ -1,0 +1,25 @@
+"""Drop all test DB tables - run in a subprocess."""
+# ruff: noqa: I001
+import asyncio
+import sys
+
+sys.path.insert(0, ".")
+
+import auth.models  # noqa: E402, F401
+import users.models  # noqa: E402, F401
+from core.config import settings  # noqa: E402
+from core.database import Base  # noqa: E402
+from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
+from sqlalchemy.pool import NullPool  # noqa: E402
+
+
+async def main():
+    url = settings.test_database_url or settings.database_url
+    engine = create_async_engine(url, poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+    print("DB dropped OK")
+
+
+asyncio.run(main())

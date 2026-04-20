@@ -1,0 +1,26 @@
+repos:
+  # Ruff: lint + format (replaces flake8, isort, black)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.8
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # Bandit: security scan
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml, -q]
+        exclude: ^(tests|migrations|venv|scripts)/
+
+  # Pytest: run tests before every commit
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: venv/Scripts/python -m pytest tests/ -x -q --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
