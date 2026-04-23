@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin import service
-from admin.schemas.request import AdminUpdateUserRequest, IssueCouponsRequest
-from admin.schemas.response import AdminUserListResponse, AdminUserResponse, IssueCouponsResponse
+from admin.schemas.request import AdminUpdateUserRequest
+from admin.schemas.response import AdminUserListResponse, AdminUserResponse
 from core.database import get_db
 from dependencies.auth import require_admin
 
@@ -31,15 +31,6 @@ async def list_users(
         page_size=page_size,
     )
 
-
-@router.post("/admin/users/issue-coupons", response_model=IssueCouponsResponse)
-async def issue_coupons(
-    body: IssueCouponsRequest,
-    operator=Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    issued_count = await service.issue_coupons_stub(db, body.user_ids, body.coupon_config_id)
-    return IssueCouponsResponse(issued_count=issued_count)
 
 
 @router.get("/admin/users/{user_id}", response_model=AdminUserResponse)

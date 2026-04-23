@@ -312,20 +312,7 @@ async def test_update_user_password_no_digits(client: AsyncClient, db):
 # ── POST /admin/users/issue-coupons ──────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_issue_coupons_stub_admin(client: AsyncClient, db):
-    await _make_user(client, db, ADMIN_USER, role="admin")
-    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
-
-    res = await client.post(ISSUE_COUPONS_URL, json={
-        "user_ids": [str(uuid.uuid4())],
-        "coupon_config_id": str(uuid.uuid4()),
-    })
-    assert res.status_code == 200
-    assert res.json() == {"issued_count": 0}
-
-
-@pytest.mark.asyncio
-async def test_issue_coupons_stub_non_admin_forbidden(client: AsyncClient, db):
+async def test_issue_coupons_non_admin_forbidden(client: AsyncClient, db):
     await _make_user(client, db, CUSTOMER_USER)
     await _login(client, CUSTOMER_USER["email"], CUSTOMER_USER["password"])
 
@@ -337,7 +324,7 @@ async def test_issue_coupons_stub_non_admin_forbidden(client: AsyncClient, db):
 
 
 @pytest.mark.asyncio
-async def test_issue_coupons_stub_unauthenticated(client: AsyncClient, db):
+async def test_issue_coupons_unauthenticated(client: AsyncClient, db):
     res = await client.post(ISSUE_COUPONS_URL, json={
         "user_ids": [str(uuid.uuid4())],
         "coupon_config_id": str(uuid.uuid4()),

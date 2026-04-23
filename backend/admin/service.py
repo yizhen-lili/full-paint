@@ -80,11 +80,3 @@ async def update_user(
     await db.commit()
     await db.refresh(target)
     return target
-
-
-async def issue_coupons_stub(
-    db: AsyncSession,  # noqa: ARG001
-    user_ids: list[UUID],  # noqa: ARG001
-    coupon_config_id: UUID,  # noqa: ARG001
-) -> int:
-    return 0

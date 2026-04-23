@@ -7,7 +7,9 @@ sys.path.insert(0, ".")
 
 import auth.models  # noqa: E402, F401
 import color.models  # noqa: E402, F401
+import discount.models  # noqa: E402, F401
 import palette.models  # noqa: E402, F401
+import product.models  # noqa: E402, F401
 import production.models  # noqa: E402, F401
 import users.models  # noqa: E402, F401
 from core.config import settings  # noqa: E402

@@ -21,7 +21,3 @@ class AdminUserListResponse(BaseModel):
     total: int
     page: int
     page_size: int
-
-
-class IssueCouponsResponse(BaseModel):
-    issued_count: int

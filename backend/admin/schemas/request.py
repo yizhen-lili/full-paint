@@ -1,6 +1,5 @@
 import re
 from typing import Literal
-from uuid import UUID
 
 from pydantic import BaseModel, field_validator
 
@@ -34,8 +33,3 @@ class AdminUpdateUserRequest(BaseModel):
         if v is not None:
             return _validate_password(v)
         return v
-
-
-class IssueCouponsRequest(BaseModel):
-    user_ids: list[UUID]
-    coupon_config_id: UUID

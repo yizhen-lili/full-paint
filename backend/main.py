@@ -27,7 +27,9 @@ async def health():
 from admin.router import router as admin_router
 from auth.router import router as auth_router
 from color.router import router as color_router
+from discount.router import router as discount_router
 from palette.router import router as palette_router
+from product.router import router as product_router
 from production.router import router as production_router
 from upload.router import router as upload_router
 from users.router import router as users_router
@@ -39,3 +41,5 @@ app.include_router(production_router, prefix="/api/v1")
 app.include_router(upload_router, prefix="/api/v1")
 app.include_router(color_router, prefix="/api/v1")
 app.include_router(palette_router, prefix="/api/v1")
+app.include_router(product_router, prefix="/api/v1")
+app.include_router(discount_router, prefix="/api/v1")

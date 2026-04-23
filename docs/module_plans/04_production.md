@@ -3,6 +3,11 @@
 > 對照規格：`requirements/admin_production.md`、`schema.md`（images、production_jobs）、`api.md`（模組七、模組十九部分）
 > 撰寫日期：2026-04-20
 
+> **⚠️ Custom Requests 模組建立時必須補做：**
+> `production_jobs.custom_request_id` 目前為純 UUID（無 FK），
+> custom_requests 表建立後需在 custom_requests migration 補上：
+> `op.create_foreign_key(None, 'production_jobs', 'custom_requests', ['custom_request_id'], ['id'])`
+
 ---
 
 ## 一、要建立的檔案
