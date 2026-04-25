@@ -544,3 +544,304 @@ def _variant_with_job(variant: ProductVariant, job: ProductionJob | None) -> dic
         "created_at": variant.created_at,
         "job_spec": job_spec,
     }
+
+
+# ── Public (store-browse) endpoints ───────────────────────────────────────────
+
+
+_DIFFICULTY_ORDER = {
+    "beginner": 0,
+    "elementary": 1,
+    "intermediate": 2,
+    "advanced": 3,
+}
+
+
+def _enum_str(v) -> str:
+    return v.value if hasattr(v, "value") else str(v)
+
+
+def _parse_canvas_size(canvas_size: str) -> tuple[int, int]:
+    parts = canvas_size.lower().split("x")
+    if len(parts) != 2:
+        raise BadRequestError("canvas_size 格式應為 WxH（例如 30x40）")
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError as exc:
+        raise BadRequestError("canvas_size 必須為整數 WxH") from exc
+
+
+async def _public_product_brief(db: AsyncSession, product: Product) -> dict:
+    rows = (await db.execute(
+        select(ProductVariant, ProductionJob)
+        .join(ProductionJob, ProductVariant.production_job_id == ProductionJob.id)
+        .where(
+            ProductVariant.product_id == product.id,
+            ProductVariant.is_active.is_(True),
+        )
+    )).all()
+
+    if not rows:
+        prices = [Decimal("0")]
+        difficulties: list[str] = []
+    else:
+        prices = [v.price for v, _ in rows]
+        difficulties = [_enum_str(j.difficulty) for _, j in rows]
+
+    diff_min = min(difficulties, key=lambda d: _DIFFICULTY_ORDER.get(d, 0)) if difficulties else None
+    diff_max = max(difficulties, key=lambda d: _DIFFICULTY_ORDER.get(d, 0)) if difficulties else None
+
+    return {
+        "id": product.id,
+        "title": product.title,
+        "cover_image_url": product.cover_image_url,
+        "difficulty_range": [diff_min, diff_max] if diff_min else [],
+        "price_min": float(min(prices)),
+        "price_max": float(max(prices)),
+        "is_preorder": False,
+    }
+
+
+async def public_list_products(
+    db: AsyncSession,
+    difficulty: str | None,
+    detail: str | None,
+    canvas_size: str | None,
+    tag_id: UUID | None,
+    series_id: UUID | None,
+    sort: str,
+    page: int,
+    page_size: int,
+) -> dict:
+    query = select(Product).where(Product.status == ProductStatusEnum.on_sale)
+
+    # Always require at least one active variant — exclude "zombie" products
+    active_variant_pids = (
+        select(ProductVariant.product_id)
+        .join(ProductionJob, ProductVariant.production_job_id == ProductionJob.id)
+        .where(ProductVariant.is_active.is_(True))
+    )
+    if difficulty:
+        active_variant_pids = active_variant_pids.where(
+            ProductionJob.difficulty == difficulty
+        )
+    if detail:
+        active_variant_pids = active_variant_pids.where(
+            ProductionJob.detail == detail
+        )
+    if canvas_size:
+        w, h = _parse_canvas_size(canvas_size)
+        active_variant_pids = active_variant_pids.where(
+            ProductionJob.canvas_w_cm == w, ProductionJob.canvas_h_cm == h,
+        )
+    query = query.where(Product.id.in_(active_variant_pids))
+
+    if tag_id:
+        query = query.where(
+            Product.id.in_(
+                select(ProductTag.product_id).where(ProductTag.tag_id == tag_id)
+            )
+        )
+    if series_id:
+        query = query.where(Product.series_id == series_id)
+
+    count_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = count_result.scalar() or 0
+
+    if sort in ("price_asc", "price_desc"):
+        price_sub = (
+            select(
+                ProductVariant.product_id.label("pid"),
+                func.min(ProductVariant.price).label("min_price"),
+            )
+            .where(ProductVariant.is_active.is_(True))
+            .group_by(ProductVariant.product_id)
+            .subquery()
+        )
+        query = query.join(price_sub, Product.id == price_sub.c.pid, isouter=True)
+        if sort == "price_asc":
+            query = query.order_by(price_sub.c.min_price.asc())
+        else:
+            query = query.order_by(price_sub.c.min_price.desc())
+    else:
+        query = query.order_by(Product.created_at.desc())
+
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    products = (await db.execute(query)).scalars().all()
+
+    items = [await _public_product_brief(db, p) for p in products]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+async def public_search_products(
+    db: AsyncSession, q: str, page: int, page_size: int,
+) -> dict:
+    pattern = f"%{q}%"
+    tag_match = (
+        select(ProductTag.product_id)
+        .join(Tag, ProductTag.tag_id == Tag.id)
+        .where(Tag.name.ilike(pattern))
+    )
+    active_variant_pids = (
+        select(ProductVariant.product_id).where(ProductVariant.is_active.is_(True))
+    )
+    query = select(Product).where(
+        Product.status == ProductStatusEnum.on_sale,
+        Product.id.in_(active_variant_pids),
+        (
+            Product.title.ilike(pattern)
+            | Product.description.ilike(pattern)
+            | Product.id.in_(tag_match)
+        ),
+    )
+
+    count_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = count_result.scalar() or 0
+
+    products = (await db.execute(
+        query.order_by(Product.created_at.desc())
+        .offset((page - 1) * page_size).limit(page_size)
+    )).scalars().all()
+
+    items = [await _public_product_brief(db, p) for p in products]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+async def public_get_product(db: AsyncSession, product_id: UUID) -> dict:
+    result = await db.execute(
+        select(Product).where(
+            Product.id == product_id,
+            Product.status == ProductStatusEnum.on_sale,
+        )
+    )
+    product = result.scalar_one_or_none()
+    if product is None:
+        raise NotFoundError("商品不存在或未上架")
+
+    images_result = await db.execute(
+        select(ProductImage)
+        .where(ProductImage.product_id == product_id)
+        .order_by(ProductImage.sort_order)
+    )
+    images = list(images_result.scalars().all())
+
+    tag_rows = (await db.execute(
+        select(Tag).join(ProductTag, ProductTag.tag_id == Tag.id)
+        .where(ProductTag.product_id == product_id)
+    )).scalars().all()
+    tags = [{"id": t.id, "name": t.name} for t in tag_rows]
+
+    variant_rows = (await db.execute(
+        select(ProductVariant, ProductionJob)
+        .join(ProductionJob, ProductVariant.production_job_id == ProductionJob.id)
+        .where(
+            ProductVariant.product_id == product_id,
+            ProductVariant.is_active.is_(True),
+        )
+    )).all()
+    variants = [
+        {
+            "id": v.id,
+            "canvas_w_cm": float(j.canvas_w_cm),
+            "canvas_h_cm": float(j.canvas_h_cm),
+            "difficulty": _enum_str(j.difficulty),
+            "detail": _enum_str(j.detail),
+            "color_count": j.num_colors_used,
+            "price": float(v.price),
+            "is_active": v.is_active,
+            "is_preorder": False,
+            "filled_template_url": j.filled_template_url,
+        }
+        for v, j in variant_rows
+    ]
+
+    series_payload = None
+    if product.series_id:
+        s_result = await db.execute(
+            select(ProductSeries).where(ProductSeries.id == product.series_id)
+        )
+        series = s_result.scalar_one()
+        active_pids = (
+            select(ProductVariant.product_id).where(ProductVariant.is_active.is_(True))
+        )
+        siblings_rows = (await db.execute(
+            select(Product).where(
+                Product.series_id == series.id,
+                Product.status == ProductStatusEnum.on_sale,
+                Product.id != product.id,
+                Product.id.in_(active_pids),
+            ).order_by(Product.series_order.asc(), Product.created_at.asc())
+        )).scalars().all()
+        siblings = []
+        for sib in siblings_rows:
+            brief = await _public_product_brief(db, sib)
+            siblings.append({
+                "id": brief["id"],
+                "title": brief["title"],
+                "cover_image_url": brief["cover_image_url"],
+                "price_min": brief["price_min"],
+                "is_preorder": brief["is_preorder"],
+            })
+        series_payload = {
+            "id": series.id, "name": series.name, "products": siblings,
+        }
+
+    return {
+        "id": product.id,
+        "title": product.title,
+        "description": product.description,
+        "cover_image_url": product.cover_image_url,
+        "images": images,
+        "series": series_payload,
+        "tags": tags,
+        "variants": variants,
+    }
+
+
+async def public_related_products(db: AsyncSession, product_id: UUID) -> dict:
+    result = await db.execute(
+        select(Product).where(
+            Product.id == product_id, Product.status == ProductStatusEnum.on_sale,
+        )
+    )
+    product = result.scalar_one_or_none()
+    if product is None:
+        raise NotFoundError("商品不存在或未上架")
+
+    if product.series_id is None:
+        return {"series": None, "items": []}
+
+    series = (await db.execute(
+        select(ProductSeries).where(ProductSeries.id == product.series_id)
+    )).scalar_one()
+
+    active_pids = (
+        select(ProductVariant.product_id).where(ProductVariant.is_active.is_(True))
+    )
+    siblings = (await db.execute(
+        select(Product).where(
+            Product.series_id == product.series_id,
+            Product.status == ProductStatusEnum.on_sale,
+            Product.id != product_id,
+            Product.id.in_(active_pids),
+        ).order_by(Product.series_order.asc(), Product.created_at.asc())
+    )).scalars().all()
+
+    items = []
+    for sib in siblings:
+        brief = await _public_product_brief(db, sib)
+        items.append({
+            "id": brief["id"], "title": brief["title"],
+            "cover_image_url": brief["cover_image_url"],
+            "price_min": brief["price_min"],
+            "is_preorder": brief["is_preorder"],
+        })
+    return {
+        "series": {"id": series.id, "name": series.name},
+        "items": items,
+    }
+
+
+async def public_list_tags(db: AsyncSession) -> dict:
+    rows = (await db.execute(select(Tag).order_by(Tag.name))).scalars().all()
+    return {"items": [{"id": t.id, "name": t.name} for t in rows]}

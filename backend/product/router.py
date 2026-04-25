@@ -24,6 +24,10 @@ from product.schemas.response import (
     ProductImageListResponse,
     ProductImageResponse,
     ProductListResponse,
+    PublicProductDetailResponse,
+    PublicProductListResponse,
+    PublicTagListResponse,
+    RelatedProductsResponse,
     SeriesListResponse,
     SeriesResponse,
     TagListResponse,
@@ -32,6 +36,70 @@ from product.schemas.response import (
 )
 
 router = APIRouter(tags=["Admin - Products"])
+
+
+# ── Public store-browse endpoints ─────────────────────────────────────────────
+
+
+@router.get("/products", response_model=PublicProductListResponse, tags=["Store - Browse"])
+async def store_list_products(
+    difficulty: Literal["beginner", "elementary", "intermediate", "advanced"] | None = Query(default=None),
+    detail: Literal["rough", "standard", "detailed", "premium"] | None = Query(default=None),
+    canvas_size: str | None = Query(default=None, description="WxH e.g. 30x40"),
+    tag_id: UUID | None = Query(default=None),
+    series_id: UUID | None = Query(default=None),
+    sort: Literal["latest", "popular", "price_asc", "price_desc"] = Query(default="latest"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=24, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.public_list_products(
+        db, difficulty, detail, canvas_size, tag_id, series_id, sort, page, page_size,
+    )
+
+
+@router.get("/products/search", response_model=PublicProductListResponse, tags=["Store - Browse"])
+async def store_search_products(
+    q: str = Query(..., min_length=1),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=24, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.public_search_products(db, q, page, page_size)
+
+
+@router.get(
+    "/products/{product_id}",
+    response_model=PublicProductDetailResponse,
+    tags=["Store - Browse"],
+)
+async def store_get_product(
+    product_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.public_get_product(db, product_id)
+
+
+@router.get(
+    "/products/{product_id}/related",
+    response_model=RelatedProductsResponse,
+    tags=["Store - Browse"],
+)
+async def store_related_products(
+    product_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.public_related_products(db, product_id)
+
+
+@router.get("/tags", response_model=PublicTagListResponse, tags=["Store - Browse"])
+async def store_list_tags(
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.public_list_tags(db)
+
+
+# ── Admin endpoints (unchanged) ────────────────────────────────────────────────
 
 
 # ── Series ────────────────────────────────────────────────────────────────────

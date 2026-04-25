@@ -125,3 +125,80 @@ class AvailableJobResponse(BaseModel):
 
 class AvailableJobListResponse(BaseModel):
     items: list[AvailableJobResponse]
+
+
+# ── Public (store-browse) responses ────────────────────────────────────────────
+
+
+class PublicTagBrief(BaseModel):
+    id: UUID
+    name: str
+
+
+class PublicTagListResponse(BaseModel):
+    items: list[PublicTagBrief]
+
+
+class PublicVariantResponse(BaseModel):
+    id: UUID
+    canvas_w_cm: float
+    canvas_h_cm: float
+    difficulty: str
+    detail: str
+    color_count: int | None
+    price: float
+    is_active: bool
+    is_preorder: bool
+    filled_template_url: str | None
+
+
+class PublicProductBrief(BaseModel):
+    id: UUID
+    title: str
+    cover_image_url: str
+    difficulty_range: list[str]
+    price_min: float
+    price_max: float
+    is_preorder: bool
+
+
+class PublicProductListResponse(BaseModel):
+    items: list[PublicProductBrief]
+    total: int
+    page: int
+    page_size: int
+
+
+class PublicSeriesBrief(BaseModel):
+    id: UUID
+    name: str
+
+
+class PublicSeriesProductBrief(BaseModel):
+    id: UUID
+    title: str
+    cover_image_url: str
+    price_min: float
+    is_preorder: bool
+
+
+class PublicSeriesWithProducts(BaseModel):
+    id: UUID
+    name: str
+    products: list[PublicSeriesProductBrief]
+
+
+class PublicProductDetailResponse(BaseModel):
+    id: UUID
+    title: str
+    description: str | None
+    cover_image_url: str
+    images: list[ProductImageResponse]
+    series: PublicSeriesWithProducts | None
+    tags: list[PublicTagBrief]
+    variants: list[PublicVariantResponse]
+
+
+class RelatedProductsResponse(BaseModel):
+    series: PublicSeriesBrief | None
+    items: list[PublicSeriesProductBrief]
