@@ -35,6 +35,7 @@ from orders.router import router as orders_router
 from palette.router import router as palette_router
 from product.router import router as product_router
 from production.router import router as production_router
+from reports.router import router as reports_router
 from upload.router import router as upload_router
 from users.router import router as users_router
 
@@ -51,3 +52,4 @@ app.include_router(orders_router, prefix="/api/v1")
 app.include_router(custom_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(content_router, prefix="/api/v1")
+app.include_router(reports_router, prefix="/api/v1")
