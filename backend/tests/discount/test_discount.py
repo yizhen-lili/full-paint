@@ -520,7 +520,12 @@ async def test_issue_manual_coupons(client: AsyncClient, db):
         json={"user_ids": [str(user.id)], "coupon_config_id": str(config.id)},
     )
     assert res.status_code == 200
-    assert res.json()["issued"] == 1
+    body = res.json()
+    assert body["issued_count"] == 1
+    assert body["coupon_type"] == "manual"
+    assert body["discount_type"] in ("percentage", "fixed")
+    assert body["coupon_config_id"] == str(config.id)
+    assert body["user_ids"] == [str(user.id)]
 
     result = await db.execute(
         select(UserCoupon).where(UserCoupon.user_id == user.id)

@@ -231,20 +231,44 @@ class AdminOrderListResponse(BaseModel):
 
 class OrderStatusUpdateResponse(BaseModel):
     id: UUID
+    order_number: str
     status: str
-
-
-class ProductionProgressUpdateResponse(BaseModel):
-    id: UUID
-    status: str
+    paid_at: datetime | None
+    completed_at: datetime | None
+    refunded_at: datetime | None
+    admin_notes: str | None
+    cancel_reason_code: str | None
+    updated_at: datetime
 
 
 class RefundResponse(BaseModel):
     id: UUID
+    order_number: str
     status: str
     refund_amount: float
+    refunded_at: datetime | None
+    cancel_reason_note: str | None
+    returned_item_count: int
 
 
 class AdminNotesUpdateResponse(BaseModel):
     id: UUID
     admin_notes: str | None
+    updated_at: datetime
+
+
+class CancelOrderResponse(BaseModel):
+    id: UUID
+    order_number: str
+    status: str
+    cancel_reason_code: str | None
+    cancel_reason_note: str | None
+    refund_amount: float | None
+    refunded_at: datetime | None
+
+
+class ConfirmReceivedResponse(BaseModel):
+    id: UUID
+    order_number: str
+    status: str
+    completed_at: datetime | None

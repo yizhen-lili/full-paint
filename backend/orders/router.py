@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -25,17 +26,19 @@ from orders.schemas.response import (
     AdminNotesUpdateResponse,
     AdminOrderDetailResponse,
     AdminOrderListResponse,
+    CancelOrderResponse,
     CartItemMutationResponse,
     CartResponse,
     CheckoutPreviewResponse,
+    ConfirmReceivedResponse,
     CreateOrderResponse,
     CreateShipmentResponse,
     FlagPaymentSubmissionResponse,
-    OkResponse,
     OrderDetailResponse,
     OrderListResponse,
     OrderStatusUpdateResponse,
-    ProductionProgressUpdateResponse,
+    PaymentSubmissionResponse,
+    ProductionProgressResponse,
     RefundResponse,
 )
 
@@ -136,40 +139,63 @@ async def get_order(
     return await service.get_order_detail(db, current_user.id, order_id)
 
 
-@router.post("/orders/{order_id}/payment-submission", status_code=200, response_model=OkResponse)
+@router.post(
+    "/orders/{order_id}/payment-submission",
+    status_code=201,
+    response_model=PaymentSubmissionResponse,
+)
 async def submit_payment(
     order_id: UUID,
     body: PaymentSubmissionRequest,
     current_user=Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    await service.submit_payment(
+    sub = await service.submit_payment(
         db, current_user.id, order_id,
         body.transfer_amount, body.transfer_date, body.transfer_time,
         body.account_last5, body.notes,
     )
-    return OkResponse()
+    return sub
 
 
-@router.post("/orders/{order_id}/confirm-received", status_code=200, response_model=OkResponse)
+@router.post(
+    "/orders/{order_id}/confirm-received",
+    status_code=200,
+    response_model=ConfirmReceivedResponse,
+)
 async def confirm_received(
     order_id: UUID,
     current_user=Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    await service.confirm_received(db, current_user.id, order_id)
-    return OkResponse()
+    order = await service.confirm_received(db, current_user.id, order_id)
+    return ConfirmReceivedResponse(
+        id=order.id,
+        order_number=order.order_number,
+        status=order.status,
+        completed_at=order.completed_at,
+    )
 
 
-@router.post("/orders/{order_id}/cancel", status_code=200, response_model=OkResponse)
+@router.post(
+    "/orders/{order_id}/cancel", status_code=200, response_model=CancelOrderResponse
+)
 async def cancel_order(
     order_id: UUID,
     body: CancelOrderRequest,
     current_user=Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    await service.cancel_order(db, current_user.id, order_id, body.cancel_reason)
-    return OkResponse()
+    order = await service.cancel_order(db, current_user.id, order_id, body.cancel_reason)
+    return CancelOrderResponse(
+        id=order.id,
+        order_number=order.order_number,
+        status=order.status,
+        cancel_reason_code=order.cancel_reason_code,
+        cancel_reason_note=order.cancel_reason_note,
+        refund_amount=float(order.refund_amount) if order.refund_amount else None,
+        refunded_at=order.refunded_at,
+    )
 
 
 @router.post("/orders/{order_id}/confirm-refund", status_code=204, response_model=None)
@@ -219,7 +245,17 @@ async def admin_update_status(
     order = await service.admin_update_order_status(
         db, order_id, body.status, body.admin_notes
     )
-    return OrderStatusUpdateResponse(id=order.id, status=order.status)
+    return OrderStatusUpdateResponse(
+        id=order.id,
+        order_number=order.order_number,
+        status=order.status,
+        paid_at=order.paid_at,
+        completed_at=order.completed_at,
+        refunded_at=order.refunded_at,
+        admin_notes=order.admin_notes,
+        cancel_reason_code=order.cancel_reason_code,
+        updated_at=datetime.now(UTC),
+    )
 
 
 @router.post(
@@ -241,7 +277,7 @@ async def create_shipment(
 
 @router.patch(
     "/admin/orders/{order_id}/production-progress/{progress_id}",
-    response_model=ProductionProgressUpdateResponse,
+    response_model=ProductionProgressResponse,
 )
 async def update_production_progress(
     order_id: UUID,
@@ -253,7 +289,7 @@ async def update_production_progress(
     progress = await service.update_production_progress(
         db, order_id, progress_id, body.status, body.notes
     )
-    return ProductionProgressUpdateResponse(id=progress.id, status=progress.status)
+    return progress
 
 
 @router.post("/admin/orders/{order_id}/refund", response_model=RefundResponse)
@@ -267,7 +303,13 @@ async def process_refund(
         db, order_id, body.refund_amount, body.returned_item_ids, body.cancel_reason
     )
     return RefundResponse(
-        id=order.id, status=order.status, refund_amount=float(order.refund_amount)
+        id=order.id,
+        order_number=order.order_number,
+        status=order.status,
+        refund_amount=float(order.refund_amount) if order.refund_amount else 0.0,
+        refunded_at=order.refunded_at,
+        cancel_reason_note=order.cancel_reason_note,
+        returned_item_count=getattr(order, "_returned_item_count", 0),
     )
 
 
@@ -295,7 +337,11 @@ async def update_admin_notes(
     db: AsyncSession = Depends(get_db),
 ):
     order = await service.update_admin_notes(db, order_id, body.admin_notes)
-    return AdminNotesUpdateResponse(id=order.id, admin_notes=order.admin_notes)
+    return AdminNotesUpdateResponse(
+        id=order.id,
+        admin_notes=order.admin_notes,
+        updated_at=datetime.now(UTC),
+    )
 
 
 # ── ECpay webhook ─────────────────────────────────────────────────────────────

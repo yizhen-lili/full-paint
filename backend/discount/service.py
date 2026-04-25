@@ -580,7 +580,7 @@ async def list_admin_user_coupons(
 
 async def issue_manual_coupons(
     db: AsyncSession, user_ids: list[UUID], config_id: UUID
-) -> int:
+) -> dict:
     result = await db.execute(select(CouponConfig).where(CouponConfig.id == config_id))
     config = result.scalar_one_or_none()
     if config is None:
@@ -607,4 +607,20 @@ async def issue_manual_coupons(
         db.add(coupon)
 
     await db.commit()
-    return len(user_ids)
+    coupon_type_str = (
+        config.coupon_type.value
+        if hasattr(config.coupon_type, "value") else str(config.coupon_type)
+    )
+    discount_type_str = (
+        config.discount_type.value
+        if hasattr(config.discount_type, "value") else str(config.discount_type)
+    )
+    return {
+        "issued_count": len(user_ids),
+        "coupon_config_id": config.id,
+        "coupon_type": coupon_type_str,
+        "discount_type": discount_type_str,
+        "discount_value": float(config.discount_value),
+        "expires_at": expires_at,
+        "user_ids": user_ids,
+    }

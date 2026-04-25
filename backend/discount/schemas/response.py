@@ -102,7 +102,13 @@ class AdminUserCouponListResponse(BaseModel):
 
 
 class IssueCouponsResponse(BaseModel):
-    issued: int
+    issued_count: int
+    coupon_config_id: UUID
+    coupon_type: str
+    discount_type: str
+    discount_value: float
+    expires_at: datetime | None
+    user_ids: list[UUID]
 
 
 class DiscountCalculation(BaseModel):

@@ -167,5 +167,4 @@ async def issue_coupons(
     _: None = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    issued = await service.issue_manual_coupons(db, body.user_ids, body.coupon_config_id)
-    return {"issued": issued}
+    return await service.issue_manual_coupons(db, body.user_ids, body.coupon_config_id)

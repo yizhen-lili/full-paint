@@ -527,7 +527,12 @@ async def test_submit_payment(client, db):
         "transfer_time": "14:30:00",
         "account_last5": "12345",
     })
-    assert res.status_code == 200
+    assert res.status_code == 201
+    body = res.json()
+    assert body["transfer_amount"] == 420.0
+    assert body["account_last5"] == "12345"
+    assert body["is_flagged"] is False
+    assert "id" in body and "created_at" in body
 
     notif_result = await db.execute(
         select(AdminNotification).where(AdminNotification.type == "payment_submitted")
@@ -930,7 +935,10 @@ async def test_update_production_progress_manufacturing(client, db):
         json={"status": "manufacturing"},
     )
     assert res.status_code == 200
-    assert res.json()["status"] == "manufacturing"
+    body = res.json()
+    assert body["status"] == "manufacturing"
+    assert body["order_item_id"] == str(progress.order_item_id)
+    assert "updated_at" in body
 
 
 @pytest.mark.asyncio

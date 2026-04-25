@@ -762,7 +762,7 @@ async def submit_payment(
     transfer_time,
     account_last5: str,
     notes: str | None,
-) -> None:
+) -> PaymentSubmission:
     result = await db.execute(
         select(Order).where(Order.id == order_id, Order.user_id == user_id)
         .with_for_update()
@@ -793,9 +793,11 @@ async def submit_payment(
         requires_action=True,
     )
     await db.commit()
+    await db.refresh(sub)
+    return sub
 
 
-async def confirm_received(db: AsyncSession, user_id: UUID, order_id: UUID) -> None:
+async def confirm_received(db: AsyncSession, user_id: UUID, order_id: UUID) -> Order:
     result = await db.execute(
         select(Order).where(Order.id == order_id, Order.user_id == user_id)
         .with_for_update()
@@ -824,11 +826,13 @@ async def confirm_received(db: AsyncSession, user_id: UUID, order_id: UUID) -> N
         reference_id=order_id,
     )
     await db.commit()
+    await db.refresh(order)
+    return order
 
 
 async def cancel_order(
     db: AsyncSession, user_id: UUID, order_id: UUID, cancel_reason: str | None = None
-) -> None:
+) -> Order:
     result = await db.execute(
         select(Order).where(Order.id == order_id, Order.user_id == user_id)
         .with_for_update()
@@ -853,9 +857,11 @@ async def cancel_order(
         reference_id=order_id,
     )
     await db.commit()
+    await db.refresh(order)
+    return order
 
 
-async def confirm_refund(db: AsyncSession, user_id: UUID, order_id: UUID) -> None:
+async def confirm_refund(db: AsyncSession, user_id: UUID, order_id: UUID) -> Order:
     result = await db.execute(
         select(Order).where(Order.id == order_id, Order.user_id == user_id)
         .with_for_update()
@@ -870,6 +876,8 @@ async def confirm_refund(db: AsyncSession, user_id: UUID, order_id: UUID) -> Non
 
     order.refund_confirmed_at = datetime.now(UTC)
     await db.commit()
+    await db.refresh(order)
+    return order
 
 
 # ── admin order queries ───────────────────────────────────────────────────────
@@ -1239,6 +1247,7 @@ async def process_refund(
 
     await db.commit()
     await db.refresh(order)
+    order._returned_item_count = len(valid_ids)  # transient hint for router
     return order
 
 
