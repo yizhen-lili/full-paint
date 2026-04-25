@@ -35,8 +35,21 @@
 | 顏料塗佈係數 | paint_ml_per_cm2 | 每 cm² 所需顏料 ml 數（需實測後填入，預設 0.05）|
 | 顏料最低配給量 | paint_min_ml | 每色最低配給 ml 數（預設 3）|
 | 顏料緩衝係數 | paint_buffer_ratio | 安全緩衝倍數（預設 1.3，即多 30%）|
+| 客製服務費率 | custom_photo_price_multiplier | 客製照片售價相對於目錄公式的倍數（預設 2.0）|
+| 付款絕對期限（小時）| payment_absolute_deadline_hours | 訂單從建立時起算的付款最終期限，防止反覆 flag 長期佔用庫存（預設 48）|
 
----
+## 6.2.1 畫布尺寸管理
+
+獨立於系統設定，以表格介面管理 `canvas_sizes`。
+
+| 操作 | 說明 |
+|------|------|
+| 新增尺寸 | 填寫寬、高、顯示名稱、排序 |
+| 編輯尺寸 | 修改顯示名稱、排序；**不可修改寬高**（會破壞既有 production_jobs / orders 的語意）|
+| 停用尺寸 | 設 is_active=false，該尺寸不在新商品/客製表單中出現，但不影響已建立的 production_jobs 和 orders |
+| 查看使用情況 | 顯示每個尺寸有幾筆 production_jobs、幾筆上架 variants |
+
+> 新增尺寸時**需同步更新** pricing_formula 的基礎成本表（印製費 + 框架費 + 固定費），否則該尺寸的商品無法計算定價。這部分由管理員手動維護。
 
 ## 6.3 客製服務報價設定
 

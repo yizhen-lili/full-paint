@@ -59,7 +59,7 @@ python scripts/create_admin.py --email admin@paintlearn.com --password <password
 |------|------|
 | 註冊 | 填寫 name / email / password，即時格式驗證；送出後寄驗證信，點連結完成驗證後帳號啟用 |
 | 登入 | email + 密碼驗證；未驗證 email 的帳號無法登入 |
-| 修改個人資料 | 除 role 以外都可修改（name、密碼、性別、生日）；**Email 修改需重新驗證**：送出時後端立即檢查新 email 是否已存在於 `users.email` 或 `users.pending_email`，有衝突直接回錯誤不發信；通過檢查後新 email 暫存於 `pending_email`，系統發驗證信，點連結後正式更新 `email` 欄位，驗證前舊 email 仍可登入 |
+| 修改個人資料 | 除 role 以外都可修改（name、密碼、性別、生日）；**Email 修改需重新驗證**：送出時後端立即檢查新 email 是否已存在於 `users.email` 或 `users.pending_email`，有衝突直接回錯誤不發信；通過檢查後新 email 暫存於 `pending_email`，系統發驗證信，點連結後正式更新 `email` 欄位。**驗證前舊 email 仍可登入**；**驗證完成當下舊 email 立即失效，不可再登入** |
 | 忘記密碼 | 填寫 email → 系統發送驗證信 → 點連結重設密碼 |
 
 ---
@@ -143,7 +143,7 @@ python scripts/create_admin.py --email admin@paintlearn.com --password <password
 | used_at | 使用時間（nullable，驗證後填入，token 作廢）|
 | created_at | 建立時間 |
 
-> `email_change` 類型驗證成功後，將 `users.pending_email` 寫入 `users.email` 並清空 `pending_email`。不觸發 `new_user` 歡迎券。
+> `email_change` 類型驗證成功後，將 `users.pending_email` 寫入 `users.email` 並清空 `pending_email`。不觸發 `new_user` 歡迎券。**舊 email 在驗證完成的同一 transaction 內立即失效,後續所有登入與 JWT 驗證皆以新 email 為準。**
 
 > `signup` 類型驗證成功後設定 `users.is_email_verified = true`，並觸發 `new_user` 歡迎券發放。
 

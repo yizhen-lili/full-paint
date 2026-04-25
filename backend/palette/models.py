@@ -2,7 +2,6 @@ import uuid
 from enum import StrEnum
 
 from sqlalchemy import (
-    ARRAY,
     TIMESTAMP,
     Column,
     Enum,
@@ -12,7 +11,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from core.database import Base
 
@@ -31,7 +30,7 @@ class PaletteColorMapping(Base):
         UUID(as_uuid=True), ForeignKey("production_jobs.id"), nullable=False
     )
     template_id = Column(Integer, nullable=False)
-    algorithm_rgb = Column(ARRAY(Integer), nullable=False)
+    algorithm_rgb = Column(JSONB, nullable=False)
     physical_color_id = Column(
         UUID(as_uuid=True), ForeignKey("physical_colors.id"), nullable=False
     )

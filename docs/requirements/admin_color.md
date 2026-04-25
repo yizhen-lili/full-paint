@@ -25,6 +25,13 @@
 
 **進貨操作流程**
 
+**輸入單位：統一為 ml**
+
+初期管理員進貨時，後台輸入 `stock_ml` 的新增量（ml 為單位），管理員自行依實際購買的顏料規格換算。
+
+- 範例：購買 5 罐 × 30 ml → 輸入 150
+- 未來視需求可擴充「支數 × 每支 ml」的輸入介面，後端仍儲存為 ml
+
 管理員在色庫頁面找到色號 → 點「更新庫存」→ 輸入新增量（ml）→ 確認。
 系統執行：
 1. `stock_ml` 增加輸入量
@@ -153,7 +160,7 @@
 | name | 顏色名稱（如 `SKIN TONE`） |
 | color_family | 色系 |
 | brand | 品牌 / 來源（之後補充） |
-| rgb | RGB 近似值 [R, G, B] |
+| rgb | RGB 近似值，JSONB 陣列格式 `[R, G, B]`，例如 `[255, 165, 0]` |
 | stock_ml | 庫存量（單位：ml）|
 | is_active | 是否啟用 |
 | created_at | 建立時間 |
@@ -166,7 +173,7 @@
 | id | 主鍵 |
 | production_job_id | 關聯的製作記錄 |
 | template_id | 調色盤色號（1, 2, 3...） |
-| algorithm_rgb | 演算法產出的 RGB |
+| algorithm_rgb | 演算法產出的 RGB（JSONB 陣列 `[R, G, B]`）|
 | physical_color_id | 對應的實體色 id |
 | required_ml | 此規格每套所需顏料量（ml，顏色對應完成後計算儲存）|
 | mapped_by | 人工指定 / 系統預設 |
@@ -214,14 +221,15 @@ stock_ml 在下單時已扣減，付款確認不再執行扣減動作。
 
 **庫存回補（取消 / 逾期 / 退款）**
 
-以下情況系統一律回補 fulfilled_qty 對應的 stock_ml：
+以下情況系統回補 stock_ml：
 
-| 情境 | 觸發條件 |
-|------|---------|
-| 逾期未付 | status → `payment_expired`（Celery Beat 自動） |
-| 客戶取消 | status → `cancelled`（付款前，客戶主動） |
-| 管理員取消 | status → `cancelled`（管理員操作） |
-| 退款完成 | status → `refunded` |
+| 情境 | 觸發條件 | 回補範圍 |
+|------|---------|---------|
+| 逾期未付 | status → `payment_expired`（Celery Beat 自動）| 所有 order_items 的 fulfilled_qty |
+| 客戶取消 | status → `cancelled`（付款前，客戶主動）| 所有 order_items 的 fulfilled_qty |
+| 管理員取消 | status → `cancelled`（管理員操作）| 所有 order_items 的 fulfilled_qty |
+| 退款完成（全額）| status → `refunded` | 所有 order_items 的 fulfilled_qty |
+| 退款完成（部分）| status → `partially_refunded` | **僅 is_returned = true** 的 order_items |
 
 ```
 回補量 = required_ml × order_item.fulfilled_qty（當初扣減的量）
@@ -229,3 +237,28 @@ stock_ml 在下單時已扣減，付款確認不再執行扣減動作。
 
 - `preorder_qty` 若尚未扣減（庫存還沒補齊），不需回補
 - 回補後 `stock_ml` 增加，可能觸發預購等待訂單的庫存補齊通知
+
+**變體可供件數計算**
+
+前台商品頁「是否有現貨」、結帳「庫存拆單」都依此規則計算：
+
+```
+可供件數(variant) = min(
+  floor(phys.stock_ml / mapping.required_ml)
+  for each mapping in variant.production_job.palette_color_mappings
+)
+```
+
+**說明：**
+- 由於 `stock_ml` 在訂單建立（pending_payment）時已扣減，此公式讀到的值**已排除所有進行中訂單佔用的量**，等同「當下真正可用庫存」
+- 因此不需要額外查詢 orders 表扣除已佔用量
+- 若任一對應實體色 is_active=false（停用）→ 視同庫存 0，該變體一律標示預購
+
+**前台商品狀態顯示：**
+- `可供件數 > 0` → 顯示「現貨」
+- `可供件數 = 0` → 顯示「預購」
+- 所有對應實體色 is_active=false → 顯示「預購」
+
+**結帳庫存拆單：**
+- 客戶下單 quantity，若 quantity ≤ 可供件數 → fulfilled_qty = quantity，preorder_qty = 0
+- 若 quantity > 可供件數 → fulfilled_qty = 可供件數，preorder_qty = quantity - 可供件數

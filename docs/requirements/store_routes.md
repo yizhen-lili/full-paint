@@ -16,7 +16,7 @@
 | `/custom` | 客製化服務頁 | 案例展示 + 申請表單入口 |
 | `/custom/requests` | 客製申請列表 | 需登入 |
 | `/custom/requests/:id` | 客製申請詳情 | 訊息對話、報價確認 |
-| `/custom/quote/:token` | 報價確認頁 | 需登入，token 驗證 |
+| `/custom/quote/:token` | 報價確認頁 | **不需登入**（token 本身為認證憑證）；token 過期後改為強制登入並導向 `/custom/requests/:id` |
 | `/profile` | 個人資料 | 需登入 |
 | `/profile/shipping` | 收件資料管理 | 需登入 |
 | `/profile/coupons` | 折扣券錢包 | 需登入 |

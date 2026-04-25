@@ -8,6 +8,8 @@ sys.path.insert(0, ".")
 import auth.models  # noqa: E402, F401
 import color.models  # noqa: E402, F401
 import discount.models  # noqa: E402, F401
+import notifications.models  # noqa: E402, F401
+import orders.models  # noqa: E402, F401
 import palette.models  # noqa: E402, F401
 import product.models  # noqa: E402, F401
 import production.models  # noqa: E402, F401
@@ -19,11 +21,15 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 
 
 async def main():
+    from sqlalchemy import text  # noqa: E402
+
     url = settings.test_database_url or settings.database_url
     engine = create_async_engine(url, poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP SEQUENCE IF EXISTS order_number_seq"))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("CREATE SEQUENCE IF NOT EXISTS order_number_seq START 1"))
     await engine.dispose()
     print("DB reset OK")
 

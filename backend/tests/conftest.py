@@ -11,6 +11,8 @@ from sqlalchemy.pool import NullPool
 import auth.models  # noqa: F401
 import color.models  # noqa: F401
 import discount.models  # noqa: F401
+import notifications.models  # noqa: F401
+import orders.models  # noqa: F401
 import palette.models  # noqa: F401
 import product.models  # noqa: F401
 import production.models  # noqa: F401

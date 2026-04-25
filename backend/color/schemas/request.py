@@ -1,25 +1,21 @@
 from pydantic import BaseModel, field_validator
 
 
-class RgbValue(BaseModel):
-    rgb_r: int
-    rgb_g: int
-    rgb_b: int
-
-    @field_validator("rgb_r", "rgb_g", "rgb_b")
-    @classmethod
-    def validate_channel(cls, v: int) -> int:
-        if not (0 <= v <= 255):
-            raise ValueError("RGB 各值必須在 0 ~ 255 之間")
-        return v
-
-
 class CreateColorRequest(BaseModel):
     code: str
     name: str
     color_family: str | None = None
     brand: str | None = None
-    rgb: RgbValue
+    rgb: list[int]
+
+    @field_validator("rgb")
+    @classmethod
+    def validate_rgb(cls, v: list[int]) -> list[int]:
+        if len(v) != 3:
+            raise ValueError("rgb 必須為 3 個元素的陣列 [R, G, B]")
+        if not all(0 <= c <= 255 for c in v):
+            raise ValueError("RGB 各值必須在 0 ~ 255 之間")
+        return v
     stock_ml: float = 0.0
 
     @field_validator("code", "name")

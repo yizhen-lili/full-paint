@@ -184,7 +184,7 @@ async def register(...):
 
 ---
 
-## 7. 命名規範
+## 8. 命名規範
 
 | 項目 | 風格 | 範例 |
 |------|------|------|
@@ -192,12 +192,12 @@ async def register(...):
 | Class | PascalCase | `OrderService` |
 | 函式 / 變數 | snake_case | `get_order_by_id` |
 | 常數 | UPPER_SNAKE_CASE | `JWT_ALGORITHM` |
-| API route | kebab-case | `/admin/coupon-configs` |
+| API route | kebab-case | `/admin/coupon-configs`、`/admin/custom-requests` |
 | DB 欄位 | snake_case | `payment_deadline` |
 
 ---
 
-## 8. 測試
+## 9. 測試
 
 - **框架**：pytest + httpx `AsyncClient`
 - **策略**：Integration test 為主，直接打測試資料庫，不 mock DB
@@ -210,7 +210,7 @@ async def register(...):
 
 ---
 
-## 9. 分頁回應格式
+## 10. 分頁回應格式
 
 所有列表 API 統一格式：
 
@@ -225,7 +225,7 @@ async def register(...):
 
 ---
 
-## 10. JWT 認證
+## 11. JWT 認證
 
 - Token 存於 `httpOnly cookie`（`access_token`）
 - Payload：`{ user_id, role, exp }`

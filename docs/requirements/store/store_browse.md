@@ -67,6 +67,7 @@
 
 - 若商品屬於某系列，顯示「同系列商品」橫列
 - 點選可切換至同系列其他商品
+- **排序**：依 `products.series_order` ASC；相同時依 created_at ASC
 
 ### 規格選擇
 

@@ -39,7 +39,7 @@ COLOR_A = {
     "name": "SKIN",
     "color_family": "膚色系",
     "brand": None,
-    "rgb": {"rgb_r": 247, "rgb_g": 167, "rgb_b": 132},
+    "rgb": [247, 167, 132],
     "stock_ml": 500.0,
 }
 
@@ -48,7 +48,7 @@ COLOR_B = {
     "name": "BLUE",
     "color_family": "藍色系",
     "brand": None,
-    "rgb": {"rgb_r": 100, "rgb_g": 50, "rgb_b": 200},
+    "rgb": [100, 50, 200],
     "stock_ml": 300.0,
 }
 
@@ -135,7 +135,7 @@ async def test_get_mappings_auto_creates(client: AsyncClient, db):
     assert len(data["mappings"]) == len(PALETTE_JSON)
     first = data["mappings"][0]
     assert first["mapped_by"] == "system"
-    assert "rgb_r" in first["algorithm_rgb"]
+    assert isinstance(first["algorithm_rgb"], list) and len(first["algorithm_rgb"]) == 3
     assert "id" in first["physical_color"]
 
 

@@ -1,10 +1,13 @@
 """
 Run all quality gates for the backend.
 Called by Claude Code hooks after editing backend source files.
-Also callable standalone: python scripts/quality_check.py
+Also callable standalone: python scripts/quality_check.py [module]
 
-When all gates pass, creates scripts/.needs_review marker.
-The PreToolUse hook blocks Edit/Write until /reviewer clears this marker.
+  python scripts/quality_check.py          # full suite (all modules)
+  python scripts/quality_check.py orders   # fast mode: only tests/orders/
+
+Gate 4 in fast mode runs only the specified module's tests.
+Use full mode before calling /reviewer.
 """
 import json
 import subprocess
@@ -39,6 +42,12 @@ def is_backend_source_file(path: str) -> bool:
 
 
 def main() -> None:
+    # Parse optional module argument (e.g. "orders", "users")
+    module = None
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if args:
+        module = args[0]
+
     # When called by hook: read stdin to check if the edited file is a backend source
     if not sys.stdin.isatty():
         try:
@@ -49,7 +58,16 @@ def main() -> None:
         except (json.JSONDecodeError, KeyError):
             pass  # standalone call or unexpected format, run checks anyway
 
-    print("\nPaintLearn Backend Quality Gates\n")
+    if module:
+        print(f"\nPaintLearn Backend Quality Gates  [fast mode: tests/{module}/]\n")
+        pytest_cmd = (
+            f"venv\\Scripts\\python -m pytest tests/{module}/ -x -q --tb=short"
+        )
+        pytest_label = f"Gate 4 - Pytest (tests/{module}/)"
+    else:
+        print("\nPaintLearn Backend Quality Gates\n")
+        pytest_cmd = "venv\\Scripts\\python -m pytest tests/ -x -q --tb=short"
+        pytest_label = "Gate 4 - Pytest (all tests)"
 
     checks = [
         (
@@ -64,10 +82,7 @@ def main() -> None:
             "venv\\Scripts\\python scripts\\static_review.py",
             "Gate 3 - Static review (project rules)",
         ),
-        (
-            "venv\\Scripts\\python -m pytest tests/ -x -q --tb=short",
-            "Gate 4 - Pytest (all tests)",
-        ),
+        (pytest_cmd, pytest_label),
     ]
 
     for cmd, label in checks:
@@ -76,7 +91,18 @@ def main() -> None:
             print("Stopping -- fix the above failure before proceeding.\n")
             sys.exit(1)
 
-    # Create marker — PreToolUse hook will block Edit/Write until reviewer clears it
+    if module:
+        # Fast mode: don't block for reviewer yet, remind to run full suite before reviewer
+        print("=" * 50)
+        print(f"Fast-mode gates passed (tests/{module}/ only).")
+        print("=" * 50)
+        print()
+        print("NEXT: run full suite before /reviewer:")
+        print("  python scripts/quality_check.py")
+        print()
+        sys.exit(0)
+
+    # Full mode: create marker — PreToolUse hook blocks Edit/Write until reviewer clears it
     MARKER.touch()
 
     print("=" * 50)

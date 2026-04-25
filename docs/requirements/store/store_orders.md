@@ -9,7 +9,7 @@ PL-YYYYMMDD-XXXXXX
 例：PL-20260417-000001
 ```
 
-> 流水號全域遞增，不依日期重置，6 位數上限 999999 筆。
+> 流水號全域遞增，不依日期重置。6 位數上限 999999 筆；超過時自動擴展為 7 位或更多（前端 parser 不 hardcode 位數）。
 
 ---
 
@@ -21,7 +21,7 @@ PL-YYYYMMDD-XXXXXX
 |------|---------|
 | 未付款 | pending_payment |
 | 出貨中 | paid / processing / shipped |
-| 已完成 | completed / cancelled / refunded / partially_refunded |
+| 已完成 | completed / cancelled / refund_processing / refunded / partially_refunded |
 
 每筆訂單顯示：訂單編號、建立日期、商品縮圖（最多 3 個）、總金額、目前狀態
 
@@ -48,6 +48,21 @@ PL-YYYYMMDD-XXXXXX
 | 取消按鈕 | 僅 pending_payment 狀態顯示，paid 後隱藏 |
 | 確認收貨按鈕 | 僅 `order.status = shipped`（所有 shipments 均已出貨）後顯示，部分出貨期間不顯示 |
 | 付款後狀態訊息 | paid 後顯示「我們將盡快為您製作與出貨」|
+| 退款確認區塊 | `orders.status ∈ {refunded, partially_refunded}` 時顯示,分兩種狀態(見下)|
+
+**退款確認區塊**
+
+管理員標記退款完成後,客戶於訂單詳情頁會看到:
+
+| 條件 | 顯示內容 |
+|------|---------|
+| `refund_confirmed_at IS NULL` | 紅色提示「已退款 NT$X,請確認已收到退款」+「確認已收到退款」按鈕 |
+| `refund_confirmed_at IS NOT NULL` | 綠色標示「退款已完成,您已於 YYYY-MM-DD 確認收到」|
+
+**客戶確認流程**
+- 點「確認已收到退款」按鈕 → 後端 UPDATE `orders.refund_confirmed_at = now()`
+- 也可從退款完成 email 內的連結直接確認(連結格式如 `/orders/:id?action=confirm_refund`,點擊自動觸發)
+- 確認後頁面即時更新為綠色「退款已完成」
 
 **取消確認流程**
 
@@ -83,12 +98,28 @@ PL-YYYYMMDD-XXXXXX
 
 | 狀態 | 顯示文字 | 可操作 |
 |------|---------|--------|
-| quote_pending | 等待報價中 | — |
-| negotiating | 洽談中 | — |
-| quote_sent | 報價已送出，請確認 | 查看報價 |
-| quote_confirmed | 已確認，等待付款 | 前往付款 |
+| quote_pending | 等待報價中 | **自由修改申請內容**(照片/偏好/備註)|
+| negotiating | 洽談中(製作中)| — (鎖定,不可改申請內容)|
+| quote_sent | 報價已送出,請確認 | 點「待確認」→ 進入報價頁(顯示初稿預覽 + 報價 + 確認/要求修改/拒絕按鈕,等價 `/custom/quote/:token`)|
+| draft_revision | 修改中(已要求修改初稿)| — |
+| quote_confirmed | 已確認,等待付款 | 前往付款 |
 | quote_rejected | 已拒絕 | 重新申請 |
 | quote_expired | 已過期 | — |
+
+**申請詳情頁內容(會員中心 `/custom/requests/:id`)**
+
+客戶於會員中心點進客製申請詳情可看到:
+
+| 區塊 | 顯示內容 |
+|------|---------|
+| 申請基本資訊 | 類型(custom_photo / custom_spec)、提交時間、目前狀態 |
+| 提交內容 | 照片(custom_photo)、參考商品(custom_spec)、尺寸偏好、難易度、備註 |
+| 目前狀態與可操作 | 依狀態決定(見上表)|
+| 訊息對談區 | 所有 custom_request_messages 往來記錄 |
+
+> **quote_pending 自由修改的實作**:更新照片時同 E18 機制(舊照片立即 Firebase 刪除、覆蓋 photo_url);更新尺寸偏好/難易度/備註等欄位直接 UPDATE。
+> **negotiating 鎖定**:後端驗證,若 status 不為 quote_pending 拒絕修改請求,回 409。
+> **quote_sent 點「待確認」**:進入頁面顯示初稿預覽圖 + 報價 + 三個操作鈕(確認/要求修改/拒絕),內容等同 email 連結 `/custom/quote/:token`,僅入口差異(從會員中心進入已登入,不需驗證 token)。
 
 **訊息系統**
 
@@ -104,14 +135,16 @@ PL-YYYYMMDD-XXXXXX
 
 每個訂單項目獨立顯示生產進度：
 
-| 狀態 | 客戶顯示文字 |
+| 狀態(後端)| 客戶顯示文字 |
 |------|------------|
 | pending | 等待備貨 |
 | in_production | 製作中 |
-| manufacturing | 印製模板中 |
-| packaging | 打包中 |
+| manufacturing | **備貨中** |
+| packaging | **備貨中** |
 | ready_to_ship | 備貨完成 |
 | shipped | 已出貨 |
+
+> 後端狀態分 `manufacturing`(印製模板)與 `packaging`(打包),但**客戶端統一顯示「備貨中」**,避免技術細節干擾客戶理解。管理員後台仍顯示兩個獨立狀態以利操作區分。
 
 - 狀態更新時系統自動發 email 通知
 - 管理員填寫的 `notes` 欄位客戶可見
@@ -133,7 +166,9 @@ PL-YYYYMMDD-XXXXXX
 
 客戶收到報價 email 後，點連結進入此頁：
 
-- 需登入後查看
+- **不需登入查看**（token 本身為一次性短效憑證，24h 或延長後的 48h 內有效）
+- Token 過期後訪問此連結 → 導向登入頁，登入後導回 `/custom/requests/:id` 查看申請
+- 若客戶已登入狀態下訪問此連結 → 額外驗證該 token 對應的 custom_request.user_id 是否等於當前登入用戶（防止誤點他人信件）
 - 顯示：規格摘要、報價金額、報價有效期限（倒數）
 - 操作：
   - **確認報價** → 進入客製結帳步驟（見下方）

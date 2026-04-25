@@ -20,7 +20,7 @@ VALID_COLOR = {
     "name": "SKIN TONE",
     "color_family": "膚色系",
     "brand": None,
-    "rgb": {"rgb_r": 247, "rgb_g": 167, "rgb_b": 132},
+    "rgb": [247, 167, 132],
     "stock_ml": 500.0,
 }
 
@@ -148,7 +148,7 @@ async def test_create_color_duplicate_code(client: AsyncClient, db):
 async def test_create_color_invalid_rgb(client: AsyncClient, db):
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
-    bad = {**VALID_COLOR, "rgb": {"rgb_r": 300, "rgb_g": 0, "rgb_b": 0}}
+    bad = {**VALID_COLOR, "rgb": [300, 0, 0]}
     res = await client.post(COLORS_URL, json=bad)
     assert res.status_code == 422
 

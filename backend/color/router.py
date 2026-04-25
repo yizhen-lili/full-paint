@@ -44,9 +44,7 @@ async def create_color(
     operator=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    data = body.model_dump()
-    data["rgb"] = body.rgb.model_dump()
-    return await service.create_color(db, data)
+    return await service.create_color(db, body.model_dump())
 
 
 @router.put("/admin/colors/{color_id}", response_model=PhysicalColorResponse)
@@ -56,9 +54,7 @@ async def update_color(
     operator=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    data = body.model_dump()
-    data["rgb"] = body.rgb.model_dump()
-    return await service.update_color(db, color_id, data)
+    return await service.update_color(db, color_id, body.model_dump())
 
 
 @router.patch("/admin/colors/{color_id}/toggle-active", response_model=PhysicalColorResponse)

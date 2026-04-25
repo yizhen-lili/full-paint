@@ -4,12 +4,6 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
-class RgbResponse(BaseModel):
-    rgb_r: int
-    rgb_g: int
-    rgb_b: int
-
-
 class PhysicalColorResponse(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -18,7 +12,7 @@ class PhysicalColorResponse(BaseModel):
     name: str
     color_family: str | None
     brand: str | None
-    rgb: dict
+    rgb: list[int]
     stock_ml: float
     is_active: bool
     created_at: datetime

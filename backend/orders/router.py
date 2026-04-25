@@ -1,0 +1,311 @@
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import PlainTextResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.database import get_db
+from dependencies.auth import require_admin, require_auth
+from orders import service
+from orders.schemas.request import (
+    AddCartItemRequest,
+    AdminNotesRequest,
+    AdminUpdateOrderStatusRequest,
+    CancelOrderRequest,
+    CheckoutPreviewRequest,
+    CreateOrderRequest,
+    CreateShipmentRequest,
+    FlagPaymentSubmissionRequest,
+    PaymentSubmissionRequest,
+    RefundRequest,
+    UpdateCartItemRequest,
+    UpdateProductionProgressRequest,
+)
+from orders.schemas.response import (
+    AdminNotesUpdateResponse,
+    AdminOrderDetailResponse,
+    AdminOrderListResponse,
+    CartItemMutationResponse,
+    CartResponse,
+    CheckoutPreviewResponse,
+    CreateOrderResponse,
+    CreateShipmentResponse,
+    FlagPaymentSubmissionResponse,
+    OkResponse,
+    OrderDetailResponse,
+    OrderListResponse,
+    OrderStatusUpdateResponse,
+    ProductionProgressUpdateResponse,
+    RefundResponse,
+)
+
+router = APIRouter(tags=["orders"])
+
+
+# ── Cart ──────────────────────────────────────────────────────────────────────
+
+@router.get("/cart", response_model=CartResponse)
+async def get_cart(
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.get_cart(db, current_user.id)
+
+
+@router.post("/cart/items", status_code=201, response_model=CartItemMutationResponse)
+async def add_cart_item(
+    body: AddCartItemRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    item = await service.add_cart_item(db, current_user.id, body.variant_id, body.quantity)
+    return CartItemMutationResponse(
+        id=item.id, variant_id=item.product_variant_id, quantity=item.quantity
+    )
+
+
+@router.patch("/cart/items/{item_id}", response_model=CartItemMutationResponse)
+async def update_cart_item(
+    item_id: UUID,
+    body: UpdateCartItemRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    item = await service.update_cart_item(db, current_user.id, item_id, body.quantity)
+    if item is None:
+        return CartItemMutationResponse(id=item_id, deleted=True)
+    return CartItemMutationResponse(id=item.id, quantity=item.quantity)
+
+
+@router.delete("/cart/items/{item_id}", status_code=204, response_model=None)
+async def delete_cart_item(
+    item_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await service.delete_cart_item(db, current_user.id, item_id)
+
+
+@router.post("/cart/checkout-preview", response_model=CheckoutPreviewResponse)
+async def checkout_preview(
+    body: CheckoutPreviewRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.checkout_preview(
+        db, current_user.id, body.shipping_type, body.user_coupon_id, body.promo_code
+    )
+
+
+# ── Customer orders ───────────────────────────────────────────────────────────
+
+@router.post("/orders", status_code=201, response_model=CreateOrderResponse)
+async def create_order(
+    body: CreateOrderRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.create_order(
+        db,
+        current_user.id,
+        body.shipping_profile_id,
+        body.shipping_preference,
+        body.user_coupon_id,
+        body.promo_code,
+        body.customer_notes,
+    )
+
+
+@router.get("/orders", response_model=OrderListResponse)
+async def list_orders(
+    current_user=Depends(require_auth),
+    status: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.list_orders(db, current_user.id, status, page, page_size)
+
+
+@router.get("/orders/{order_id}", response_model=OrderDetailResponse)
+async def get_order(
+    order_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.get_order_detail(db, current_user.id, order_id)
+
+
+@router.post("/orders/{order_id}/payment-submission", status_code=200, response_model=OkResponse)
+async def submit_payment(
+    order_id: UUID,
+    body: PaymentSubmissionRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await service.submit_payment(
+        db, current_user.id, order_id,
+        body.transfer_amount, body.transfer_date, body.transfer_time,
+        body.account_last5, body.notes,
+    )
+    return OkResponse()
+
+
+@router.post("/orders/{order_id}/confirm-received", status_code=200, response_model=OkResponse)
+async def confirm_received(
+    order_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await service.confirm_received(db, current_user.id, order_id)
+    return OkResponse()
+
+
+@router.post("/orders/{order_id}/cancel", status_code=200, response_model=OkResponse)
+async def cancel_order(
+    order_id: UUID,
+    body: CancelOrderRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await service.cancel_order(db, current_user.id, order_id, body.cancel_reason)
+    return OkResponse()
+
+
+@router.post("/orders/{order_id}/confirm-refund", status_code=204, response_model=None)
+async def confirm_refund(
+    order_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await service.confirm_refund(db, current_user.id, order_id)
+
+
+# ── Admin orders ──────────────────────────────────────────────────────────────
+
+@router.get("/admin/orders", response_model=AdminOrderListResponse)
+async def admin_list_orders(
+    current_user=Depends(require_admin),
+    status: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    order_type: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.admin_list_orders(
+        db, status, date_from, date_to, search, order_type, page, page_size
+    )
+
+
+@router.get("/admin/orders/{order_id}", response_model=AdminOrderDetailResponse)
+async def admin_get_order(
+    order_id: UUID,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.admin_get_order(db, order_id)
+
+
+@router.patch("/admin/orders/{order_id}/status", response_model=OrderStatusUpdateResponse)
+async def admin_update_status(
+    order_id: UUID,
+    body: AdminUpdateOrderStatusRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    order = await service.admin_update_order_status(
+        db, order_id, body.status, body.admin_notes
+    )
+    return OrderStatusUpdateResponse(id=order.id, status=order.status)
+
+
+@router.post(
+    "/admin/orders/{order_id}/shipments", status_code=201, response_model=CreateShipmentResponse
+)
+async def create_shipment(
+    order_id: UUID,
+    body: CreateShipmentRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    shipment = await service.create_shipment(db, order_id, body.shipment_type)
+    return {
+        "shipment_id": shipment.id,
+        "tracking_number": shipment.tracking_number,
+        "ecpay_logistics_id": shipment.ecpay_logistics_id,
+    }
+
+
+@router.patch(
+    "/admin/orders/{order_id}/production-progress/{progress_id}",
+    response_model=ProductionProgressUpdateResponse,
+)
+async def update_production_progress(
+    order_id: UUID,
+    progress_id: UUID,
+    body: UpdateProductionProgressRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    progress = await service.update_production_progress(
+        db, order_id, progress_id, body.status, body.notes
+    )
+    return ProductionProgressUpdateResponse(id=progress.id, status=progress.status)
+
+
+@router.post("/admin/orders/{order_id}/refund", response_model=RefundResponse)
+async def process_refund(
+    order_id: UUID,
+    body: RefundRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    order = await service.process_refund(
+        db, order_id, body.refund_amount, body.returned_item_ids, body.cancel_reason
+    )
+    return RefundResponse(
+        id=order.id, status=order.status, refund_amount=float(order.refund_amount)
+    )
+
+
+@router.patch(
+    "/admin/orders/{order_id}/payment-submissions/{submission_id}/flag",
+    response_model=FlagPaymentSubmissionResponse,
+)
+async def flag_payment_submission(
+    order_id: UUID,
+    submission_id: UUID,
+    body: FlagPaymentSubmissionRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.flag_payment_submission(
+        db, order_id, submission_id, body.is_flagged, body.admin_note
+    )
+
+
+@router.patch("/admin/orders/{order_id}/admin-notes", response_model=AdminNotesUpdateResponse)
+async def update_admin_notes(
+    order_id: UUID,
+    body: AdminNotesRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    order = await service.update_admin_notes(db, order_id, body.admin_notes)
+    return AdminNotesUpdateResponse(id=order.id, admin_notes=order.admin_notes)
+
+
+# ── ECpay webhook ─────────────────────────────────────────────────────────────
+
+@router.post("/webhooks/ecpay", response_class=PlainTextResponse, response_model=None)
+async def ecpay_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    form = await request.form()
+    payload = dict(form)
+    result = await service.handle_ecpay_webhook(db, payload)
+    return PlainTextResponse(content=result)

@@ -432,7 +432,7 @@ Response 200: {
   "mode": "string", "canvas_w_cm": 30, "canvas_h_cm": 40,
   "svg_url": null, "filled_template_url": null, "snapped_rgb_url": null,
   "palette_json": [...], "num_colors_used": 18,
-  "palette_mappings": [{ "template_id": 1, "algorithm_rgb": {"rgb_r":0,"rgb_g":0,"rgb_b":0}, "physical_color": {"id":"uuid","code":"201","name":"SKIN TONE"}, "required_ml": null, "mapped_by": "system|manual" }],
+  "palette_mappings": [{ "template_id": 1, "algorithm_rgb": [0, 0, 0], "physical_color": {"id":"uuid","code":"201","name":"SKIN TONE"}, "required_ml": null, "mapped_by": "system|manual" }],
   "notes": "string|null", "created_at": "timestamp", "approved_at": "timestamp|null"
 }
 ```
@@ -515,7 +515,7 @@ Query: `?color_family=&is_active=true|false&search=`
 
 ```json
 Response 200: {
-  "items": [{ "id": "uuid", "code": "201", "name": "SKIN TONE", "color_family": "膚色系", "rgb": {"rgb_r":247,"rgb_g":167,"rgb_b":132}, "stock_ml": 500, "is_active": true }]
+  "items": [{ "id": "uuid", "code": "201", "name": "SKIN TONE", "color_family": "膚色系", "rgb": [247, 167, 132], "stock_ml": 500, "is_active": true }]
 }
 ```
 
@@ -523,7 +523,7 @@ Response 200: {
 **權限**：admin
 
 ```json
-Request: { "code": "201", "name": "SKIN TONE", "color_family": "膚色系", "brand": "string|null", "rgb": {"rgb_r":247,"rgb_g":167,"rgb_b":132}, "stock_ml": 0 }
+Request: { "code": "201", "name": "SKIN TONE", "color_family": "膚色系", "brand": "string|null", "rgb": [247, 167, 132], "stock_ml": 0 }
 ```
 
 ### PUT /admin/colors/{id}
@@ -565,8 +565,8 @@ Response 200: {
 Response 200: {
   "mappings": [{
     "template_id": 1,
-    "algorithm_rgb": {"rgb_r":247,"rgb_g":167,"rgb_b":132},
-    "physical_color": { "id": "uuid", "code": "201", "name": "SKIN TONE", "rgb": {...}, "stock_ml": 500 },
+    "algorithm_rgb": [247, 167, 132],
+    "physical_color": { "id": "uuid", "code": "201", "name": "SKIN TONE", "rgb": [247, 167, 132], "stock_ml": 500 },
     "required_ml": null,
     "mapped_by": "system"
   }]
@@ -668,7 +668,8 @@ Request: {
   "shipping_profile_id": "uuid",
   "shipping_preference": "together|separate",
   "user_coupon_id": "uuid|null",
-  "promo_code": "string|null"
+  "promo_code": "string|null",
+  "customer_notes": "string|null"
 }
 ```
 > SELECT FOR UPDATE 鎖定 physical_colors 計算並立即扣減 stock_ml  
@@ -734,6 +735,15 @@ Request: {
 ### POST /orders/{id}/confirm-received
 **權限**：auth｜確認收貨（僅 status=shipped 時可操作）
 
+### POST /orders/{id}/confirm-refund
+**權限**：auth｜客戶確認已收到退款（僅 status ∈ {refunded, partially_refunded} 且 refund_confirmed_at IS NULL 時可操作）
+
+> UPDATE orders.refund_confirmed_at = now()；純記錄用，不影響訂單狀態機
+
+```json
+Response 204
+```
+
 ### POST /orders/{id}/cancel
 **權限**：auth｜取消訂單（僅 pending_payment 狀態可取消）
 
@@ -786,10 +796,16 @@ Request: { "status": "manufacturing|packaging|ready_to_ship", "notes": "string|n
 **權限**：admin
 
 ```json
-Request: { "refund_amount": 397, "cancel_reason": "string" }
+Request: {
+  "refund_amount": 397,
+  "returned_item_ids": ["uuid", "uuid"],
+  "cancel_reason": "string"
+}
 ```
-> 全額退款 → status=refunded，回補 stock_ml + coupon  
-> 部分退款 → status=partially_refunded，記錄 refund_amount（coupon 與 stock_ml 不回補）
+> `returned_item_ids`：勾選要退回的 order_items（庫存回補只針對這些 items）  
+> 若 returned_item_ids 包含全部 items → status=refunded（全額退款）；coupon 回補 is_used=false；public_code total_used -1  
+> 若 returned_item_ids 為部分 items → status=partially_refunded；coupon **不回補**；stock 只回補勾選項  
+> 回饋券撤銷依「剩餘金額是否仍 ≥ trigger_threshold」判斷（見 admin_orders.md §5.7）
 
 ### PATCH /admin/orders/{id}/payment-submissions/{sub_id}/flag
 **權限**：admin｜標記付款資訊有誤，寄 email 通知客戶重新填寫

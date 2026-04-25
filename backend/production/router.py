@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import require_admin
+from product import service as product_service
+from product.schemas.response import AvailableJobListResponse
 from production import service
 from production.schemas.request import (
     ApproveRequest,
@@ -78,6 +80,19 @@ async def list_jobs(
         db, status, approved, batch_id, image_id, custom_request_id, page, page_size
     )
     return JobListResponse(items=jobs, total=total, page=page, page_size=page_size)
+
+
+@router.get(
+    "/admin/production/jobs/available-for-variant",
+    response_model=AvailableJobListResponse,
+)
+async def list_available_jobs(
+    product_id: UUID | None = Query(default=None),
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    items = await product_service.list_available_jobs(db, product_id)
+    return {"items": items}
 
 
 @router.get("/admin/production/jobs/{job_id}", response_model=JobDetailResponse)
