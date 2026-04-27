@@ -102,13 +102,15 @@ async def test_upload_signed_url_admin(client: AsyncClient, db):
 
     with patch("production.service.get_bucket", return_value=mock_bucket):
         res = await client.post(
-            UPLOAD_URL, json={"filename": "photo.jpg", "content_type": "image/jpeg"}
+            UPLOAD_URL,
+            json={"filename": "photo.jpg", "content_type": "image/jpeg", "size": 1048576},
         )
 
     assert res.status_code == 200
     data = res.json()
     assert "upload_url" in data
     assert "public_url" in data
+    assert "expires_at" in data
 
 
 @pytest.mark.asyncio
@@ -117,7 +119,7 @@ async def test_upload_signed_url_non_admin(client: AsyncClient, db):
     await _login(client, CUSTOMER_USER["email"], CUSTOMER_USER["password"])
 
     res = await client.post(
-        UPLOAD_URL, json={"filename": "photo.jpg", "content_type": "image/jpeg"}
+        UPLOAD_URL, json={"filename": "photo.jpg", "content_type": "image/jpeg", "size": 1048576}
     )
     assert res.status_code == 403
 
@@ -379,7 +381,10 @@ async def test_get_job_non_admin(client: AsyncClient, db):
 
 @pytest.mark.asyncio
 async def test_upload_unauthenticated(client: AsyncClient, db):
-    res = await client.post(UPLOAD_URL, json={"filename": "x.jpg", "content_type": "image/jpeg"})
+    res = await client.post(
+        UPLOAD_URL,
+        json={"filename": "x.jpg", "content_type": "image/jpeg", "size": 1024},
+    )
     assert res.status_code == 401
 
 

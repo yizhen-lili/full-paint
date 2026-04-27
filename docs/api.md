@@ -1250,32 +1250,50 @@ Request: { "category": "人物數量", "label": "2人", "amount": 200 }
 
 ## 模組十九：上傳
 
-> 所有上傳均先由前端上傳至 Firebase Storage，取得 URL 後再呼叫後端存入 DB。  
-> 後端不直接處理檔案二進位，只驗證 URL 格式與權限。
+> **上傳流程**（Signed URL 模式，前端直傳 Firebase）：
+> 1. 前端 `POST /upload/<kind>` 帶 `{filename, content_type, size}` → 後端回 `{upload_url, public_url|firebase_path, expires_at}`
+> 2. 前端在 `expires_at` 之前用 `PUT` 把檔案直接上傳到 `upload_url`（**不經過後端**）
+> 3. 前端把 `public_url`（或 `firebase_path`）作為實體欄位值，呼叫對應 CRUD 端點存入 DB
+>
+> 後端不處理檔案二進位，靠前端 MIME/size 預檢 + Firebase Storage Rules 守。size 上限 20MB（schema 422 守門）。
 
 ### POST /upload/product-image
-**權限**：admin｜回傳 Firebase Storage 上傳用簽名 URL
+**權限**：admin
 
 ```json
-Request:  { "filename": "string", "content_type": "image/jpeg|image/png" }
-Response 200: { "upload_url": "https://...", "public_url": "https://..." }
+Request:  { "filename": "cover.jpg", "content_type": "image/jpeg", "size": 524288 }
+Response 200: {
+  "upload_url": "https://storage.googleapis.com/...?X-Goog-Signature=...",
+  "public_url": "https://storage.googleapis.com/<bucket>/product_images/<token>_cover.jpg",
+  "expires_at": "2026-04-27T12:15:00+00:00"
+}
 ```
 
 ### POST /upload/custom-photo
-**權限**：auth｜私有上傳
+**權限**：auth｜私有上傳（回 firebase_path 而非 public_url，讀取需另外簽名）
 
 ```json
-Response 200: { "upload_url": "https://...", "firebase_path": "custom_photos/..." }
+Request:  { "filename": "photo.jpg", "content_type": "image/jpeg", "size": 1048576 }
+Response 200: {
+  "upload_url": "https://...",
+  "firebase_path": "custom_photos/<token>_photo.jpg",
+  "expires_at": "2026-04-27T12:15:00+00:00"
+}
 ```
+
+### POST /upload/case-image
+**權限**：admin｜契約同 product-image
+
+### POST /upload/production-image
+**權限**：admin｜契約同 product-image
 
 ### POST /upload/payment-screenshot
 **權限**：auth（暫不實作，payment_submissions 暫不含截圖欄位）
 
-### POST /upload/case-image
-**權限**：admin
-
-### POST /upload/production-image
-**權限**：admin
+### 共通 422 情境
+- `size > 20_000_000`：超過 20MB 上限
+- `size <= 0`：無效大小
+- `content_type` 非 `image/jpeg|image/png`
 
 ---
 

@@ -23,14 +23,19 @@ def generate_upload_signed_url(filename: str, content_type: str) -> dict:
     safe_name = filename.replace(" ", "_")
     path = f"production_images/{uuid.uuid4().hex}_{safe_name}"
     blob = bucket.blob(path)
+    ttl = timedelta(minutes=_UPLOAD_TTL_MINUTES)
     upload_url = blob.generate_signed_url(
         version="v4",
-        expiration=timedelta(minutes=_UPLOAD_TTL_MINUTES),
+        expiration=ttl,
         method="PUT",
         content_type=content_type,
     )
     public_url = f"https://storage.googleapis.com/{bucket.name}/{path}"
-    return {"upload_url": upload_url, "public_url": public_url}
+    return {
+        "upload_url": upload_url,
+        "public_url": public_url,
+        "expires_at": datetime.now(UTC) + ttl,
+    }
 
 
 async def create_image(

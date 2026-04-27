@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 
@@ -14,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Upload"])
 
+_UPLOAD_TTL_MINUTES = 15
+
+
+def _stub_expires_at() -> datetime:
+    return datetime.now(UTC) + timedelta(minutes=_UPLOAD_TTL_MINUTES)
+
 
 def _stub_public_pair(prefix: str, filename: str) -> dict:
     """Generate stub upload + public URLs. Replace with real Firebase Admin SDK later."""
@@ -25,6 +32,7 @@ def _stub_public_pair(prefix: str, filename: str) -> dict:
     return {
         "upload_url": f"https://stub.firebase/upload/{prefix}/{token}/{safe_name}?token=mock",
         "public_url": f"https://stub.firebase/public/{prefix}/{token}/{safe_name}",
+        "expires_at": _stub_expires_at(),
     }
 
 
@@ -37,6 +45,7 @@ def _stub_private_pair(prefix: str, filename: str) -> dict:
     return {
         "upload_url": f"https://stub.firebase/upload/{prefix}/{token}/{safe_name}?token=mock",
         "firebase_path": f"{prefix}/{token}/{safe_name}",
+        "expires_at": _stub_expires_at(),
     }
 
 

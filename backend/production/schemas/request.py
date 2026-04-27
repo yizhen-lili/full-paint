@@ -1,7 +1,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class JobParams(BaseModel):
@@ -66,6 +66,7 @@ class CreateJobsRequest(BaseModel):
 class UploadProductionImageRequest(BaseModel):
     filename: str
     content_type: Literal["image/jpeg", "image/png"]
+    size: int = Field(gt=0, le=20_000_000, description="檔案位元組大小，上限 20MB")
 
 
 class CreateImageRequest(BaseModel):

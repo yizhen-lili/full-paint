@@ -96,3 +96,4 @@ class SignedUrlResponse(BaseModel):
 class UploadUrlResponse(BaseModel):
     upload_url: str
     public_url: str
+    expires_at: datetime
