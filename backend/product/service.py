@@ -653,6 +653,8 @@ def _variant_with_job(variant: ProductVariant, job: ProductionJob | None) -> dic
             "canvas_w_cm": float(job.canvas_w_cm),
             "canvas_h_cm": float(job.canvas_h_cm),
             "num_colors_used": job.num_colors_used,
+            "filled_template_url": job.filled_template_url,
+            "svg_url": job.svg_url,
         }
     return {
         "id": variant.id,

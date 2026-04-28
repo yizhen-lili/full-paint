@@ -82,6 +82,8 @@ class VariantJobSpecResponse(BaseModel):
     canvas_w_cm: float
     canvas_h_cm: float
     num_colors_used: int | None
+    filled_template_url: str | None
+    svg_url: str | None
 
 
 class VariantResponse(BaseModel):
