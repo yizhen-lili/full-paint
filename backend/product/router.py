@@ -16,6 +16,8 @@ from product.schemas.request import (
     SeriesUpdateRequest,
     TagCreateRequest,
     TagUpdateRequest,
+    ThemeCreateRequest,
+    ThemeUpdateRequest,
     VariantCreateRequest,
     VariantUpdateRequest,
 )
@@ -32,6 +34,8 @@ from product.schemas.response import (
     SeriesResponse,
     TagListResponse,
     TagResponse,
+    ThemeListResponse,
+    ThemeResponse,
     VariantResponse,
 )
 
@@ -104,14 +108,65 @@ async def store_list_tags(
 # ── Admin endpoints (unchanged) ────────────────────────────────────────────────
 
 
+# ── Themes ───────────────────────────────────────────────────────────────────
+
+@router.get("/admin/themes", response_model=ThemeListResponse)
+async def list_themes(
+    _: None = Depends(require_admin),
+    search: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.list_themes(db, search, page, page_size)
+
+
+@router.get("/admin/themes/{theme_id}", response_model=ThemeResponse)
+async def get_theme(
+    theme_id: UUID,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.get_theme(db, theme_id)
+
+
+@router.post("/admin/themes", response_model=ThemeResponse, status_code=201)
+async def create_theme(
+    body: ThemeCreateRequest,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.create_theme(db, body.model_dump())
+
+
+@router.put("/admin/themes/{theme_id}", response_model=ThemeResponse)
+async def update_theme(
+    theme_id: UUID,
+    body: ThemeUpdateRequest,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.update_theme(db, theme_id, body.model_dump())
+
+
+@router.delete("/admin/themes/{theme_id}", response_model=None, status_code=204)
+async def delete_theme(
+    theme_id: UUID,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    await service.delete_theme(db, theme_id)
+
+
 # ── Series ────────────────────────────────────────────────────────────────────
 
 @router.get("/admin/series", response_model=SeriesListResponse)
 async def list_series(
     _: None = Depends(require_admin),
+    theme_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    items = await service.list_series(db)
+    items = await service.list_series(db, theme_id=theme_id)
     return {"items": items}
 
 
@@ -121,7 +176,7 @@ async def create_series(
     _: None = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.create_series(db, body.name, body.description)
+    return await service.create_series(db, body.name, body.description, body.theme_id)
 
 
 @router.put("/admin/series/{series_id}", response_model=SeriesResponse)
@@ -131,7 +186,9 @@ async def update_series(
     _: None = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.update_series(db, series_id, body.name, body.description)
+    return await service.update_series(
+        db, series_id, body.name, body.description, body.theme_id
+    )
 
 
 @router.delete("/admin/series/{series_id}", response_model=None, status_code=204)

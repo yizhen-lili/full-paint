@@ -1,18 +1,34 @@
 from uuid import UUID
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from product.models import ProductStatusEnum
+
+
+class ThemeCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    description: str | None = None
+    cover_image_url: str | None = None
+    sort_order: int = Field(default=0, ge=0)
+
+
+class ThemeUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    description: str | None = None
+    cover_image_url: str | None = None
+    sort_order: int = Field(default=0, ge=0)
 
 
 class SeriesCreateRequest(BaseModel):
     name: str
     description: str | None = None
+    theme_id: UUID | None = None
 
 
 class SeriesUpdateRequest(BaseModel):
     name: str
     description: str | None = None
+    theme_id: UUID | None = None
 
 
 class TagCreateRequest(BaseModel):

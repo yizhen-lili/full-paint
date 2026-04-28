@@ -86,7 +86,25 @@
 
 ## 模組二：商品系統
 
-來源：`admin_product.md 3.10`、`store_browse.md`
+來源：`admin_product.md 3.11`、`store_browse.md`
+
+### themes
+
+| 欄位 | 型別 | 限制 | 說明 |
+|------|------|------|------|
+| id | UUID | PK | 主鍵 |
+| name | VARCHAR(50) | NOT NULL UNIQUE | 主題名稱（例：萌寵、風景）|
+| description | TEXT | nullable | 主題說明 |
+| cover_image_url | VARCHAR | nullable | 主題封面（store 首頁區塊用；Firebase URL）|
+| sort_order | INTEGER | NOT NULL DEFAULT 0 CHECK >= 0 | 顯示排序，數字小越靠前 |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT now() | 建立時間 |
+| updated_at | TIMESTAMP | NOT NULL, DEFAULT now() onupdate now() | 最後更新時間 |
+
+> 主題之上不再分層；主題下可有 0 ~ N 個系列。
+> 刪除主題時其下系列的 `theme_id` 自動 SET NULL（系列保留，僅變未分類）。
+> Index：`(sort_order ASC, created_at DESC)` 用於列表預設排序。
+
+---
 
 ### product_series
 
@@ -95,9 +113,11 @@
 | id | UUID | PK | 主鍵 |
 | name | VARCHAR | NOT NULL | 系列名稱 |
 | description | TEXT | nullable | 系列描述 |
+| theme_id | UUID | nullable, FK → themes.id ON DELETE SET NULL | 所屬主題 |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT now() | 建立時間 |
 
 > 系列下仍有商品時禁止刪除，需先將所有商品移出系列。
+> theme_id 為 nullable：未歸屬主題的系列允許存在。
 
 ---
 

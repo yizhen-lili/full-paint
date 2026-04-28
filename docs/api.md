@@ -340,18 +340,61 @@ Request:  { "price": 420, "is_active": true }
 ### DELETE /admin/products/{id}/variants/{variant_id}
 **權限**：admin
 
+### GET /admin/themes
+**權限**：admin
+
+Query: `?search=&page=1&page_size=50`
+
+```json
+Response 200: {
+  "items": [{
+    "id": "uuid", "name": "萌寵", "description": "string|null",
+    "cover_image_url": "string|null", "sort_order": 10,
+    "series_count": 3, "created_at": "iso", "updated_at": "iso"
+  }],
+  "total": 5, "page": 1, "page_size": 50
+}
+```
+
+### GET /admin/themes/{id}
+**權限**：admin｜回單一主題詳情含 series_count
+
+### POST /admin/themes
+**權限**：admin
+
+```json
+Request: {
+  "name": "string(min1,max50)",
+  "description": "string|null",
+  "cover_image_url": "string|null",
+  "sort_order": 0
+}
+Response 409: name UNIQUE 衝突
+```
+
+### PUT /admin/themes/{id}
+**權限**：admin｜同 POST 欄位
+
+### DELETE /admin/themes/{id}
+**權限**：admin｜該主題下所有系列 theme_id 自動 SET NULL（系列保留）
+
 ### GET /admin/series
 **權限**：admin
+
+Query: `?theme_id=uuid` filter（可選；不帶則列所有）
+
+Response 每筆系列含 `theme_id` 與 `theme_name`。
 
 ### POST /admin/series
 **權限**：admin
 
 ```json
-Request:  { "name": "string", "description": "string|null" }
+Request:  { "name": "string", "description": "string|null", "theme_id": "uuid|null" }
+Response 404: theme_id 不存在
 ```
 
 ### PUT /admin/series/{id}
-**權限**：admin
+**權限**：admin｜同 POST 欄位
 
 ### DELETE /admin/series/{id}
 **權限**：admin｜系列下仍有商品時回 409

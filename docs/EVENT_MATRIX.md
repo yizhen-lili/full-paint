@@ -170,7 +170,7 @@
 - **前置**:`is_extended = false`
 - **狀態變更**:quote_expires_at +1 day,is_extended = true
 - **Email**:管理員(三層判斷)
-- **來源**:`admin_product.md §3.8`
+- **來源**:`admin_product.md §3.9`
 
 ### E14|客戶確認報價
 

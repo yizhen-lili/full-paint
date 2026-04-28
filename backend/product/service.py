@@ -14,6 +14,7 @@ from product.models import (
     ProductTag,
     ProductVariant,
     Tag,
+    Theme,
 )
 from production.models import ProductionJob
 
@@ -41,10 +42,95 @@ def calc_price_formula_base(
     return Decimal(str(round(raw)))
 
 
+# ── Themes ───────────────────────────────────────────────────────────────────
+
+async def list_themes(
+    db: AsyncSession, search: str | None, page: int, page_size: int
+) -> dict:
+    query = select(Theme)
+    if search:
+        query = query.where(Theme.name.ilike(f"%{search}%"))
+
+    count_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = count_result.scalar() or 0
+
+    rows = (await db.execute(
+        query.order_by(Theme.sort_order.asc(), Theme.created_at.desc())
+        .offset((page - 1) * page_size).limit(page_size)
+    )).scalars().all()
+
+    series_count_result = await db.execute(
+        select(ProductSeries.theme_id, func.count(ProductSeries.id).label("cnt"))
+        .where(ProductSeries.theme_id.isnot(None))
+        .group_by(ProductSeries.theme_id)
+    )
+    series_count_map = {r.theme_id: r.cnt for r in series_count_result}
+
+    items = [
+        {**t.__dict__, "series_count": series_count_map.get(t.id, 0)}
+        for t in rows
+    ]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+async def get_theme(db: AsyncSession, theme_id: UUID) -> dict:
+    theme = await _get_theme_or_404(db, theme_id)
+    count_result = await db.execute(
+        select(func.count(ProductSeries.id)).where(ProductSeries.theme_id == theme_id)
+    )
+    return {**theme.__dict__, "series_count": count_result.scalar() or 0}
+
+
+async def create_theme(db: AsyncSession, data: dict) -> dict:
+    existing = await db.execute(select(Theme).where(Theme.name == data["name"]))
+    if existing.scalar_one_or_none():
+        raise ConflictError("主題名稱已存在")
+    theme = Theme(**data)
+    db.add(theme)
+    await db.commit()
+    await db.refresh(theme)
+    return {**theme.__dict__, "series_count": 0}
+
+
+async def update_theme(db: AsyncSession, theme_id: UUID, data: dict) -> dict:
+    theme = await _get_theme_or_404(db, theme_id)
+    dup = await db.execute(
+        select(Theme).where(Theme.name == data["name"], Theme.id != theme_id)
+    )
+    if dup.scalar_one_or_none():
+        raise ConflictError("主題名稱已存在")
+    for key, value in data.items():
+        setattr(theme, key, value)
+    await db.commit()
+    await db.refresh(theme)
+    count_result = await db.execute(
+        select(func.count(ProductSeries.id)).where(ProductSeries.theme_id == theme_id)
+    )
+    return {**theme.__dict__, "series_count": count_result.scalar() or 0}
+
+
+async def delete_theme(db: AsyncSession, theme_id: UUID) -> None:
+    theme = await _get_theme_or_404(db, theme_id)
+    # ON DELETE SET NULL — series 自動變成未分類，不需手動處理
+    await db.delete(theme)
+    await db.commit()
+
+
+async def _get_theme_or_404(db: AsyncSession, theme_id: UUID) -> Theme:
+    result = await db.execute(select(Theme).where(Theme.id == theme_id))
+    theme = result.scalar_one_or_none()
+    if theme is None:
+        raise NotFoundError("主題不存在")
+    return theme
+
+
 # ── Series ───────────────────────────────────────────────────────────────────
 
-async def list_series(db: AsyncSession) -> list[dict]:
-    result = await db.execute(select(ProductSeries))
+async def list_series(db: AsyncSession, theme_id: UUID | None = None) -> list[dict]:
+    query = select(ProductSeries)
+    if theme_id is not None:
+        query = query.where(ProductSeries.theme_id == theme_id)
+    result = await db.execute(query)
     all_series = result.scalars().all()
 
     count_result = await db.execute(
@@ -54,25 +140,52 @@ async def list_series(db: AsyncSession) -> list[dict]:
     )
     count_map = {row.series_id: row.cnt for row in count_result}
 
+    theme_ids = {s.theme_id for s in all_series if s.theme_id is not None}
+    theme_map: dict[UUID, str] = {}
+    if theme_ids:
+        theme_rows = await db.execute(
+            select(Theme.id, Theme.name).where(Theme.id.in_(theme_ids))
+        )
+        theme_map = {row.id: row.name for row in theme_rows}
+
     return [
-        {**s.__dict__, "product_count": count_map.get(s.id, 0)}
+        {
+            **s.__dict__,
+            "product_count": count_map.get(s.id, 0),
+            "theme_name": theme_map.get(s.theme_id) if s.theme_id else None,
+        }
         for s in all_series
     ]
 
 
-async def create_series(db: AsyncSession, name: str, description: str | None) -> dict:
+async def create_series(
+    db: AsyncSession,
+    name: str,
+    description: str | None,
+    theme_id: UUID | None = None,
+) -> dict:
     existing = await db.execute(select(ProductSeries).where(ProductSeries.name == name))
     if existing.scalar_one_or_none():
         raise ConflictError("系列名稱已存在")
-    series = ProductSeries(name=name, description=description)
+    if theme_id is not None:
+        await _get_theme_or_404(db, theme_id)
+    series = ProductSeries(name=name, description=description, theme_id=theme_id)
     db.add(series)
     await db.commit()
     await db.refresh(series)
-    return {**series.__dict__, "product_count": 0}
+    theme_name = None
+    if theme_id is not None:
+        theme = await db.get(Theme, theme_id)
+        theme_name = theme.name if theme else None
+    return {**series.__dict__, "product_count": 0, "theme_name": theme_name}
 
 
 async def update_series(
-    db: AsyncSession, series_id: UUID, name: str, description: str | None
+    db: AsyncSession,
+    series_id: UUID,
+    name: str,
+    description: str | None,
+    theme_id: UUID | None = None,
 ) -> dict:
     series = await _get_series_or_404(db, series_id)
     dup = await db.execute(
@@ -80,15 +193,22 @@ async def update_series(
     )
     if dup.scalar_one_or_none():
         raise ConflictError("系列名稱已存在")
+    if theme_id is not None:
+        await _get_theme_or_404(db, theme_id)
     series.name = name
     series.description = description
+    series.theme_id = theme_id
     await db.commit()
     await db.refresh(series)
     count_result = await db.execute(
         select(func.count(Product.id)).where(Product.series_id == series_id)
     )
     count = count_result.scalar() or 0
-    return {**series.__dict__, "product_count": count}
+    theme_name = None
+    if theme_id is not None:
+        theme = await db.get(Theme, theme_id)
+        theme_name = theme.name if theme else None
+    return {**series.__dict__, "product_count": count, "theme_name": theme_name}
 
 
 async def delete_series(db: AsyncSession, series_id: UUID) -> None:

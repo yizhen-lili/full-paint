@@ -7,10 +7,32 @@ from pydantic import BaseModel
 from product.models import ProductStatusEnum
 
 
+class ThemeResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    cover_image_url: str | None
+    sort_order: int
+    series_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ThemeListResponse(BaseModel):
+    items: list[ThemeResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 class SeriesResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
+    theme_id: UUID | None
+    theme_name: str | None
     product_count: int
     created_at: datetime
 

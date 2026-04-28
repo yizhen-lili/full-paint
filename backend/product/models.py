@@ -4,6 +4,7 @@ from enum import StrEnum
 from sqlalchemy import (
     TIMESTAMP,
     Boolean,
+    CheckConstraint,
     Column,
     Enum,
     ForeignKey,
@@ -25,12 +26,38 @@ class ProductStatusEnum(StrEnum):
     off_sale = "off_sale"
 
 
+class Theme(Base):
+    __tablename__ = "themes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(50), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    cover_image_url = Column(String, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("sort_order >= 0", name="ck_themes_sort_order_non_negative"),
+    )
+
+
 class ProductSeries(Base):
     __tablename__ = "product_series"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False, unique=True)
     description = Column(Text, nullable=True)
+    theme_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("themes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
 
