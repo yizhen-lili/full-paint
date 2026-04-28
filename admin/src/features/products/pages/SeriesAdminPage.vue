@@ -1,0 +1,165 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { Plus, Pencil, Trash2, Loader2, X, Layers } from 'lucide-vue-next'
+
+import PageHeader from '@/shared/components/PageHeader.vue'
+import Card from '@/shared/ui/Card.vue'
+import Input from '@/shared/ui/Input.vue'
+import Textarea from '@/shared/ui/Textarea.vue'
+import Label from '@/shared/ui/Label.vue'
+import Button from '@/shared/ui/Button.vue'
+import Dialog from '@/shared/ui/Dialog.vue'
+
+import {
+  useSeriesQuery,
+  useCreateSeriesMutation,
+  useUpdateSeriesMutation,
+  useDeleteSeriesMutation,
+} from '../queries'
+import type { Series } from '../api'
+import ProductsTabs from '../components/ProductsTabs.vue'
+
+const { data: series, isLoading } = useSeriesQuery()
+const createMut = useCreateSeriesMutation()
+const updateMut = useUpdateSeriesMutation()
+const deleteMut = useDeleteSeriesMutation()
+
+const dialogOpen = ref(false)
+const editing = ref<Series | null>(null)
+const formName = ref('')
+const formDesc = ref('')
+
+function openCreate() {
+  editing.value = null
+  formName.value = ''
+  formDesc.value = ''
+  dialogOpen.value = true
+}
+
+function openEdit(s: Series) {
+  editing.value = s
+  formName.value = s.name
+  formDesc.value = s.description ?? ''
+  dialogOpen.value = true
+}
+
+async function submit() {
+  const name = formName.value.trim()
+  if (!name) return
+  const desc = formDesc.value.trim() || null
+  try {
+    if (editing.value) {
+      await updateMut.mutateAsync({ id: editing.value.id, payload: { name, description: desc } })
+    } else {
+      await createMut.mutateAsync({ name, description: desc })
+    }
+    dialogOpen.value = false
+  } catch (e) {
+    alert((e as { message?: string }).message || '儲存失敗')
+  }
+}
+
+async function handleDelete(s: Series) {
+  if (!confirm(`刪除系列「${s.name}」？`)) return
+  try {
+    await deleteMut.mutateAsync(s.id)
+  } catch (e) {
+    const err = e as { status?: number; message?: string }
+    if (err.status === 409) {
+      alert('此系列下仍有商品，無法刪除。請先把商品移到其他系列或設為無系列。')
+    } else {
+      alert(err.message || '刪除失敗')
+    }
+  }
+}
+</script>
+
+<template>
+  <PageHeader title="商品管理" subtitle="商品 / 系列 / 標籤">
+    <template #actions>
+      <Button variant="primary" @click="openCreate">
+        <Plus :size="14" :stroke-width="1.75" />
+        新增系列
+      </Button>
+    </template>
+  </PageHeader>
+
+  <ProductsTabs class="mb-6" />
+
+  <div v-if="isLoading" class="py-12 flex justify-center text-ink-muted">
+    <Loader2 :size="20" :stroke-width="1.5" class="animate-spin" />
+  </div>
+
+  <div
+    v-else-if="!series || series.length === 0"
+    class="bg-paper-surface border border-line-hairline rounded-[var(--radius-sm)] py-16 flex flex-col items-center text-center"
+  >
+    <Layers :size="32" :stroke-width="1.25" class="text-aux-rice-mid mb-3" />
+    <p class="text-[13px] text-ink-muted mb-1">尚無系列</p>
+    <Button variant="primary" class="mt-4" @click="openCreate">
+      <Plus :size="14" :stroke-width="1.75" />
+      建立第一個系列
+    </Button>
+  </div>
+
+  <Card v-else :padded="false">
+    <ul>
+      <li
+        v-for="s in series"
+        :key="s.id"
+        class="flex items-start gap-4 px-6 py-4 border-b border-line-hairline last:border-0 hover:bg-paper-subtle transition-colors"
+      >
+        <div class="flex-1 min-w-0">
+          <p class="text-[14px] font-medium text-ink-strong">{{ s.name }}</p>
+          <p v-if="s.description" class="text-[12px] text-ink-muted mt-1">{{ s.description }}</p>
+        </div>
+        <span v-if="s.product_count !== undefined" class="text-[12px] text-ink-muted font-mono">
+          {{ s.product_count }} 商品
+        </span>
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class="h-8 w-8 inline-flex items-center justify-center rounded-[var(--radius-xs)] text-ink-muted hover:bg-paper-subtle hover:text-ink-strong transition-colors"
+            @click="openEdit(s)"
+          >
+            <Pencil :size="14" :stroke-width="1.5" />
+          </button>
+          <button
+            type="button"
+            class="h-8 w-8 inline-flex items-center justify-center rounded-[var(--radius-xs)] text-ink-muted hover:bg-[var(--color-state-danger)]/[0.10] hover:text-state-danger transition-colors"
+            @click="handleDelete(s)"
+          >
+            <Trash2 :size="14" :stroke-width="1.5" />
+          </button>
+        </div>
+      </li>
+    </ul>
+  </Card>
+
+  <Dialog
+    :open="dialogOpen"
+    :title="editing ? '編輯系列' : '新增系列'"
+    @close="dialogOpen = false"
+  >
+    <div class="space-y-4">
+      <div>
+        <Label for="s-name">系列名稱</Label>
+        <Input id="s-name" v-model="formName" placeholder="例：京都四季" />
+      </div>
+      <div>
+        <Label for="s-desc">說明（選填）</Label>
+        <Textarea id="s-desc" v-model="formDesc" :rows="3" />
+      </div>
+    </div>
+    <template #footer>
+      <Button variant="secondary" @click="dialogOpen = false">取消</Button>
+      <Button
+        variant="primary"
+        :disabled="!formName.trim() || createMut.isPending.value || updateMut.isPending.value"
+        @click="submit"
+      >
+        儲存
+      </Button>
+    </template>
+  </Dialog>
+</template>
