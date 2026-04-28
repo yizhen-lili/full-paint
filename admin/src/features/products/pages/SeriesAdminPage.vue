@@ -18,6 +18,7 @@ import {
 } from '../queries'
 import type { Series } from '../api'
 import ProductsTabs from '../components/ProductsTabs.vue'
+import ThemePicker from '../components/ThemePicker.vue'
 
 const { data: series, isLoading } = useSeriesQuery()
 const createMut = useCreateSeriesMutation()
@@ -28,11 +29,13 @@ const dialogOpen = ref(false)
 const editing = ref<Series | null>(null)
 const formName = ref('')
 const formDesc = ref('')
+const formThemeId = ref<string | null>(null)
 
 function openCreate() {
   editing.value = null
   formName.value = ''
   formDesc.value = ''
+  formThemeId.value = null
   dialogOpen.value = true
 }
 
@@ -40,18 +43,23 @@ function openEdit(s: Series) {
   editing.value = s
   formName.value = s.name
   formDesc.value = s.description ?? ''
+  formThemeId.value = s.theme_id
   dialogOpen.value = true
 }
 
 async function submit() {
   const name = formName.value.trim()
   if (!name) return
-  const desc = formDesc.value.trim() || null
+  const payload = {
+    name,
+    description: formDesc.value.trim() || null,
+    theme_id: formThemeId.value,
+  }
   try {
     if (editing.value) {
-      await updateMut.mutateAsync({ id: editing.value.id, payload: { name, description: desc } })
+      await updateMut.mutateAsync({ id: editing.value.id, payload })
     } else {
-      await createMut.mutateAsync({ name, description: desc })
+      await createMut.mutateAsync(payload)
     }
     dialogOpen.value = false
   } catch (e) {
@@ -110,7 +118,15 @@ async function handleDelete(s: Series) {
         class="flex items-start gap-4 px-6 py-4 border-b border-line-hairline last:border-0 hover:bg-paper-subtle transition-colors"
       >
         <div class="flex-1 min-w-0">
-          <p class="text-[14px] font-medium text-ink-strong">{{ s.name }}</p>
+          <div class="flex items-baseline gap-2">
+            <p class="text-[14px] font-medium text-ink-strong">{{ s.name }}</p>
+            <span
+              v-if="s.theme_name"
+              class="text-[11px] px-1.5 h-[18px] inline-flex items-center rounded-[var(--radius-xs)] bg-accent-tint text-ink-strong"
+            >
+              {{ s.theme_name }}
+            </span>
+          </div>
           <p v-if="s.description" class="text-[12px] text-ink-muted mt-1">{{ s.description }}</p>
         </div>
         <span v-if="s.product_count !== undefined" class="text-[12px] text-ink-muted font-mono">
@@ -149,6 +165,10 @@ async function handleDelete(s: Series) {
       <div>
         <Label for="s-desc">說明（選填）</Label>
         <Textarea id="s-desc" v-model="formDesc" :rows="3" />
+      </div>
+      <div>
+        <Label>主題（選填）</Label>
+        <ThemePicker v-model="formThemeId" />
       </div>
     </div>
     <template #footer>

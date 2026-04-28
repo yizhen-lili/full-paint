@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Box, Layers, Tag as TagIcon } from 'lucide-vue-next'
+import { Box, Layers, Sparkles, Tag as TagIcon } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
 
 const tabs = [
   { id: '', label: '商品', icon: Box, path: '/admin/products' },
+  { id: 'themes', label: '主題', icon: Sparkles, path: '/admin/products/themes' },
   { id: 'series', label: '系列', icon: Layers, path: '/admin/products/series' },
   { id: 'tags', label: '標籤', icon: TagIcon, path: '/admin/products/tags' },
 ] as const
 
 const currentId = computed(() => {
+  if (route.path === '/admin/products/themes') return 'themes'
   if (route.path === '/admin/products/series') return 'series'
   if (route.path === '/admin/products/tags') return 'tags'
   return ''

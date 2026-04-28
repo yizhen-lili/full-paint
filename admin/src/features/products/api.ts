@@ -86,6 +86,16 @@ export interface ProductPayload {
   tag_ids: string[]
 }
 
+export interface VariantJobSpec {
+  detail: string
+  difficulty: string
+  canvas_w_cm: number
+  canvas_h_cm: number
+  num_colors_used: number | null
+  filled_template_url: string | null
+  svg_url: string | null
+}
+
 export interface Variant {
   id: string
   product_id: string
@@ -93,13 +103,7 @@ export interface Variant {
   price: number
   price_formula_base: number
   is_active: boolean
-  production_job_snapshot?: {
-    canvas_w_cm: number
-    canvas_h_cm: number
-    detail: string
-    difficulty: string
-    mode: string
-  }
+  job_spec: VariantJobSpec | null
   created_at: string
 }
 
@@ -110,10 +114,30 @@ export interface ProductImage {
   sort_order: number
 }
 
+export interface Theme {
+  id: string
+  name: string
+  description: string | null
+  cover_image_url: string | null
+  sort_order: number
+  series_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ThemesListResponse {
+  items: Theme[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export interface Series {
   id: string
   name: string
   description: string | null
+  theme_id: string | null
+  theme_name: string | null
   product_count?: number
 }
 
@@ -219,21 +243,63 @@ export function reorderImages(productId: string, order: string[]) {
   })
 }
 
+// ── Themes ────────────────────────────────────────────────────────────
+
+export interface ThemePayload {
+  name: string
+  description: string | null
+  cover_image_url: string | null
+  sort_order: number
+}
+
+export function listThemes(params: { search?: string; page?: number; page_size?: number } = {}) {
+  const q = new URLSearchParams()
+  if (params.search) q.set('search', params.search)
+  q.set('page', String(params.page ?? 1))
+  q.set('page_size', String(params.page_size ?? 50))
+  return request<ThemesListResponse>(`/admin/themes?${q.toString()}`)
+}
+
+export function createTheme(payload: ThemePayload) {
+  return request<Theme>('/admin/themes', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateTheme(id: string, payload: ThemePayload) {
+  return request<Theme>(`/admin/themes/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteTheme(id: string) {
+  return request<void>(`/admin/themes/${id}`, { method: 'DELETE' })
+}
+
 // ── Series ────────────────────────────────────────────────────────────
 
-export async function listSeries(): Promise<Series[]> {
-  const res = await request<Series[] | { items: Series[] }>('/admin/series')
+export interface SeriesPayload {
+  name: string
+  description: string | null
+  theme_id: string | null
+}
+
+export async function listSeries(themeId?: string): Promise<Series[]> {
+  const q = themeId ? `?theme_id=${themeId}` : ''
+  const res = await request<Series[] | { items: Series[] }>(`/admin/series${q}`)
   return Array.isArray(res) ? res : res.items
 }
 
-export function createSeries(payload: { name: string; description: string | null }) {
+export function createSeries(payload: SeriesPayload) {
   return request<Series>('/admin/series', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export function updateSeries(id: string, payload: { name: string; description: string | null }) {
+export function updateSeries(id: string, payload: SeriesPayload) {
   return request<Series>(`/admin/series/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),

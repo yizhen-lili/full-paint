@@ -53,6 +53,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/features/products/pages/ProductFormPage.vue'),
       },
       {
+        path: 'products/themes',
+        name: 'admin-products-themes',
+        component: () => import('@/features/products/pages/ThemesAdminPage.vue'),
+      },
+      {
         path: 'products/series',
         name: 'admin-products-series',
         component: () => import('@/features/products/pages/SeriesAdminPage.vue'),

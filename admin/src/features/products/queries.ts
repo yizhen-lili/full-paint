@@ -8,24 +8,30 @@ import {
   createProduct,
   createSeries,
   createTag,
+  createTheme,
   deleteImage,
   deleteProduct,
   deleteSeries,
   deleteTag,
+  deleteTheme,
   deleteVariant,
   getProduct,
   listImages,
   listProducts,
   listSeries,
   listTags,
+  listThemes,
   listVariants,
   reorderImages,
   updateProduct,
   updateSeries,
   updateTag,
+  updateTheme,
   updateVariant,
   type ProductPayload,
   type ProductsListParams,
+  type SeriesPayload,
+  type ThemePayload,
 } from './api'
 
 const KEYS = {
@@ -35,6 +41,7 @@ const KEYS = {
   images: (id: string) => ['products', 'images', id] as const,
   series: ['series', 'list'] as const,
   tags: ['tags', 'list'] as const,
+  themes: ['themes', 'list'] as const,
 }
 
 // ── Products ──────────────────────────────────────────────────────────
@@ -194,7 +201,7 @@ export function useCreateSeriesMutation() {
 export function useUpdateSeriesMutation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: { name: string; description: string | null } }) =>
+    mutationFn: ({ id, payload }: { id: string; payload: SeriesPayload }) =>
       updateSeries(id, payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.series }),
   })
@@ -205,6 +212,50 @@ export function useDeleteSeriesMutation() {
   return useMutation({
     mutationFn: deleteSeries,
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.series }),
+  })
+}
+
+// ── Themes ────────────────────────────────────────────────────────────
+
+export function useThemesQuery() {
+  return useQuery({
+    queryKey: KEYS.themes,
+    queryFn: () => listThemes({ page_size: 100 }),
+    staleTime: 60_000,
+  })
+}
+
+export function useCreateThemeMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: createTheme,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.themes })
+      qc.invalidateQueries({ queryKey: KEYS.series })  // 系列列表帶 theme_name
+    },
+  })
+}
+
+export function useUpdateThemeMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: ThemePayload }) =>
+      updateTheme(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.themes })
+      qc.invalidateQueries({ queryKey: KEYS.series })
+    },
+  })
+}
+
+export function useDeleteThemeMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: deleteTheme,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.themes })
+      qc.invalidateQueries({ queryKey: KEYS.series })  // theme_id 變 NULL
+    },
   })
 }
 

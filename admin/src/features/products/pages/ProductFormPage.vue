@@ -227,6 +227,7 @@ function confirmWarning() {
         <ProductCoverUpload
           v-model="coverImageUrl"
           :invalid="!!errors.cover_image_url"
+          :product-id="productId"
         />
         <p v-if="errors.cover_image_url" class="mt-2 text-[12px] text-state-danger">
           {{ errors.cover_image_url }}

@@ -1,17 +1,28 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Image as ImageIcon, Loader2, Upload, X } from 'lucide-vue-next'
+import { Image as ImageIcon, Loader2, Sparkles, Upload, X } from 'lucide-vue-next'
 
 import { uploadFile } from '../api'
+import VariantTemplatePicker from './VariantTemplatePicker.vue'
 
 const props = defineProps<{
   modelValue: string
   invalid?: boolean
+  /** 提供 productId 才會顯示「從變體模板選」按鈕。 */
+  productId?: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [url: string]
 }>()
+
+const pickerOpen = ref(false)
+
+function onPickFromTemplate(urls: string[]) {
+  if (urls.length > 0) {
+    emit('update:modelValue', urls[0])
+  }
+}
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const isUploading = ref(false)
@@ -61,16 +72,33 @@ function clear() {
     />
 
     <!-- Empty state -->
-    <button
+    <div
       v-if="!modelValue && !isUploading"
-      type="button"
-      class="w-full aspect-[4/3] flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-[var(--radius-sm)] bg-paper-surface hover:bg-paper-subtle transition-colors text-ink-muted"
+      class="w-full aspect-[4/3] flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-[var(--radius-sm)] bg-paper-surface text-ink-muted"
       :class="invalid ? 'border-state-danger' : 'border-line-strong'"
-      @click="trigger"
     >
       <ImageIcon :size="32" :stroke-width="1.25" class="text-aux-rice-mid" />
-      <span class="text-[13px]">點擊上傳封面（JPEG / PNG, ≤ 20MB）</span>
-    </button>
+      <p class="text-[13px]">封面圖（JPEG / PNG, ≤ 20MB）</p>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line-strong text-[13px] text-ink-default hover:bg-paper-subtle transition-colors"
+          @click="trigger"
+        >
+          <Upload :size="14" :stroke-width="1.5" />
+          上傳新圖
+        </button>
+        <button
+          v-if="productId"
+          type="button"
+          class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line-strong text-[13px] text-ink-default hover:bg-paper-subtle transition-colors"
+          @click="pickerOpen = true"
+        >
+          <Sparkles :size="14" :stroke-width="1.5" />
+          從變體模板選
+        </button>
+      </div>
+    </div>
 
     <!-- Uploading -->
     <div
@@ -88,7 +116,7 @@ function clear() {
     >
       <img :src="modelValue" alt="封面" class="w-full h-full object-cover" />
       <div
-        class="absolute inset-0 bg-ink-strong/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2"
+        class="absolute inset-0 bg-ink-strong/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 flex-wrap p-2"
       >
         <button
           type="button"
@@ -97,6 +125,15 @@ function clear() {
         >
           <Upload :size="14" :stroke-width="1.5" />
           替換
+        </button>
+        <button
+          v-if="productId"
+          type="button"
+          class="h-9 px-3 rounded-[var(--radius-xs)] bg-paper-surface text-ink-strong text-[13px] font-medium hover:bg-paper-subtle transition-colors flex items-center gap-1.5"
+          @click="pickerOpen = true"
+        >
+          <Sparkles :size="14" :stroke-width="1.5" />
+          從模板選
         </button>
         <button
           type="button"
@@ -110,5 +147,14 @@ function clear() {
     </div>
 
     <p v-if="error" class="text-[12px] text-state-danger">{{ error }}</p>
+
+    <VariantTemplatePicker
+      v-if="productId"
+      :open="pickerOpen"
+      :product-id="productId"
+      mode="single"
+      @close="pickerOpen = false"
+      @pick="onPickFromTemplate"
+    />
   </div>
 </template>

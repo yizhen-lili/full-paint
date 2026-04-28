@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Plus, X, Image as ImageIcon, Loader2, GripVertical } from 'lucide-vue-next'
+import { Plus, Sparkles, X, Image as ImageIcon, Loader2, GripVertical } from 'lucide-vue-next'
 
 import { uploadFile } from '../api'
 import {
@@ -11,6 +11,7 @@ import {
   useReorderImagesMutation,
 } from '../queries'
 import type { ProductImage } from '../api'
+import VariantTemplatePicker from './VariantTemplatePicker.vue'
 
 const props = defineProps<{
   productId: string
@@ -31,6 +32,26 @@ watch(serverImages, (next) => {
 const fileInput = ref<HTMLInputElement | null>(null)
 const isUploading = ref(false)
 const error = ref<string | null>(null)
+const pickerOpen = ref(false)
+const isImporting = ref(false)
+
+async function importFromTemplates(urls: string[]) {
+  if (urls.length === 0) return
+  error.value = null
+  isImporting.value = true
+  try {
+    const baseSort = localImages.value.length > 0
+      ? Math.max(...localImages.value.map((i) => i.sort_order)) + 1
+      : 0
+    for (let i = 0; i < urls.length; i++) {
+      await addImage.mutateAsync({ image_url: urls[i], sort_order: baseSort + i })
+    }
+  } catch (e) {
+    error.value = (e as { message?: string }).message || '匯入失敗'
+  } finally {
+    isImporting.value = false
+  }
+}
 
 const sortedImages = computed(() => localImages.value)
 
@@ -91,16 +112,28 @@ async function onDragEnd() {
         class="hidden"
         @change="onFileChange"
       />
-      <button
-        type="button"
-        class="h-9 px-3 inline-flex items-center gap-1 rounded-[var(--radius-xs)] bg-accent text-paper-surface text-[13px] font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
-        :disabled="isUploading"
-        @click="fileInput?.click()"
-      >
-        <Loader2 v-if="isUploading" :size="14" :stroke-width="1.5" class="animate-spin" />
-        <Plus v-else :size="14" :stroke-width="1.75" />
-        加圖
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line-strong text-[13px] text-ink-default hover:bg-paper-subtle transition-colors disabled:opacity-50"
+          :disabled="isImporting"
+          @click="pickerOpen = true"
+        >
+          <Loader2 v-if="isImporting" :size="14" :stroke-width="1.5" class="animate-spin" />
+          <Sparkles v-else :size="14" :stroke-width="1.5" />
+          從變體模板匯入
+        </button>
+        <button
+          type="button"
+          class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] bg-accent text-paper-surface text-[13px] font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
+          :disabled="isUploading"
+          @click="fileInput?.click()"
+        >
+          <Loader2 v-if="isUploading" :size="14" :stroke-width="1.5" class="animate-spin" />
+          <Plus v-else :size="14" :stroke-width="1.75" />
+          上傳新圖
+        </button>
+      </div>
     </div>
 
     <p v-if="error" class="mb-3 text-[12px] text-state-danger">{{ error }}</p>
@@ -149,5 +182,13 @@ async function onDragEnd() {
         </button>
       </div>
     </VueDraggable>
+
+    <VariantTemplatePicker
+      :open="pickerOpen"
+      :product-id="productId"
+      mode="multi"
+      @close="pickerOpen = false"
+      @pick="importFromTemplates"
+    />
   </div>
 </template>
