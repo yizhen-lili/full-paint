@@ -137,6 +137,11 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-reports',
         component: () => import('@/features/reports/pages/ReportsPage.vue'),
       },
+      {
+        path: 'colors',
+        name: 'admin-colors',
+        component: () => import('@/features/colors/pages/ColorsListPage.vue'),
+      },
     ],
   },
   {
