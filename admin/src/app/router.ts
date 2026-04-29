@@ -157,6 +157,11 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-print-batches-detail',
         component: () => import('@/features/print_batches/pages/PrintBatchDetailPage.vue'),
       },
+      {
+        path: 'notifications',
+        name: 'admin-notifications',
+        component: () => import('@/features/notifications/pages/NotificationsPage.vue'),
+      },
     ],
   },
   {
