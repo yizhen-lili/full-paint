@@ -385,12 +385,6 @@ function copyOrderNumber() {
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-medium text-ink-strong">{{ item.product_title_snapshot }}</span>
                   <span
-                    v-if="!item.product_variant_id"
-                    class="inline-flex items-center px-2 h-[20px] text-[11px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-aux-rice-mid/40 text-ink-default"
-                  >
-                    客製
-                  </span>
-                  <span
                     v-if="item.is_returned"
                     class="inline-flex items-center px-2 h-[20px] text-[11px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-paper-subtle text-ink-muted"
                   >
