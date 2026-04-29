@@ -142,6 +142,21 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-colors',
         component: () => import('@/features/colors/pages/ColorsListPage.vue'),
       },
+      {
+        path: 'print-batches',
+        name: 'admin-print-batches',
+        component: () => import('@/features/print_batches/pages/PrintBatchesListPage.vue'),
+      },
+      {
+        path: 'print-batches/new',
+        name: 'admin-print-batches-new',
+        component: () => import('@/features/print_batches/pages/PrintBatchNewPage.vue'),
+      },
+      {
+        path: 'print-batches/:id',
+        name: 'admin-print-batches-detail',
+        component: () => import('@/features/print_batches/pages/PrintBatchDetailPage.vue'),
+      },
     ],
   },
   {
