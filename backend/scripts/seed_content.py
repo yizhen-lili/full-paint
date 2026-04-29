@@ -20,8 +20,16 @@ from decimal import Decimal
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import core._windows_compat  # noqa: F401, E402
+
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 import auth.models  # noqa: F401, E402
 import color.models  # noqa: F401, E402
@@ -30,14 +38,10 @@ import discount.models  # noqa: F401, E402
 import orders.models  # noqa: F401, E402
 import product.models  # noqa: F401, E402
 import production.models  # noqa: F401, E402
-
-from sqlalchemy import select  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
-
-from content.models import CaseCategory, Page  # noqa: E402
-from custom.models import CustomPhotoPrice, CustomPhotoSurcharge  # noqa: E402
 from color.models import SystemSetting  # noqa: E402
+from content.models import CaseCategory, Page  # noqa: E402
 from core.config import settings  # noqa: E402
+from custom.models import CustomPhotoPrice, CustomPhotoSurcharge  # noqa: E402
 
 PAGES = [
     ("size_guide", "尺寸指南", """## 標準畫布尺寸
@@ -235,7 +239,7 @@ async def main():
         existing_surcharges = (
             await db.execute(select(CustomPhotoSurcharge.category, CustomPhotoSurcharge.label))
         ).all()
-        existing_sur_keys = {(c, l) for c, l in existing_surcharges}
+        existing_sur_keys = {(cat, label) for cat, label in existing_surcharges}
         added_surcharges = 0
         for cat, label, amount in SURCHARGES:
             if (cat, label) in existing_sur_keys:

@@ -16,15 +16,19 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import core._windows_compat  # noqa: F401, E402
+
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
 import auth.models  # noqa: F401, E402
 import color.models  # noqa: F401, E402
-
-from sqlalchemy import select  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
-
 from color.models import PhysicalColor, PhysicalColorRgbHistory  # noqa: E402
 from core.config import settings  # noqa: E402
 

@@ -1105,3 +1105,253 @@ async def test_recommend_canvas_sizes_non_admin(client: AsyncClient, db):
 async def test_recommend_canvas_sizes_unauthenticated(client: AsyncClient, db):
     res = await client.post(RECOMMEND_URL, json={"width": 100, "height": 100})
     assert res.status_code == 401
+
+
+# ── POST /admin/production/jobs/{id}/sam-mask ────────────────────────────────
+
+SAM_MASK_URL_SUFFIX = "/sam-mask"
+
+
+async def _create_sam_pending_job(client, db) -> dict:
+    """Helper：建 image + 直接在 DB seed 一筆 pending production_job（mode=sam_refine）。
+
+    與 _create_pending_job（在第 450 行）不同 — 那個回傳 string job_id，
+    這裡為了 SAM 測試需要 image dimensions，回傳 {id, image_id} 字典。
+    """
+    from production.models import ProductionJob
+
+    image = await _create_image(client, db)
+    job = ProductionJob(
+        image_id=uuid.UUID(image["id"]),
+        status="pending",
+        approved=False,
+        detail="standard",
+        difficulty="beginner",
+        mode="sam_refine",
+        canvas_w_cm=30,
+        canvas_h_cm=40,
+        min_brush_diam_cm=1.0,
+        extra_colors=5,  # sam_refine 需要 extra_colors > 0（呼應 JobParams.validate_mode_params）
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    return {"id": str(job.id), "image_id": image["id"]}
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_with_polygons_ok(client: AsyncClient, db):
+    """polygons 提供時，遮罩 PNG 即時產出（mock Firebase upload）。"""
+    job = await _create_sam_pending_job(client, db)
+
+    mock_blob = MagicMock()
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_bucket.name = "test-bucket"
+
+    with patch("production.service.get_bucket", return_value=mock_bucket):
+        res = await client.post(
+            f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
+            json={
+                "polygons": [[[100, 100], [500, 100], [500, 400], [100, 400]]],
+                "mode": "sam_refine",
+            },
+        )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["mask_url"] is not None  # 上傳成功應回 gs:// URL
+    # 0~1 比例（與 api.md 範例 0.42 一致），不是 0~100 百分比
+    assert 0 < data["mask_coverage"] <= 1
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_with_only_points(client: AsyncClient, db):
+    """只給 sam_points 沒 polygons → mask_url 為 null（等 Celery 推論），但寫入 DB."""
+    job = await _create_sam_pending_job(client, db)
+    res = await client.post(
+        f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
+        json={
+            "sam_points": [{"x": 100, "y": 100, "label": 1}],
+            "mode": "sam_refine",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["mask_url"] is None
+    # 純 sam_points 路徑等 Celery 推論，coverage 為 null（語意：尚未推論）
+    assert data["mask_coverage"] is None
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_status_not_pending(client: AsyncClient, db):
+    """status != pending → 400."""
+    from production.models import ProductionJob
+
+    image = await _create_image(client, db)
+    job = ProductionJob(
+        image_id=uuid.UUID(image["id"]),
+        status="processing",
+        detail="standard", difficulty="beginner", mode="sam_refine",
+        canvas_w_cm=30, canvas_h_cm=40, min_brush_diam_cm=1.0,
+        extra_colors=5,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    res = await client.post(
+        f"{JOBS_URL}/{job.id}{SAM_MASK_URL_SUFFIX}",
+        json={"polygons": [[[0, 0], [10, 0], [10, 10]]], "mode": "sam_refine"},
+    )
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_empty_payload(client: AsyncClient, db):
+    """sam_points 與 polygons 都沒給 → 422."""
+    job = await _create_sam_pending_job(client, db)
+    res = await client.post(
+        f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
+        json={"mode": "sam_refine"},
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_approved_reset(client: AsyncClient, db):
+    """編輯遮罩後 approved 必須退回 false."""
+    from production.models import ProductionJob
+
+    image = await _create_image(client, db)
+    job = ProductionJob(
+        image_id=uuid.UUID(image["id"]),
+        status="pending",
+        approved=True,  # 假設已被某邊際情境設成 true
+        detail="standard", difficulty="beginner", mode="sam_refine",
+        canvas_w_cm=30, canvas_h_cm=40, min_brush_diam_cm=1.0,
+        extra_colors=5,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = MagicMock()
+    mock_bucket.name = "test-bucket"
+    with patch("production.service.get_bucket", return_value=mock_bucket):
+        res = await client.post(
+            f"{JOBS_URL}/{job.id}{SAM_MASK_URL_SUFFIX}",
+            json={"polygons": [[[0, 0], [50, 0], [50, 50]]], "mode": "sam_refine"},
+        )
+    assert res.status_code == 200
+
+    # 驗證 DB 內 approved 退回 false
+    from sqlalchemy import select as _sel
+    refreshed = (
+        await db.execute(_sel(ProductionJob).where(ProductionJob.id == job.id))
+    ).scalar_one()
+    assert refreshed.approved is False
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_not_found(client: AsyncClient, db):
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    res = await client.post(
+        f"{JOBS_URL}/{uuid.uuid4()}{SAM_MASK_URL_SUFFIX}",
+        json={"polygons": [[[0, 0], [10, 0], [10, 10]]], "mode": "sam_refine"},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_non_admin(client: AsyncClient, db):
+    await _make_customer(client, db)
+    await _login(client, CUSTOMER_USER["email"], CUSTOMER_USER["password"])
+    res = await client.post(
+        f"{JOBS_URL}/{uuid.uuid4()}{SAM_MASK_URL_SUFFIX}",
+        json={"polygons": [[[0, 0], [10, 0], [10, 10]]], "mode": "sam_refine"},
+    )
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_unauthenticated(client: AsyncClient, db):
+    res = await client.post(
+        f"{JOBS_URL}/{uuid.uuid4()}{SAM_MASK_URL_SUFFIX}",
+        json={"polygons": [[[0, 0], [10, 0], [10, 10]]], "mode": "sam_refine"},
+    )
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_switch_to_sam_refine_without_extra_colors(
+    client: AsyncClient, db
+):
+    """job 缺 extra_colors 時切換 mode=sam_refine → 400（避免 worker crash）。"""
+    from production.models import ProductionJob
+
+    image = await _create_image(client, db)
+    job = ProductionJob(
+        image_id=uuid.UUID(image["id"]),
+        status="pending",
+        approved=False,
+        detail="standard",
+        difficulty="beginner",
+        mode="sam_weighted",  # 既有狀態：sam_weighted + weight_ratio
+        weight_ratio=0.6,
+        canvas_w_cm=30,
+        canvas_h_cm=40,
+        min_brush_diam_cm=1.0,
+        # 故意不給 extra_colors
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    res = await client.post(
+        f"{JOBS_URL}/{job.id}{SAM_MASK_URL_SUFFIX}",
+        json={
+            "polygons": [[[0, 0], [10, 0], [10, 10]]],
+            "mode": "sam_refine",
+        },
+    )
+    assert res.status_code == 400
+    assert "extra_colors" in res.json().get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_switch_to_sam_weighted_with_invalid_weight_ratio(
+    client: AsyncClient, db
+):
+    """weight_ratio 超出 0.5~0.8 時切換 mode=sam_weighted → 400。"""
+    from production.models import ProductionJob
+
+    image = await _create_image(client, db)
+    job = ProductionJob(
+        image_id=uuid.UUID(image["id"]),
+        status="pending",
+        approved=False,
+        detail="standard",
+        difficulty="beginner",
+        mode="sam_refine",
+        extra_colors=5,
+        weight_ratio=0.3,  # 故意超範圍
+        canvas_w_cm=30,
+        canvas_h_cm=40,
+        min_brush_diam_cm=1.0,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    res = await client.post(
+        f"{JOBS_URL}/{job.id}{SAM_MASK_URL_SUFFIX}",
+        json={
+            "polygons": [[[0, 0], [10, 0], [10, 10]]],
+            "mode": "sam_weighted",
+        },
+    )
+    assert res.status_code == 400
+    assert "weight_ratio" in res.json().get("detail", "")

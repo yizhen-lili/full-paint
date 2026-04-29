@@ -16,6 +16,7 @@ from production.schemas.request import (
     CreateJobsRequest,
     EliminateBorderRequest,
     MergeColorRequest,
+    SamMaskRequest,
     SmoothContourRequest,
     SuggestCanvasSizesRequest,
 )
@@ -25,6 +26,7 @@ from production.schemas.response import (
     ImageResponse,
     JobDetailResponse,
     JobListResponse,
+    SamMaskResponse,
     SignedUrlResponse,
     SuggestCanvasSizesResponse,
 )
@@ -177,6 +179,26 @@ async def post_process_smooth_contour(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.post_process(db, job_id, body.model_dump())
+
+
+@router.post(
+    "/admin/production/jobs/{job_id}/sam-mask",
+    response_model=SamMaskResponse,
+)
+async def update_sam_mask(
+    job_id: UUID,
+    body: SamMaskRequest,
+    operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """SAM 遮罩編輯（僅 status=pending 可改；polygons 即時生成 PNG，sam_points 等 Celery 推論）。"""
+    return await service.update_sam_mask(
+        db,
+        job_id,
+        sam_points=[p.model_dump() for p in body.sam_points] if body.sam_points else None,
+        polygons=body.polygons,
+        mode=body.mode,
+    )
 
 
 @router.post(

@@ -274,6 +274,115 @@ async def unapprove_job(db: AsyncSession, job_id: UUID) -> ProductionJob:
     return job
 
 
+# ── SAM mask edit ──────────────────────────────────────────────────────────────
+
+async def update_sam_mask(
+    db: AsyncSession,
+    job_id: UUID,
+    sam_points: list[dict] | None,
+    polygons: list[list[list[float]]] | None,
+    mode: str,
+) -> dict:
+    """admin_production.md §10「遮罩編輯時機限制」：僅 status=pending 可改。
+
+    - 寫回 sam_points / polygons（作為可編輯狀態的原始資料）
+    - polygons 給定 → 用 PIL 產生聯集 PNG → 上傳 Firebase（純幾何，不需 SAM）
+    - 純 sam_points（無 polygons）→ mask_url=null，等 Celery worker 用 SAM 推論
+    - approved 退回 false（與「合併色塊 / 消邊界」一致）
+    - mask_coverage 為 0~1 比例（與 api.md 範例 0.42 一致；不是百分比）
+
+    mode 改動需與 job 既有 extra_colors / weight_ratio 一致，否則 worker 會 crash。
+    """
+    job = await get_job(db, job_id)
+    if job.status != "pending":
+        raise BadRequestError(
+            f"遮罩僅在 status=pending 時可編輯（目前 {job.status}）"
+        )
+
+    # 沿用 JobParams.validate_mode_params 的一致性檢查（避免切換 mode 但缺對應參數）
+    if mode == "sam_refine":
+        if job.extra_colors is None or job.extra_colors <= 0:
+            raise BadRequestError(
+                "切換為 sam_refine 需先在建立任務時提供 extra_colors（> 0）"
+            )
+    elif mode == "sam_weighted":
+        if job.weight_ratio is None or not (0.5 <= float(job.weight_ratio) <= 0.8):
+            raise BadRequestError(
+                "切換為 sam_weighted 需先在建立任務時提供 weight_ratio（0.5 ~ 0.8）"
+            )
+
+    if not job.image_id:
+        raise BadRequestError("此任務無 image_id，無法計算遮罩")
+
+    image = (
+        await db.execute(select(Image).where(Image.id == job.image_id))
+    ).scalar_one_or_none()
+    if image is None:
+        raise BadRequestError("找不到對應的 image 紀錄")
+
+    img_w = int(image.width)
+    img_h = int(image.height)
+
+    # 寫回原始資料（供之後重建用）
+    job.sam_points = [p for p in (sam_points or [])]  # list[dict]
+    job.polygons = polygons or []
+    job.mode = mode
+
+    # coverage 為 None 時代表「尚未推論」（純 sam_points 走 Celery 路徑）
+    # polygons 路徑會即時計算為 0~1 比例
+    coverage: float | None = None
+    mask_url: str | None = None
+
+    if polygons:
+        try:
+            from PIL import Image as PILImage
+            from PIL import ImageDraw
+
+            mask = PILImage.new("L", (img_w, img_h), 0)  # 8-bit greyscale
+            draw = ImageDraw.Draw(mask)
+            for poly in polygons:
+                if len(poly) < 3:
+                    continue  # 至少 3 點才能成多邊形
+                pts = [(float(x), float(y)) for x, y in poly]
+                draw.polygon(pts, fill=255)
+
+            # 計算遮罩面積佔比（0~1，與 api.md 範例 0.42 一致）
+            # 兩位精度與 DB Numeric(6,2) 一致
+            white_pixels = sum(mask.histogram()[128:256])
+            coverage = round(white_pixels / (img_w * img_h), 2)
+
+            # 寫入 PNG bytes 並上傳 Firebase
+            import io
+            buf = io.BytesIO()
+            mask.save(buf, format="PNG")
+            png_bytes = buf.getvalue()
+
+            try:
+                bucket = get_bucket()
+                path = f"production_jobs/{job.id}/mask_{uuid.uuid4().hex[:8]}.png"
+                blob = bucket.blob(path)
+                blob.upload_from_string(png_bytes, content_type="image/png")
+                # 此檔私有，下載走 signed URL；先存 GCS 路徑
+                mask_url = f"gs://{bucket.name}/{path}"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Firebase upload failed for mask: %s", e)
+                mask_url = None  # 上傳失敗 → 保留遮罩座標等下次重試
+        except ImportError as e:
+            raise BadRequestError("Pillow 未安裝，無法產出遮罩 PNG") from e
+
+    job.mask_url = mask_url
+    job.mask_coverage = coverage
+    job.approved = False
+    job.approved_at = None
+
+    await db.commit()
+    await db.refresh(job)
+    return {
+        "mask_url": job.mask_url,
+        "mask_coverage": float(job.mask_coverage) if job.mask_coverage is not None else None,
+    }
+
+
 # ── PDF export ─────────────────────────────────────────────────────────────────
 
 # 規格：admin_production.md §6 — 匯出 PDF 時 SVG viewBox 四周各擴展 5cm（裝訂留白）

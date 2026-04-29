@@ -240,7 +240,7 @@
 | sam_points | JSONB | nullable | SAM 前景/背景點 [{x,y,label}] |
 | polygons | JSONB | nullable | 多邊形頂點 [[[x,y],...]] |
 | mask_url | VARCHAR | nullable | Firebase Storage 遮罩 PNG 路徑（私有） |
-| mask_coverage | NUMERIC(6,2) | nullable | 遮罩佔圖片面積比例（%） |
+| mask_coverage | NUMERIC(6,2) | nullable | 遮罩佔圖片面積比例 0~1（例如 0.42 表 42%；純 sam_points 等 worker 推論時為 null） |
 | svg_url | VARCHAR | nullable | Firebase Storage 模板 SVG 路徑（私有） |
 | filled_template_url | VARCHAR | nullable | Firebase Storage 完成示意圖路徑（公開） |
 | snapped_rgb_url | VARCHAR | nullable | Firebase Storage 色彩快照路徑（私有，後處理用） |

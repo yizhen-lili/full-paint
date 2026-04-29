@@ -107,3 +107,9 @@ class CanvasSizeSuggestion(BaseModel):
 
 class SuggestCanvasSizesResponse(BaseModel):
     items: list[CanvasSizeSuggestion]
+
+
+class SamMaskResponse(BaseModel):
+    mask_url: str | None
+    # 遮罩面積佔圖片面積比例 0~1；純 sam_points 等 Celery 推論時為 null
+    mask_coverage: float | None

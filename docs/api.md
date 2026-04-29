@@ -519,9 +519,9 @@ Request:  { "border_between": [1, 3], "smoothness": 3 }
 Request: {
   "sam_points": [{"x": 100, "y": 200, "label": 1}, {"x": 50, "y": 80, "label": 0}],
   "polygons": [[[x,y], [x,y], ...]],
-  "mode": "sam|sam_weighted"
+  "mode": "sam_refine|sam_weighted"
 }
-Response 200: { "mask_url": "string", "mask_coverage": 0.42 }
+Response 200: { "mask_url": "string|null", "mask_coverage": "0.42 (0~1 比例) | null（純 sam_points 等 worker 推論）" }
 ```
 > label: 1=前景點, 0=背景點；完成後更新 production_job 的 mask_url / mask_coverage，approved 退回 false
 

@@ -85,7 +85,7 @@ backend/
 | sam_points | JSONB nullable | [{x,y,label}] |
 | polygons | JSONB nullable | [[[x,y],...]] |
 | mask_url | VARCHAR nullable | Firebase 私有 |
-| mask_coverage | NUMERIC(6,2) nullable | % |
+| mask_coverage | NUMERIC(6,2) nullable | 0~1 比例（純 sam_points 等 worker 推論時為 null） |
 | svg_url | VARCHAR nullable | Firebase 私有 |
 | filled_template_url | VARCHAR nullable | Firebase 公開 |
 | snapped_rgb_url | VARCHAR nullable | Firebase 私有 |

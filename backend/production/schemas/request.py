@@ -128,3 +128,23 @@ class SmoothContourRequest(BaseModel):
         if not (1 <= self.smoothness <= 10):
             raise ValueError("smoothness 必須在 1 ~ 10 之間")
         return self
+
+
+class SamPointInput(BaseModel):
+    x: float
+    y: float
+    label: int  # 1 = foreground, 0 = background
+
+
+class SamMaskRequest(BaseModel):
+    """admin_production.md §10：遮罩編輯時機限制 — 僅 status=pending 可改。"""
+
+    sam_points: list[SamPointInput] | None = None
+    polygons: list[list[list[float]]] | None = None  # [[[x,y], ...], ...]
+    mode: Literal["sam_refine", "sam_weighted"]
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "SamMaskRequest":
+        if not self.sam_points and not self.polygons:
+            raise ValueError("sam_points 與 polygons 至少需提供一個")
+        return self

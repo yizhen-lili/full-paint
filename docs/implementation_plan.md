@@ -223,7 +223,7 @@
 - Accept image_id or custom_request_id (not both simultaneously from different sources)
 - Create Celery tasks with batch_id grouping; queue sequentially (one at a time)
 - SAM model lazy-load on first request (5-10sec cold start)
-- Store sam_points, polygons, mask_url on job; recalculate mask_coverage as percentage
+- Store sam_points, polygons, mask_url on job; recalculate mask_coverage as 0~1 ratio (null when sam_points-only awaits Celery inference)
 - On failure: on_failure callback deletes all Firebase uploads recorded in task context
 - Post-process operations: modify snapped_rgb, regenerate SVG, update filled_template, set approved=false
 - Approve endpoint: set approved=true, store notes, record approved_at timestamp
