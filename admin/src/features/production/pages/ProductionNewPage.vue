@@ -1,0 +1,396 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  ChevronLeft,
+  Loader2,
+  Upload,
+  Image as ImageIcon,
+  Plus,
+  Trash2,
+  Send,
+  Sparkles,
+  AlertTriangle,
+} from 'lucide-vue-next'
+
+import PageHeader from '@/shared/components/PageHeader.vue'
+import Card from '@/shared/ui/Card.vue'
+import Button from '@/shared/ui/Button.vue'
+import Select from '@/shared/ui/Select.vue'
+import Input from '@/shared/ui/Input.vue'
+
+import { useCreateJobsMutation } from '../queries'
+import {
+  CANVAS_SIZES,
+  DETAIL_LABEL,
+  DIFFICULTY_LABEL,
+  createImage,
+  requestUploadProductionImage,
+  type CreateJobsRequest,
+  type Detail,
+  type Difficulty,
+} from '../api'
+import { useCustomRequestsQuery } from '@/features/custom_requests/queries'
+
+const router = useRouter()
+
+const createJobsMut = useCreateJobsMutation()
+
+// ── Source ────────────────────────────────────────────────────────────
+const source = ref<'image' | 'custom_request'>('image')
+const apiError = ref<string | null>(null)
+
+// 上傳
+const fileInput = ref<HTMLInputElement | null>(null)
+const isUploading = ref(false)
+const uploadedImageId = ref<string | null>(null)
+const uploadedImageUrl = ref<string | null>(null)
+const uploadedFilename = ref<string | null>(null)
+
+async function onFileChange(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  if (file.size > 20 * 1024 * 1024) {
+    apiError.value = '檔案超過 20MB'
+    return
+  }
+  if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
+    apiError.value = '只接受 JPEG / PNG'
+    return
+  }
+  apiError.value = null
+  isUploading.value = true
+  try {
+    // 1) 取 signed URL
+    const sign = await requestUploadProductionImage({
+      filename: file.name,
+      content_type: file.type as 'image/jpeg' | 'image/png',
+      size: file.size,
+    })
+
+    // 2) PUT 直傳 GCS
+    const putRes = await fetch(sign.upload_url, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file,
+    })
+    if (!putRes.ok) throw new Error('Firebase 直傳失敗')
+
+    // 3) 讀圖片寬高（前端用 Image element）
+    const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const img = new window.Image()
+      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
+      img.onerror = reject
+      img.src = URL.createObjectURL(file)
+    })
+
+    // 4) 落地 metadata
+    const meta = await createImage({
+      original_url: sign.public_url,
+      filename: file.name,
+      width: dims.width,
+      height: dims.height,
+    })
+    uploadedImageId.value = meta.id
+    uploadedImageUrl.value = sign.public_url
+    uploadedFilename.value = file.name
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '上傳失敗'
+  } finally {
+    isUploading.value = false
+    if (fileInput.value) fileInput.value.value = ''
+  }
+}
+
+// 客製申請候選
+const customCandidatesQuery = useCustomRequestsQuery(() => ({
+  // 只列「未送過報價」的（quote_pending / negotiating / draft_revision）
+  // status 篩選後端目前單值，要拿 3 個只能 client filter
+  page_size: 100,
+}))
+
+const customCandidates = computed(() => {
+  const items = customCandidatesQuery.data.value?.items ?? []
+  const allowed = new Set(['quote_pending', 'negotiating', 'draft_revision'])
+  return items.filter((c) => allowed.has(c.status))
+})
+
+const selectedCustomRequestId = ref<string | null>(null)
+const selectedCustomRequest = computed(() =>
+  customCandidates.value.find((c) => c.id === selectedCustomRequestId.value),
+)
+
+const customOptions = computed(() => {
+  const opts = [{ value: '', label: '— 請選擇客製申請 —' }]
+  for (const c of customCandidates.value) {
+    opts.push({
+      value: c.id,
+      label: `#${c.id.slice(0, 8)} · ${c.user_name} · ${c.status === 'quote_pending' ? '等待報價' : c.status === 'negotiating' ? '洽談中' : '需修改'}`,
+    })
+  }
+  return opts
+})
+
+// ── 批次組合表 ────────────────────────────────────────────────────────
+interface ComboRow {
+  canvas_size: string  // 'WxH' 字串
+  difficulty: Difficulty
+  detail: Detail
+}
+
+const combos = ref<ComboRow[]>([
+  { canvas_size: '30x40', difficulty: 'intermediate', detail: 'standard' },
+])
+
+function addCombo() {
+  if (combos.value.length >= 10) {
+    apiError.value = '單批最多 10 組'
+    return
+  }
+  const last = combos.value[combos.value.length - 1]
+  combos.value.push({ ...last })
+}
+
+function removeCombo(idx: number) {
+  if (combos.value.length === 1) return
+  combos.value.splice(idx, 1)
+}
+
+const canvasOptions = CANVAS_SIZES.map((s) => ({
+  value: `${s.w}x${s.h}`,
+  label: s.label,
+}))
+
+const difficultyOptions: { value: Difficulty; label: string }[] = [
+  { value: 'beginner', label: DIFFICULTY_LABEL.beginner },
+  { value: 'elementary', label: DIFFICULTY_LABEL.elementary },
+  { value: 'intermediate', label: DIFFICULTY_LABEL.intermediate },
+  { value: 'advanced', label: DIFFICULTY_LABEL.advanced },
+]
+
+const detailOptions: { value: Detail; label: string }[] = [
+  { value: 'rough', label: DETAIL_LABEL.rough },
+  { value: 'standard', label: DETAIL_LABEL.standard },
+  { value: 'detailed', label: DETAIL_LABEL.detailed },
+  { value: 'premium', label: DETAIL_LABEL.premium },
+]
+
+// ── 提交 ──────────────────────────────────────────────────────────────
+const canSubmit = computed(() => {
+  if (combos.value.length === 0) return false
+  if (source.value === 'image' && !uploadedImageId.value) return false
+  if (source.value === 'custom_request' && !selectedCustomRequestId.value) return false
+  return true
+})
+
+async function submit() {
+  if (!canSubmit.value) return
+  apiError.value = null
+
+  const payload: CreateJobsRequest = {
+    image_id: source.value === 'image' ? uploadedImageId.value : null,
+    custom_request_id: source.value === 'custom_request' ? selectedCustomRequestId.value : null,
+    jobs: combos.value.map((c) => {
+      const [w, h] = c.canvas_size.split('x').map(Number)
+      return {
+        detail: c.detail,
+        difficulty: c.difficulty,
+        mode: 'standard' as const,
+        canvas_w_cm: w,
+        canvas_h_cm: h,
+      }
+    }),
+  }
+
+  try {
+    const res = await createJobsMut.mutateAsync(payload)
+    if (res.batch_id) {
+      router.push(`/admin/production?batch_id=${res.batch_id}`)
+    } else {
+      router.push(`/admin/production/${res.job_ids[0]}`)
+    }
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '建立失敗'
+  }
+}
+</script>
+
+<template>
+  <div class="flex items-center gap-2 mb-3">
+    <button
+      type="button"
+      class="text-[13px] text-ink-muted hover:text-ink-strong inline-flex items-center gap-1 transition-colors"
+      @click="router.push('/admin/production')"
+    >
+      <ChevronLeft :size="14" :stroke-width="1.5" />
+      返回任務列表
+    </button>
+  </div>
+
+  <PageHeader title="新增製作任務" subtitle="上傳圖片或從客製申請帶入照片，設定批次組合" />
+
+  <div
+    v-if="apiError"
+    class="mb-5 px-4 py-3 border border-state-danger/40 bg-[var(--color-state-danger)]/[0.06] text-state-danger text-[13px] rounded-[var(--radius-xs)] flex items-start gap-2"
+  >
+    <AlertTriangle :size="14" :stroke-width="1.5" class="mt-0.5" />
+    <span class="flex-1">{{ apiError }}</span>
+    <button class="text-[12px] underline" @click="apiError = null">關閉</button>
+  </div>
+
+  <div class="space-y-5">
+    <!-- Section 1：來源 -->
+    <Card>
+      <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-4">1. 來源</h2>
+
+      <div class="flex gap-2 mb-5">
+        <button
+          type="button"
+          class="flex-1 px-4 py-3 border rounded-[var(--radius-xs)] text-[13px] transition-colors"
+          :class="source === 'image' ? 'border-accent bg-[var(--color-accent)]/[0.04] text-ink-strong' : 'border-line-hairline text-ink-muted hover:bg-paper-subtle'"
+          @click="source = 'image'"
+        >
+          <ImageIcon :size="16" :stroke-width="1.5" class="inline mr-1.5" />
+          上傳新圖片
+        </button>
+        <button
+          type="button"
+          class="flex-1 px-4 py-3 border rounded-[var(--radius-xs)] text-[13px] transition-colors"
+          :class="source === 'custom_request' ? 'border-accent bg-[var(--color-accent)]/[0.04] text-ink-strong' : 'border-line-hairline text-ink-muted hover:bg-paper-subtle'"
+          @click="source = 'custom_request'"
+        >
+          <Sparkles :size="16" :stroke-width="1.5" class="inline mr-1.5" />
+          從客製申請帶入
+        </button>
+      </div>
+
+      <!-- 上傳 -->
+      <div v-if="source === 'image'">
+        <input
+          ref="fileInput"
+          type="file"
+          accept="image/jpeg,image/png"
+          class="hidden"
+          @change="onFileChange"
+        />
+        <div
+          v-if="!uploadedImageId && !isUploading"
+          class="aspect-[4/3] flex flex-col items-center justify-center gap-3 border-2 border-dashed border-line-strong rounded-[var(--radius-sm)] bg-paper-surface text-ink-muted"
+        >
+          <ImageIcon :size="32" :stroke-width="1.25" />
+          <p class="text-[13px]">JPEG / PNG，最大 20MB</p>
+          <Button variant="secondary" @click="fileInput?.click()">
+            <Upload :size="14" :stroke-width="1.5" />
+            選檔上傳
+          </Button>
+        </div>
+        <div
+          v-else-if="isUploading"
+          class="aspect-[4/3] flex flex-col items-center justify-center gap-2 border border-line-hairline rounded-[var(--radius-sm)] bg-paper-subtle"
+        >
+          <Loader2 :size="24" :stroke-width="1.5" class="animate-spin text-ink-muted" />
+          <span class="text-[13px] text-ink-muted">上傳中...（直傳 Firebase）</span>
+        </div>
+        <div
+          v-else
+          class="aspect-[4/3] relative rounded-[var(--radius-sm)] border border-line-hairline overflow-hidden bg-paper-canvas"
+        >
+          <img
+            v-if="uploadedImageUrl"
+            :src="uploadedImageUrl"
+            alt="已上傳圖片"
+            class="w-full h-full object-contain"
+          />
+          <div class="absolute top-2 left-2 px-2 h-7 inline-flex items-center text-[12px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-state-success/20 text-state-success">
+            ✓ 已上傳：{{ uploadedFilename }}
+          </div>
+          <button
+            type="button"
+            class="absolute top-2 right-2 h-7 px-2 inline-flex items-center gap-1 text-[12px] rounded-[var(--radius-xs)] bg-paper-surface/90 text-ink-muted hover:text-ink-strong"
+            @click="uploadedImageId = null; uploadedImageUrl = null; uploadedFilename = null"
+          >
+            重新上傳
+          </button>
+        </div>
+      </div>
+
+      <!-- 從客製申請 -->
+      <div v-else>
+        <div v-if="customCandidatesQuery.isLoading.value" class="py-8 flex justify-center text-ink-muted">
+          <Loader2 :size="20" :stroke-width="1.5" class="animate-spin" />
+        </div>
+        <div v-else-if="customCandidates.length === 0" class="py-8 text-center text-ink-muted text-[13px]">
+          目前沒有「等待報價 / 洽談中 / 需修改」狀態的客製申請。
+        </div>
+        <div v-else class="space-y-3">
+          <Select v-model="selectedCustomRequestId" :options="customOptions" />
+          <div
+            v-if="selectedCustomRequest"
+            class="p-3 border border-line-hairline rounded-[var(--radius-xs)] bg-paper-subtle text-[13px]"
+          >
+            <p class="text-ink-strong font-medium">{{ selectedCustomRequest.user_name }}</p>
+            <p class="text-ink-muted text-[12px]">{{ selectedCustomRequest.user_email }}</p>
+            <p class="text-[12px] text-ink-default mt-1">
+              申請於 {{ new Date(selectedCustomRequest.created_at).toLocaleString('zh-TW') }}
+            </p>
+          </div>
+          <p class="text-[12px] text-ink-muted">
+            ⚠️ 送出後客製申請會自動轉為「洽談中」（若原為「等待報價」），且申請內容鎖定。
+          </p>
+        </div>
+      </div>
+    </Card>
+
+    <!-- Section 2：批次組合 -->
+    <Card>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-display text-ink-strong text-[18px] leading-[26px]">
+          2. 批次組合
+          <span class="ml-2 text-[12px] text-ink-muted font-sans">{{ combos.length }} 組</span>
+        </h2>
+        <Button variant="secondary" :disabled="combos.length >= 10" @click="addCombo">
+          <Plus :size="14" :stroke-width="1.5" />
+          新增組合
+        </Button>
+      </div>
+
+      <div class="space-y-2">
+        <div
+          v-for="(c, idx) in combos"
+          :key="idx"
+          class="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-2 p-3 border border-line-hairline rounded-[var(--radius-xs)]"
+        >
+          <Select v-model="c.canvas_size" :options="canvasOptions" />
+          <Select v-model="c.difficulty" :options="difficultyOptions" />
+          <Select v-model="c.detail" :options="detailOptions" />
+          <button
+            type="button"
+            class="h-9 w-9 inline-flex items-center justify-center rounded-[var(--radius-xs)] text-ink-muted hover:bg-[var(--color-state-danger)]/[0.10] hover:text-state-danger transition-colors disabled:opacity-30"
+            :disabled="combos.length === 1"
+            aria-label="移除"
+            @click="removeCombo(idx)"
+          >
+            <Trash2 :size="14" :stroke-width="1.5" />
+          </button>
+        </div>
+      </div>
+
+      <p class="mt-3 text-[12px] text-ink-muted">
+        多組會共用同一個 batch_id，依序進入 Celery 佇列處理（不並發）。任一組失敗 → 後續未跑的組會自動取消。
+      </p>
+    </Card>
+
+    <!-- 送出 -->
+    <div class="flex justify-end">
+      <Button
+        variant="primary"
+        :disabled="!canSubmit || createJobsMut.isPending.value"
+        @click="submit"
+      >
+        <Loader2 v-if="createJobsMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+        <Send v-else :size="14" :stroke-width="1.5" />
+        送出 {{ combos.length }} 組任務
+      </Button>
+    </div>
+  </div>
+</template>

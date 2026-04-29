@@ -92,6 +92,21 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-custom-requests-detail',
         component: () => import('@/features/custom_requests/pages/CustomRequestDetailPage.vue'),
       },
+      {
+        path: 'production',
+        name: 'admin-production',
+        component: () => import('@/features/production/pages/ProductionListPage.vue'),
+      },
+      {
+        path: 'production/new',
+        name: 'admin-production-new',
+        component: () => import('@/features/production/pages/ProductionNewPage.vue'),
+      },
+      {
+        path: 'production/:jobId',
+        name: 'admin-production-detail',
+        component: () => import('@/features/production/pages/ProductionJobDetailPage.vue'),
+      },
     ],
   },
   {
