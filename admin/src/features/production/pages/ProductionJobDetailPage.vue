@@ -393,6 +393,7 @@ function fmtDateTime(iso: string | null): string {
       :open="postProcessOpen"
       :type="postProcessType"
       :palette="job.palette_json ?? []"
+      :image-url="job.filled_template_url"
       :pending="mergeMut.isPending.value || eliminateMut.isPending.value || smoothMut.isPending.value"
       @close="postProcessOpen = false"
       @confirm-merge="onMerge"

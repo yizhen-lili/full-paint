@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import Dialog from '@/shared/ui/Dialog.vue'
 import Button from '@/shared/ui/Button.vue'
 import Label from '@/shared/ui/Label.vue'
 import Select from '@/shared/ui/Select.vue'
-import { Loader2, AlertTriangle } from 'lucide-vue-next'
+import { Loader2, AlertTriangle, MousePointer } from 'lucide-vue-next'
 
 import type { PaletteColor } from '../api'
 
@@ -14,6 +14,8 @@ const props = defineProps<{
   open: boolean
   type: OperationType | null
   palette: PaletteColor[]
+  /** filled_template_url，可選；提供時 dialog 會多一個「點圖選色塊」面板 */
+  imageUrl?: string | null
   pending: boolean
 }>()
 
@@ -29,6 +31,13 @@ const param2 = ref<string>('')  // second template_id
 const smoothness = ref<string>('3')
 const errors = ref<Record<string, string>>({})
 
+// canvas pick：next click 填到哪個 param
+const canvasMode = ref(false)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+let imgData: ImageData | null = null
+const canvasError = ref<string | null>(null)
+const canvasLoading = ref(false)
+
 watch(
   [() => props.open, () => props.type],
   () => {
@@ -37,9 +46,75 @@ watch(
       param2.value = ''
       smoothness.value = '3'
       errors.value = {}
+      canvasError.value = null
+      // canvas 開啟時不自動進 mode；要等 user 點按鈕（避免每次開 dialog 都重畫）
+      canvasMode.value = false
     }
   },
 )
+
+watch(
+  [() => canvasMode.value, () => props.imageUrl],
+  async () => {
+    if (!canvasMode.value || !props.imageUrl) return
+    canvasLoading.value = true
+    canvasError.value = null
+    try {
+      // 等 next tick 讓 canvas DOM 渲染
+      await new Promise((r) => setTimeout(r, 50))
+      const c = canvasRef.value
+      if (!c) return
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('圖片載入失敗'))
+        img.src = props.imageUrl!
+      })
+      const maxW = 600
+      const ratio = img.width > maxW ? maxW / img.width : 1
+      c.width = Math.round(img.width * ratio)
+      c.height = Math.round(img.height * ratio)
+      const ctx = c.getContext('2d')
+      if (!ctx) return
+      ctx.drawImage(img, 0, 0, c.width, c.height)
+      imgData = ctx.getImageData(0, 0, c.width, c.height)
+    } catch (e) {
+      canvasError.value = (e as Error).message
+    } finally {
+      canvasLoading.value = false
+    }
+  },
+)
+
+function onCanvasClick(e: MouseEvent) {
+  if (!canvasRef.value || !imgData) return
+  const rect = canvasRef.value.getBoundingClientRect()
+  const x = Math.floor((e.clientX - rect.left) * (canvasRef.value.width / rect.width))
+  const y = Math.floor((e.clientY - rect.top) * (canvasRef.value.height / rect.height))
+  const idx = (y * imgData.width + x) * 4
+  const r = imgData.data[idx]
+  const g = imgData.data[idx + 1]
+  const b = imgData.data[idx + 2]
+  // 找 palette 中最近的 RGB
+  let best: { id: number; dist: number } | null = null
+  for (const p of props.palette) {
+    const [pr, pg, pb] = p.rgb
+    const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+    if (!best || dist < best.dist) best = { id: p.template_id, dist }
+  }
+  if (!best) return
+  // 填到下一個空 slot（先 param1，再 param2）
+  if (!param1.value) {
+    param1.value = String(best.id)
+  } else if (!param2.value) {
+    param2.value = String(best.id)
+  } else {
+    // 兩個都滿了 → 重置 param1
+    param1.value = String(best.id)
+    param2.value = ''
+  }
+}
 
 const titles: Record<OperationType, string> = {
   merge_color: '合併色塊',
@@ -128,6 +203,38 @@ const smoothnessOptions = [
         <AlertTriangle :size="12" :stroke-width="1.5" class="mt-0.5 shrink-0" />
         <span>{{ labels[type].warn }}</span>
       </p>
+
+      <!-- 點圖選色塊 toggle -->
+      <div v-if="imageUrl">
+        <button
+          type="button"
+          class="text-[12px] inline-flex items-center gap-1 text-ink-muted hover:text-accent transition-colors"
+          @click="canvasMode = !canvasMode"
+        >
+          <MousePointer :size="12" :stroke-width="1.5" />
+          {{ canvasMode ? '收起預覽圖' : '從預覽圖點選色塊' }}
+        </button>
+        <div
+          v-if="canvasMode"
+          class="mt-2 rounded-[var(--radius-sm)] border border-line-hairline bg-paper-canvas overflow-hidden relative"
+        >
+          <canvas
+            ref="canvasRef"
+            class="block max-w-full h-auto cursor-crosshair"
+            @click="onCanvasClick"
+          />
+          <div
+            v-if="canvasLoading"
+            class="absolute inset-0 flex items-center justify-center bg-paper-canvas/80"
+          >
+            <Loader2 :size="20" :stroke-width="1.5" class="animate-spin text-ink-muted" />
+          </div>
+          <p v-if="canvasError" class="p-2 text-[11px] text-state-danger">{{ canvasError }}</p>
+        </div>
+        <p v-if="canvasMode" class="mt-1 text-[11px] text-ink-muted">
+          點圖會依序填到下方第 1 / 第 2 欄；兩格都滿會從第 1 欄重新開始。
+        </p>
+      </div>
 
       <div>
         <Label>{{ labels[type].p1 }}</Label>
