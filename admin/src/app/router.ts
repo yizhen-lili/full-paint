@@ -117,6 +117,16 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-discounts-stats',
         component: () => import('@/features/discounts/pages/CouponConfigStatsPage.vue'),
       },
+      {
+        path: 'users',
+        name: 'admin-users',
+        component: () => import('@/features/admin_users/pages/UsersListPage.vue'),
+      },
+      {
+        path: 'users/:id',
+        name: 'admin-users-detail',
+        component: () => import('@/features/admin_users/pages/UserDetailPage.vue'),
+      },
     ],
   },
   {
