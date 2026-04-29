@@ -24,6 +24,9 @@ import type { PaletteMapping } from '../api_mapping'
 
 import PhysicalColorPickerDialog from '../components/PhysicalColorPickerDialog.vue'
 import CopyMappingsDialog from '../components/CopyMappingsDialog.vue'
+import PalettePreviewCanvas from '../components/PalettePreviewCanvas.vue'
+
+import { useJobQuery } from '@/features/production/queries'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +39,15 @@ const copyMut = useCopyMappingsMutation(jobId.value)
 const completeMut = useCompleteMappingsMutation(jobId.value)
 
 const mappings = computed(() => data.value?.mappings ?? [])
+
+// 抓 filled_template_url 給 canvas 預覽用
+const { data: jobData } = useJobQuery(jobId)
+const filledTemplateUrl = computed(() => jobData.value?.filled_template_url ?? null)
+
+function onCanvasPick(templateId: number) {
+  const m = mappings.value.find((x) => x.template_id === templateId)
+  if (m) openPicker(m)
+}
 
 const apiError = ref<string | null>(null)
 const completeResult = ref<{
@@ -189,51 +201,65 @@ async function complete() {
     <p class="text-[13px] text-ink-muted">此 job 尚無調色盤資料（製作未完成？）</p>
   </Card>
 
-  <Card v-else>
-    <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-4">調色盤</h2>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-      <div
-        v-for="m in mappings"
-        :key="m.template_id"
-        class="p-3 border border-line-hairline rounded-[var(--radius-xs)] flex items-center gap-3 cursor-pointer hover:bg-paper-subtle transition-colors"
-        @click="openPicker(m)"
-      >
-        <!-- 演算法色 -->
-        <div class="text-center shrink-0">
-          <div
-            class="w-12 h-12 rounded-[var(--radius-xs)] border border-line-hairline"
-            :style="{ backgroundColor: rgbToHex(m.algorithm_rgb) }"
-          />
-          <p class="mt-1 text-[10px] text-ink-muted">演算 #{{ m.template_id }}</p>
-        </div>
+  <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <!-- 左：canvas 預覽 -->
+    <Card>
+      <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-3">即時預覽</h2>
+      <PalettePreviewCanvas
+        :image-url="filledTemplateUrl"
+        :mappings="mappings"
+        @pick-template="onCanvasPick"
+      />
+    </Card>
 
-        <span class="text-ink-muted text-[12px] shrink-0">→</span>
-
-        <!-- 實體色（mapped）-->
-        <div v-if="m.physical_color" class="flex-1 min-w-0 flex items-center gap-2">
-          <div
-            class="w-12 h-12 rounded-[var(--radius-xs)] border border-line-hairline shrink-0"
-            :style="{ backgroundColor: rgbToHex(m.physical_color.rgb) }"
-          />
-          <div class="flex-1 min-w-0">
-            <p class="text-[12px] font-mono text-ink-strong">
-              {{ m.physical_color.code }}
-              <span
-                v-if="m.mapped_by === 'system'"
-                class="ml-1 text-[10px] text-ink-muted"
-              >（自動）</span>
-            </p>
-            <p class="text-[12px] text-ink-default truncate">{{ m.physical_color.name }}</p>
-            <p class="text-[10px]" :class="m.physical_color.stock_ml === 0 ? 'text-state-danger' : 'text-ink-muted'">
-              庫存 {{ m.physical_color.stock_ml }} ml
-              <span v-if="m.required_ml"> · 需 {{ m.required_ml }} ml</span>
-            </p>
+    <!-- 右：調色盤對應表 -->
+    <Card>
+      <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-4">
+        調色盤
+        <span class="ml-2 text-[12px] text-ink-muted font-sans">{{ mappings.length }} 色</span>
+      </h2>
+      <div class="space-y-2 max-h-[600px] overflow-y-auto">
+        <div
+          v-for="m in mappings"
+          :key="m.template_id"
+          class="p-3 border border-line-hairline rounded-[var(--radius-xs)] flex items-center gap-3 cursor-pointer hover:bg-paper-subtle transition-colors"
+          @click="openPicker(m)"
+        >
+          <div class="text-center shrink-0">
+            <div
+              class="w-10 h-10 rounded-[var(--radius-xs)] border border-line-hairline"
+              :style="{ backgroundColor: rgbToHex(m.algorithm_rgb) }"
+            />
+            <p class="mt-1 text-[10px] text-ink-muted">#{{ m.template_id }}</p>
           </div>
+
+          <span class="text-ink-muted text-[12px] shrink-0">→</span>
+
+          <div v-if="m.physical_color" class="flex-1 min-w-0 flex items-center gap-2">
+            <div
+              class="w-10 h-10 rounded-[var(--radius-xs)] border border-line-hairline shrink-0"
+              :style="{ backgroundColor: rgbToHex(m.physical_color.rgb) }"
+            />
+            <div class="flex-1 min-w-0">
+              <p class="text-[12px] font-mono text-ink-strong">
+                {{ m.physical_color.code }}
+                <span
+                  v-if="m.mapped_by === 'system'"
+                  class="ml-1 text-[10px] text-ink-muted"
+                >（自動）</span>
+              </p>
+              <p class="text-[12px] text-ink-default truncate">{{ m.physical_color.name }}</p>
+              <p class="text-[10px]" :class="m.physical_color.stock_ml === 0 ? 'text-state-danger' : 'text-ink-muted'">
+                庫存 {{ m.physical_color.stock_ml }} ml
+                <span v-if="m.required_ml"> · 需 {{ m.required_ml }} ml</span>
+              </p>
+            </div>
+          </div>
+          <div v-else class="flex-1 text-[12px] text-state-warning">尚未對應</div>
         </div>
-        <div v-else class="flex-1 text-[12px] text-state-warning">尚未對應</div>
       </div>
-    </div>
-  </Card>
+    </Card>
+  </div>
 
   <!-- Dialogs -->
   <PhysicalColorPickerDialog
