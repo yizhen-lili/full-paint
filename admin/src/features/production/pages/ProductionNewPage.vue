@@ -60,6 +60,12 @@ async function onFileChange(e: Event) {
   }
   apiError.value = null
   isUploading.value = true
+
+  // 用 blob URL 做即時預覽（不依賴 signed URL TTL，上傳成功立即看得到）
+  const blobUrl = URL.createObjectURL(file)
+  uploadedImageUrl.value = blobUrl
+  uploadedFilename.value = file.name
+
   try {
     // 1) 取 signed URL
     const sign = await requestUploadProductionImage({
@@ -76,15 +82,16 @@ async function onFileChange(e: Event) {
     })
     if (!putRes.ok) throw new Error('Firebase 直傳失敗')
 
-    // 3) 讀圖片寬高（前端用 Image element）
+    // 3) 讀圖片寬高
     const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
       const img = new window.Image()
       img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
       img.onerror = reject
-      img.src = URL.createObjectURL(file)
+      img.src = blobUrl
     })
 
-    // 4) 落地 metadata
+    // 4) 落地 metadata（後端需要的 original_url 是 GCS 路徑用簽章 URL，
+    // 這裡傳 sign.public_url 給後端記錄；但前端 preview 仍用 blob URL）
     const meta = await createImage({
       original_url: sign.public_url,
       filename: file.name,
@@ -92,10 +99,11 @@ async function onFileChange(e: Event) {
       height: dims.height,
     })
     uploadedImageId.value = meta.id
-    uploadedImageUrl.value = sign.public_url
-    uploadedFilename.value = file.name
   } catch (e) {
     apiError.value = (e as { message?: string }).message || '上傳失敗'
+    uploadedImageUrl.value = null
+    uploadedFilename.value = null
+    URL.revokeObjectURL(blobUrl)
   } finally {
     isUploading.value = false
     if (fileInput.value) fileInput.value.value = ''

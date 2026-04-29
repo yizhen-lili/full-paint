@@ -20,8 +20,16 @@ _UPLOAD_TTL_MINUTES = 15
 
 
 def generate_upload_signed_url(filename: str, content_type: str) -> dict:
+    """產出 production_images 的 PUT signed URL + 短效 GET signed URL。
+
+    production_images 是 admin 內部資產（不開放公開讀），rules 禁讀；admin 端要看圖必須走
+    signed URL。為了讓前端上傳完立刻能 preview（且減少多一次 round-trip），這裡回傳一個
+    15-min TTL 的 GET signed URL 作為 `public_url`（命名沿用 API 契約，但實際是私有簽章）。
+
+    若需要長期顯示，前端應在 detail 頁時呼叫專屬 signed-url 端點重新取一份。
+    """
     bucket = get_bucket()
-    safe_name = filename.replace(" ", "_")
+    safe_name = filename.replace(" ", "_").replace("/", "_")
     path = f"production_images/{uuid.uuid4().hex}_{safe_name}"
     blob = bucket.blob(path)
     ttl = timedelta(minutes=_UPLOAD_TTL_MINUTES)
@@ -31,10 +39,14 @@ def generate_upload_signed_url(filename: str, content_type: str) -> dict:
         method="PUT",
         content_type=content_type,
     )
-    public_url = f"https://storage.googleapis.com/{bucket.name}/{path}"
+    read_url = blob.generate_signed_url(
+        version="v4",
+        expiration=ttl,
+        method="GET",
+    )
     return {
         "upload_url": upload_url,
-        "public_url": public_url,
+        "public_url": read_url,
         "expires_at": datetime.now(UTC) + ttl,
     }
 
