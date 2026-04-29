@@ -178,10 +178,13 @@ function submit() {
         <p v-if="errors.discount_value" class="mt-1 text-[12px] text-state-danger">{{ errors.discount_value }}</p>
       </div>
 
-      <!-- 最低消費 -->
-      <div>
+      <!-- 最低消費（auto_checkout 不發券，所以隱藏這欄）-->
+      <div v-if="couponType !== 'auto_checkout'">
         <Label>使用時的最低消費門檻（NT$，可空）</Label>
         <Input v-model="minPurchase" type="number" min="0" placeholder="留空表示無門檻" />
+        <p class="mt-1 text-[11px] text-ink-muted">
+          客戶<b>用這張券</b>時，訂單小計需 ≥ 此金額才能套用。留空 = 無門檻。
+        </p>
         <p v-if="errors.min_purchase" class="mt-1 text-[12px] text-state-danger">{{ errors.min_purchase }}</p>
       </div>
 
@@ -189,13 +192,31 @@ function submit() {
       <div v-if="showValidDays">
         <Label>發放後有效天數</Label>
         <Input v-model="validDays" type="number" min="1" />
+        <p class="mt-1 text-[11px] text-ink-muted">
+          券發出去後幾天內可用。例：30 = 客戶有 30 天的時間用這張券。
+        </p>
         <p v-if="errors.valid_days" class="mt-1 text-[12px] text-state-danger">{{ errors.valid_days }}</p>
       </div>
 
       <!-- trigger_threshold（spend_reward / returning_loyal / auto_checkout）-->
       <div v-if="showTriggerThreshold">
-        <Label>觸發門檻（訂單金額達 NT$ 才{{ couponType === 'auto_checkout' ? '套用' : '發放' }}）</Label>
+        <Label>
+          觸發門檻
+          <span class="text-ink-muted text-[11px] font-normal">
+            ({{ couponType === 'auto_checkout' ? '訂單金額 ≥ 此值才自動套用此活動' : '訂單金額 ≥ 此值才會「發給客戶」這張券' }})
+          </span>
+        </Label>
         <Input v-model="triggerThreshold" type="number" min="0" />
+        <p
+          v-if="couponType === 'spend_reward' || couponType === 'returning_loyal'"
+          class="mt-1 text-[11px] text-ink-muted"
+        >
+          舉例：trigger=1000 + 上方 min_purchase=500 + 折 100 →
+          客戶這次買 ≥ 1000 才送一張券；那張券下次要買 ≥ 500 才能用。
+        </p>
+        <p v-else class="mt-1 text-[11px] text-ink-muted">
+          客戶結帳金額達此值就「即時」自動折扣，不發券。
+        </p>
         <p v-if="errors.trigger_threshold" class="mt-1 text-[12px] text-state-danger">{{ errors.trigger_threshold }}</p>
       </div>
 
