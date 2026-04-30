@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Dialog from '@/shared/ui/Dialog.vue'
 import Button from '@/shared/ui/Button.vue'
 import Label from '@/shared/ui/Label.vue'
@@ -8,7 +8,7 @@ import { Loader2, AlertTriangle, MousePointer } from 'lucide-vue-next'
 
 import type { PaletteColor } from '../api'
 
-type OperationType = 'merge_color' | 'eliminate_border' | 'smooth_contour'
+type OperationType = 'merge_color' | 'eliminate_border'
 
 const props = defineProps<{
   open: boolean
@@ -23,12 +23,10 @@ const emit = defineEmits<{
   close: []
   confirmMerge: [payload: { source_template_id: number; target_template_id: number }]
   confirmEliminate: [payload: { absorbed_template_id: number; surviving_template_id: number }]
-  confirmSmooth: [payload: { border_between: [number, number]; smoothness: number }]
 }>()
 
 const param1 = ref<string>('')  // first template_id
 const param2 = ref<string>('')  // second template_id
-const smoothness = ref<string>('3')
 const errors = ref<Record<string, string>>({})
 
 // canvas pick：next click 填到哪個 param
@@ -44,7 +42,6 @@ watch(
     if (props.open) {
       param1.value = ''
       param2.value = ''
-      smoothness.value = '3'
       errors.value = {}
       canvasError.value = null
       // canvas 開啟時不自動進 mode；要等 user 點按鈕（避免每次開 dialog 都重畫）
@@ -119,7 +116,6 @@ function onCanvasClick(e: MouseEvent) {
 const titles: Record<OperationType, string> = {
   merge_color: '合併色塊',
   eliminate_border: '消除邊界線',
-  smooth_contour: '輪廓平滑',
 }
 const labels: Record<OperationType, { p1: string; p2: string; hint: string; warn: string }> = {
   merge_color: {
@@ -133,12 +129,6 @@ const labels: Record<OperationType, { p1: string; p2: string; hint: string; warn
     p2: '存活的色塊（吃掉對方）',
     hint: '把兩色塊間的邊界消去，被吸收側的像素改成存活側的顏色。',
     warn: '會把 approved 退回 false。',
-  },
-  smooth_contour: {
-    p1: '邊界一側',
-    p2: '邊界另一側',
-    hint: '對指定兩色塊間的邊界輪廓做 Chaikin 平滑。',
-    warn: '只改 SVG，不改 snapped_rgb；approved 不會退回。',
   },
 }
 
@@ -157,10 +147,6 @@ function validate(): boolean {
   if (!id1) errs.p1 = '必選'
   if (!id2) errs.p2 = '必選'
   if (id1 && id2 && id1 === id2) errs.p2 = '不可選同一個色塊'
-  if (props.type === 'smooth_contour') {
-    const s = Number(smoothness.value)
-    if (!Number.isInteger(s) || s < 1 || s > 5) errs.smoothness = '請選 1~5'
-  }
   errors.value = errs
   return Object.keys(errs).length === 0
 }
@@ -173,21 +159,8 @@ function submit() {
     emit('confirmMerge', { source_template_id: id1, target_template_id: id2 })
   } else if (props.type === 'eliminate_border') {
     emit('confirmEliminate', { absorbed_template_id: id1, surviving_template_id: id2 })
-  } else if (props.type === 'smooth_contour') {
-    emit('confirmSmooth', {
-      border_between: [id1, id2],
-      smoothness: Number(smoothness.value),
-    })
   }
 }
-
-const smoothnessOptions = [
-  { value: '1', label: '1（最弱）' },
-  { value: '2', label: '2' },
-  { value: '3', label: '3（標準）' },
-  { value: '4', label: '4' },
-  { value: '5', label: '5（最強）' },
-]
 </script>
 
 <template>
@@ -245,12 +218,6 @@ const smoothnessOptions = [
         <Label>{{ labels[type].p2 }}</Label>
         <Select v-model="param2" :options="paletteOptions" />
         <p v-if="errors.p2" class="mt-1 text-[12px] text-state-danger">{{ errors.p2 }}</p>
-      </div>
-
-      <div v-if="type === 'smooth_contour'">
-        <Label>平滑強度</Label>
-        <Select v-model="smoothness" :options="smoothnessOptions" />
-        <p v-if="errors.smoothness" class="mt-1 text-[12px] text-state-danger">{{ errors.smoothness }}</p>
       </div>
 
       <p class="text-[11px] text-ink-muted">

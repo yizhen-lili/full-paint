@@ -71,7 +71,7 @@ Celery Worker 依序執行(不並發,避免 SAM 模型搶記憶體)
     ↓
 產出 template.svg / filled_template.png / palette_json
     ↓
-管理員後處理(格子合併 / 消邊界 / 輪廓平滑)→ approved=true
+管理員後處理(格子合併 / 消邊界)→ approved=true
     ↓
 進入「填色色號對應」模組,palette 中每個 RGB 配對實體色(physical_colors)
     ↓

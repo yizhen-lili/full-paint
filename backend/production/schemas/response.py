@@ -1,7 +1,25 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+
+def _resolve_filled_url(raw: Any) -> Any:
+    """admin 顯示用：gs:// → 15-min signed https URL；http(s):// 直接回；None / 異常 → None。
+
+    瀏覽器 <img :src="..."> 無法載 gs://，需即時簽名。簽名是本地 crypto，無 Firebase API 呼叫成本。
+    """
+    if not raw or not isinstance(raw, str):
+        return raw
+    if raw.startswith("https://") or raw.startswith("http://"):
+        return raw
+    try:
+        from production.service import _make_signed_url  # noqa: PLC0415
+
+        return _make_signed_url(raw)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class ImageResponse(BaseModel):
@@ -82,6 +100,11 @@ class JobDetailResponse(BaseModel):
     notes: str | None
     created_at: datetime
     approved_at: datetime | None
+
+    @field_validator("filled_template_url", mode="before")
+    @classmethod
+    def _convert_filled(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
 
 
 class CreateJobsResponse(BaseModel):

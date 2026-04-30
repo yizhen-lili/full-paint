@@ -9,13 +9,11 @@ import {
   getJob,
   listJobs,
   mergeColor,
-  smoothContour,
   unapproveJob,
   type CreateJobsRequest,
   type EliminateBorderPayload,
   type JobsListParams,
   type MergeColorPayload,
-  type SmoothContourPayload,
 } from './api'
 
 export const PJ_KEYS = {
@@ -95,10 +93,3 @@ export function useEliminateBorderMutation(id: string) {
   })
 }
 
-export function useSmoothContourMutation(id: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (payload: SmoothContourPayload) => smoothContour(id, payload),
-    onSuccess: () => invalidate(qc, id),
-  })
-}

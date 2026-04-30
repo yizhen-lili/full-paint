@@ -20,7 +20,7 @@
 | **GET /admin/canvas-sizes** | ❓（spec 提及但未明確列）| **❌ 後端沒有** | ⚠️2 |
 
 額外 F06-B 用得到、目前後端都已存在：
-- POST /admin/production/jobs/{id}/post-process/{merge-color, eliminate-border, smooth-contour} ✓
+- POST /admin/production/jobs/{id}/post-process/{merge-color, eliminate-border} ✓（smooth-contour 已下架 2026-04-30，見 docs/requirements/admin_production.md §1.6）
 - 缺：POST /admin/production/jobs/{id}/sam-mask ⚠️（後端尚未實作）
 
 ---

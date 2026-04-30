@@ -17,7 +17,6 @@ from production.schemas.request import (
     EliminateBorderRequest,
     MergeColorRequest,
     SamMaskRequest,
-    SmoothContourRequest,
     SuggestCanvasSizesRequest,
 )
 from production.schemas.response import (
@@ -161,20 +160,6 @@ async def post_process_merge_color(
 async def post_process_eliminate_border(
     job_id: UUID,
     body: EliminateBorderRequest,
-    operator=Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.post_process(db, job_id, body.model_dump())
-
-
-@router.post(
-    "/admin/production/jobs/{job_id}/post-process/smooth-contour",
-    response_model=JobDetailResponse,
-    status_code=202,
-)
-async def post_process_smooth_contour(
-    job_id: UUID,
-    body: SmoothContourRequest,
     operator=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):

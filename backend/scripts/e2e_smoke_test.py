@@ -41,7 +41,7 @@ import orders.models  # noqa: F401, E402
 import palette.models  # noqa: F401, E402
 import print_batch.models  # noqa: F401, E402
 import product.models  # noqa: F401, E402
-import production.models  # noqa: E402
+import production.models  # noqa: F401, E402
 import users.models  # noqa: F401, E402
 from auth.models import User  # noqa: E402
 from core.config import settings  # noqa: E402

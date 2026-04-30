@@ -18,23 +18,32 @@ import sys
 
 
 def install_uname_stub() -> None:
-    """Replace platform.uname / platform.processor with non-WMI stubs."""
+    """Replace platform.uname / platform.processor with non-WMI stubs.
+
+    `platform.uname()` 真實回傳 `uname_result` namedtuple；某些消費者（例如 Celery
+    `worker.startup_info`）會用 `system, node, release, version, machine, processor = uname()`
+    解構。所以這裡也用 namedtuple 而不是普通 class，保持與標準庫相容。
+    """
     if sys.platform != "win32":
         return
 
     import platform
+    from collections import namedtuple
 
-    class _FakeUname:
-        system = "Windows"
-        node = os.environ.get("COMPUTERNAME", "dev")
-        release = os.environ.get("OS", "Windows_NT").replace("Windows_", "") or "11"
-        version = os.environ.get("PROCESSOR_REVISION", "10.0")
-        machine = os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64")
-
-    platform.uname = lambda: _FakeUname()  # noqa: E731
-    platform.processor = lambda: os.environ.get(
-        "PROCESSOR_IDENTIFIER", "AMD64"
+    _FakeUname = namedtuple(
+        "uname_result", ["system", "node", "release", "version", "machine", "processor"]
     )
+    fake = _FakeUname(
+        system="Windows",
+        node=os.environ.get("COMPUTERNAME", "dev"),
+        release=os.environ.get("OS", "Windows_NT").replace("Windows_", "") or "11",
+        version=os.environ.get("PROCESSOR_REVISION", "10.0"),
+        machine=os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
+        processor=os.environ.get("PROCESSOR_IDENTIFIER", "AMD64"),
+    )
+
+    platform.uname = lambda: fake  # noqa: E731
+    platform.processor = lambda: fake.processor
 
 
 # Auto-install on import — single import line at app entry suffices.

@@ -25,7 +25,7 @@ List / Search / Detail / Related / Tags（5 個 endpoint） **✅** 全部實作
 - ⚠️ `sort=popular` fallback 為 latest（規劃書 §B 決議）
 
 ### A.5 `admin_production.md` — 製作系統
-- ✅ Image 上傳、Job CRUD、approve/unapprove、merge-color / eliminate-border / smooth-contour 後處理
+- ✅ Image 上傳、Job CRUD、approve/unapprove、merge-color / eliminate-border 後處理（smooth-contour 已下架 2026-04-30，見 admin_production.md §1.6 註）
 - ❌ `POST /admin/production/jobs/{id}/sam-mask`（Phase 2，等 SAM 模型整合）
 - ❌ `GET /admin/production/jobs/{id}/export-pdf`（Phase 2，等 Inkscape 整合）
 

@@ -13,7 +13,6 @@ import {
   Palette,
   Combine,
   Eraser,
-  Spline,
 } from 'lucide-vue-next'
 
 import Card from '@/shared/ui/Card.vue'
@@ -26,7 +25,6 @@ import {
   useEliminateBorderMutation,
   useJobQuery,
   useMergeColorMutation,
-  useSmoothContourMutation,
   useUnapproveJobMutation,
 } from '../queries'
 import {
@@ -46,10 +44,9 @@ const approveMut = useApproveJobMutation(jobId.value)
 const unapproveMut = useUnapproveJobMutation(jobId.value)
 const mergeMut = useMergeColorMutation(jobId.value)
 const eliminateMut = useEliminateBorderMutation(jobId.value)
-const smoothMut = useSmoothContourMutation(jobId.value)
 
 // Post-process dialog
-type PostProcessType = 'merge_color' | 'eliminate_border' | 'smooth_contour'
+type PostProcessType = 'merge_color' | 'eliminate_border'
 const postProcessOpen = ref(false)
 const postProcessType = ref<PostProcessType | null>(null)
 
@@ -76,16 +73,6 @@ async function onEliminate(payload: { absorbed_template_id: number; surviving_te
     apiError.value = (e as { message?: string }).message || '消邊界失敗'
   }
 }
-async function onSmooth(payload: { border_between: [number, number]; smoothness: number }) {
-  apiError.value = null
-  try {
-    await smoothMut.mutateAsync(payload)
-    postProcessOpen.value = false
-  } catch (e) {
-    apiError.value = (e as { message?: string }).message || '平滑失敗'
-  }
-}
-
 const apiError = ref<string | null>(null)
 const pdfDownloading = ref(false)
 
@@ -309,10 +296,6 @@ function fmtDateTime(iso: string | null): string {
                 <Eraser :size="12" :stroke-width="1.5" />
                 消邊界
               </Button>
-              <Button variant="secondary" @click="openPostProcess('smooth_contour')">
-                <Spline :size="12" :stroke-width="1.5" />
-                輪廓平滑
-              </Button>
             </div>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -335,7 +318,7 @@ function fmtDateTime(iso: string | null): string {
             </div>
           </div>
           <p class="mt-3 text-[11px] text-ink-muted">
-            合併 / 消邊界會把 approved 退回 false，需重新審核；輪廓平滑只改 SVG，approved 不變。
+            合併 / 消邊界會把 approved 退回 false，需重新審核。
           </p>
         </Card>
       </div>
@@ -394,11 +377,10 @@ function fmtDateTime(iso: string | null): string {
       :type="postProcessType"
       :palette="job.palette_json ?? []"
       :image-url="job.filled_template_url"
-      :pending="mergeMut.isPending.value || eliminateMut.isPending.value || smoothMut.isPending.value"
+      :pending="mergeMut.isPending.value || eliminateMut.isPending.value"
       @close="postProcessOpen = false"
       @confirm-merge="onMerge"
       @confirm-eliminate="onEliminate"
-      @confirm-smooth="onSmooth"
     />
   </template>
 </template>

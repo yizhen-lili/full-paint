@@ -97,7 +97,7 @@
 
 16. **Post-Processing & Approved Status**
     - Modules affected: Production System, Color Management
-    - Question: Each post-process (merge, eliminate, smooth) sets approved=false. Should admin be notified, or is silent reset acceptable?
+    - Question: Each post-process (merge, eliminate) sets approved=false. Should admin be notified, or is silent reset acceptable? (smooth removed 2026-04-30, see admin_production.md §1.6.)
     - Why it matters: Prevents accidental missed re-approval
 
 17. **PDF Export Caching**

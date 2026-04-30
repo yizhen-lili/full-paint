@@ -383,7 +383,6 @@
 - **觸發者**:管理員
 - **狀態變更**
   - 格子合併 / 消邊界:`approved: true → false`(需重新審核)
-  - 輪廓平滑:不改 approved
 - **DB 寫入**:UPDATE `production_jobs.palette_json`、DELETE `palette_color_mappings`、Firebase 覆寫
 - **來源**:`admin_production.md §1.6`
 

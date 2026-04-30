@@ -2,7 +2,7 @@
  * Production API wrappers — F06-A 製作系統（admin）。
  *
  * F06-A 範圍：建立任務 / 列表 / 結果預覽 / approve / unapprove / 匯出 PDF / 從客製申請選照片
- * F06-B（未實作）：SAM 遮罩繪圖 / 後處理工具（合併色塊 / 消邊界 / 輪廓平滑）
+ * F06-B（未實作）：SAM 遮罩繪圖 / 後處理工具（合併色塊 / 消邊界）
  */
 
 const API = '/api/v1'
@@ -233,11 +233,6 @@ export interface EliminateBorderPayload {
   surviving_template_id: number
 }
 
-export interface SmoothContourPayload {
-  border_between: [number, number]
-  smoothness: number  // 1~5
-}
-
 export function mergeColor(jobId: string, payload: MergeColorPayload) {
   return request<JobDetail>(`/admin/production/jobs/${jobId}/post-process/merge-color`, {
     method: 'POST',
@@ -247,13 +242,6 @@ export function mergeColor(jobId: string, payload: MergeColorPayload) {
 
 export function eliminateBorder(jobId: string, payload: EliminateBorderPayload) {
   return request<JobDetail>(`/admin/production/jobs/${jobId}/post-process/eliminate-border`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
-export function smoothContour(jobId: string, payload: SmoothContourPayload) {
-  return request<JobDetail>(`/admin/production/jobs/${jobId}/post-process/smooth-contour`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })

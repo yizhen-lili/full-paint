@@ -115,21 +115,6 @@ class EliminateBorderRequest(BaseModel):
         return self
 
 
-class SmoothContourRequest(BaseModel):
-    border_between: list[int]
-    smoothness: int
-
-    @model_validator(mode="after")
-    def validate_params(self) -> "SmoothContourRequest":
-        if len(self.border_between) != 2:
-            raise ValueError("border_between 必須包含恰好 2 個區塊編號")
-        if self.border_between[0] == self.border_between[1]:
-            raise ValueError("border_between 的兩個區塊編號不可相同")
-        if not (1 <= self.smoothness <= 10):
-            raise ValueError("smoothness 必須在 1 ~ 10 之間")
-        return self
-
-
 class SamPointInput(BaseModel):
     x: float
     y: float

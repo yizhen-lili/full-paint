@@ -1,6 +1,9 @@
-from celery import Celery
+# ruff: noqa: I001
+# _windows_compat MUST run before any module that imports asyncpg (WMI workaround for
+# broken Windows dev machines). Ruff would resort imports otherwise.
+import core._windows_compat  # noqa: F401
 
-from core.config import settings
+from celery import Celery
 
 # 預先 import 全部 models，讓 SQLAlchemy 在 worker 啟動時就解析完所有 FK 關聯
 # （production.tasks 操作 production_jobs，但其 FK 指向 custom_requests / images / users，
@@ -17,6 +20,7 @@ import print_batch.models  # noqa: F401, E402
 import product.models  # noqa: F401, E402
 import production.models  # noqa: F401, E402
 import users.models  # noqa: F401, E402
+from core.config import settings
 
 celery_app = Celery(
     "paintlearn",

@@ -659,11 +659,8 @@ async def test_unapprove_unauthenticated(client: AsyncClient, db):
 
 MERGE_COLOR_URL_SUFFIX = "/post-process/merge-color"
 ELIM_BORDER_URL_SUFFIX = "/post-process/eliminate-border"
-SMOOTH_CONTOUR_URL_SUFFIX = "/post-process/smooth-contour"
-
 MERGE_COLOR_BODY = {"source_template_id": 3, "target_template_id": 1}
 ELIM_BORDER_BODY = {"absorbed_template_id": 3, "surviving_template_id": 1}
-SMOOTH_CONTOUR_BODY = {"border_between": [1, 3], "smoothness": 3}
 
 
 @pytest.mark.asyncio
@@ -776,59 +773,6 @@ async def test_eliminate_border_unauthenticated(client: AsyncClient, db):
     assert res.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_smooth_contour_ok(client: AsyncClient, db):
-    job_id = await _create_pending_job(client, db)
-    await _force_complete(db, job_id)
-
-    with patch("production.service.run_post_process_job") as mock_task:
-        mock_task.delay.return_value = None
-        res = await client.post(
-            f"{JOBS_URL}/{job_id}{SMOOTH_CONTOUR_URL_SUFFIX}", json=SMOOTH_CONTOUR_BODY
-        )
-
-    assert res.status_code == 202
-    assert res.json()["status"] == "processing"
-
-
-@pytest.mark.asyncio
-async def test_smooth_contour_invalid_smoothness(client: AsyncClient, db):
-    await _make_admin(client, db)
-    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
-    res = await client.post(
-        f"{JOBS_URL}/{uuid.uuid4()}{SMOOTH_CONTOUR_URL_SUFFIX}",
-        json={"border_between": [1, 3], "smoothness": 11},
-    )
-    assert res.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_smooth_contour_wrong_border_length(client: AsyncClient, db):
-    await _make_admin(client, db)
-    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
-    res = await client.post(
-        f"{JOBS_URL}/{uuid.uuid4()}{SMOOTH_CONTOUR_URL_SUFFIX}",
-        json={"border_between": [1, 2, 3], "smoothness": 3},
-    )
-    assert res.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_smooth_contour_non_admin(client: AsyncClient, db):
-    await _make_customer(client, db)
-    await _login(client, CUSTOMER_USER["email"], CUSTOMER_USER["password"])
-    res = await client.post(
-        f"{JOBS_URL}/{uuid.uuid4()}{SMOOTH_CONTOUR_URL_SUFFIX}", json=SMOOTH_CONTOUR_BODY
-    )
-    assert res.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_smooth_contour_unauthenticated(client: AsyncClient, db):
-    res = await client.post(
-        f"{JOBS_URL}/{uuid.uuid4()}{SMOOTH_CONTOUR_URL_SUFFIX}", json=SMOOTH_CONTOUR_BODY
-    )
-    assert res.status_code == 401
 
 
 # ── GET /admin/production/jobs/{id}/export-pdf ────────────────────────────────

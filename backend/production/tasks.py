@@ -301,10 +301,12 @@ def _run_engine_and_upload(
 
 @celery_app.task(bind=True, name="production.run_post_process", max_retries=0)
 def run_post_process_job(self, job_id: str, params: dict) -> None:
-    """後處理：合併色塊 / 消邊界 / 平滑輪廓。沿用 snapped_rgb 不重跑 KMeans。
+    """後處理：合併色塊 / 消邊界。沿用 snapped_rgb 不重跑 KMeans。
 
-    Phase 2-A 暫時 fallback 到 stub（status flip）— 實際操作邏輯需要對 PbnGen 加入
-    可重新從 snapped_rgb 進入 output_to_svg 的能力。Phase 2-B 補完。
+    （原規劃的「輪廓平滑」已下架，見 admin_production.md §1.6 註）
+
+    Phase 2-A 暫時 fallback 到 stub（status flip）— 實際 pixel replace + 重跑 SVG
+    的邏輯留 Phase 2-B 補完。
     """
     _run_async(_run_post_process_async(job_id, params))
 

@@ -214,7 +214,6 @@
 - GET /admin/production/jobs/{id}/signed-url (for private files: svg, snapped_rgb)
 - POST /admin/production/jobs/{id}/post-process/merge-color
 - POST /admin/production/jobs/{id}/post-process/eliminate-border
-- POST /admin/production/jobs/{id}/post-process/smooth-contour
 - POST /admin/production/jobs/{id}/sam-mask
 - POST /admin/production/jobs/{id}/approve
 - GET /admin/production/jobs/{id}/export-pdf

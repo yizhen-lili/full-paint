@@ -506,14 +506,6 @@ Request:  { "source_template_id": 3, "target_template_id": 1 }
 Request:  { "absorbed_template_id": 3, "surviving_template_id": 1 }
 ```
 
-### POST /admin/production/jobs/{id}/post-process/smooth-contour
-**權限**：admin｜輪廓平滑
-
-```json
-Request:  { "border_between": [1, 3], "smoothness": 3 }
-```
-> 只改 SVG polygon，不改 snapped_rgb
-
 ### POST /admin/production/jobs/{id}/sam-mask
 **權限**：admin｜送出 SAM 遮罩參數，後端跑 SAM 模型產生 mask
 

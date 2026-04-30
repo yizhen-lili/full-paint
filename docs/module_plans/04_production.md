@@ -141,8 +141,10 @@ POST /admin/production/jobs/{id}/approve       → 確認儲存
 ```
 POST /admin/production/jobs/{id}/post-process/merge-color
 POST /admin/production/jobs/{id}/post-process/eliminate-border
-POST /admin/production/jobs/{id}/post-process/smooth-contour
 ```
+
+> smooth-contour 已下架（2026-04-30）：相鄰 polygon 共享邊界對齊實作工時不划算，
+> output_to_svg 內建 _smooth_quantized 已提供基本平滑。
 
 **共同行為（Phase 3 stub）：**
 - 前置條件：job 必須存在（404）、status=completed（400）
@@ -153,7 +155,6 @@ POST /admin/production/jobs/{id}/post-process/smooth-contour
 **Request schemas：**
 - `merge-color`：`{ "source_template_id": int, "target_template_id": int }`（兩個區塊編號不可相同）
 - `eliminate-border`：`{ "absorbed_template_id": int, "surviving_template_id": int }`（不可相同）
-- `smooth-contour`：`{ "border_between": [int, int], "smoothness": int(1~10) }`
 
 **新增 Celery task：** `run_post_process_job(job_id)` — stub，只把 status 改回 completed
 
