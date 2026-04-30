@@ -229,17 +229,33 @@ _FILE_FIELD_MAP = {
 }
 
 
+# Module-level cache：blob path → (signed_url, expires_at)
+# 同一張圖在 TTL 內重複請求回同一個簽名 URL，避免每次 polling 都換新 URL 導致瀏覽器重抓
+# (admin 頁面 5 秒輪詢時 <img> 會閃)。簽名仍 15 分鐘有效；cache TTL 比簽名稍短保留緩衝。
+_SIGNED_URL_CACHE: dict[str, tuple[str, datetime]] = {}
+_SIGNED_URL_CACHE_TTL = timedelta(minutes=10)  # < _UPLOAD_TTL_MINUTES
+
+
 def _make_signed_url(raw_url: str) -> str:
     bucket = get_bucket()
     parts = raw_url.split(f"/{bucket.name}/", 1)
     if len(parts) != 2:
         raise BadRequestError(f"無法解析 Firebase 路徑：{raw_url}")
-    blob = bucket.blob(parts[1])
-    return blob.generate_signed_url(
+    blob_path = parts[1]
+    now = datetime.now(UTC)
+
+    cached = _SIGNED_URL_CACHE.get(blob_path)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    blob = bucket.blob(blob_path)
+    url = blob.generate_signed_url(
         version="v4",
         expiration=timedelta(minutes=_UPLOAD_TTL_MINUTES),
         method="GET",
     )
+    _SIGNED_URL_CACHE[blob_path] = (url, now + _SIGNED_URL_CACHE_TTL)
+    return url
 
 
 async def get_job_signed_url(

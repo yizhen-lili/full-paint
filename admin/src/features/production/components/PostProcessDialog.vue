@@ -233,9 +233,17 @@ const paletteOptions = computed(() => [
 
 const survivorOptions = computed(() => {
   if (!polygon1.value || !polygon2.value) return []
+  const t1 = originalTemplateId(polygon1.value)
+  const t2 = originalTemplateId(polygon2.value)
   return [
-    { value: 'p1', label: `保留 ${polygon1.value}` },
-    { value: 'p2', label: `保留 ${polygon2.value}` },
+    {
+      value: 'p1',
+      label: `保留 ${polygon1.value}${t1 !== null ? ` #${t1}` : ''}`,
+    },
+    {
+      value: 'p2',
+      label: `保留 ${polygon2.value}${t2 !== null ? ` #${t2}` : ''}`,
+    },
   ]
 })
 
@@ -450,15 +458,35 @@ function opDisplay(op: BatchOperation): {
         <p class="mt-0.5 text-[11px] text-ink-muted">提示：按 Ctrl + 滑鼠滾輪也可縮放</p>
       </div>
 
-      <!-- 已選格子 -->
+      <!-- 已選格子（顯示 polygon_id + 該格 fill 色票 + 反推的色號 #N） -->
       <div class="text-[12px] space-y-1">
-        <div class="flex gap-2">
+        <div class="flex gap-2 items-center flex-wrap">
           <Label>已點選：</Label>
-          <span v-if="polygon1" class="font-mono px-1.5 rounded bg-accent/10 text-accent">
+          <span
+            v-if="polygon1"
+            class="font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent inline-flex items-center gap-1.5"
+          >
             {{ polygon1 }}
+            <span
+              class="inline-block w-3.5 h-3.5 rounded border border-line-hairline"
+              :style="{ backgroundColor: polygonFills.get(polygon1) || '#FFFFFF' }"
+            />
+            <span v-if="originalTemplateId(polygon1) !== null" class="text-ink-muted">
+              #{{ originalTemplateId(polygon1) }}
+            </span>
           </span>
-          <span v-if="polygon2" class="font-mono px-1.5 rounded bg-accent/10 text-accent">
+          <span
+            v-if="polygon2"
+            class="font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent inline-flex items-center gap-1.5"
+          >
             {{ polygon2 }}
+            <span
+              class="inline-block w-3.5 h-3.5 rounded border border-line-hairline"
+              :style="{ backgroundColor: polygonFills.get(polygon2) || '#FFFFFF' }"
+            />
+            <span v-if="originalTemplateId(polygon2) !== null" class="text-ink-muted">
+              #{{ originalTemplateId(polygon2) }}
+            </span>
           </span>
           <span v-if="!polygon1" class="text-ink-muted">尚未點選</span>
         </div>
