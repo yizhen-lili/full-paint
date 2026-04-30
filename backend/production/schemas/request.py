@@ -167,6 +167,26 @@ class BatchPostProcessRequest(BaseModel):
             raise ValueError("一次最多 50 個操作")
         return self
 
+    @model_validator(mode="after")
+    def validate_no_duplicate_targets(self) -> "BatchPostProcessRequest":
+        """防止同一 polygon_id 出現在多個 op 的「被改色」位置 → silent overwrite。
+
+        - merge_color：polygon_id 是被改色目標
+        - eliminate_border：absorbed_polygon_id 是被改色目標
+        若同一 polygon_id 在這兩種角色重複出現於不同 op，後者會覆蓋前者，admin
+        看不出哪個「沒生效」— 拒絕掉，要求 admin 在前端去重後再送。
+        """
+        seen: dict[str, int] = {}  # polygon_id -> first index
+        for idx, op in enumerate(self.operations):
+            pid = op.polygon_id if op.op == "merge_color" else op.absorbed_polygon_id
+            if pid in seen:
+                raise ValueError(
+                    f"polygon_id={pid} 同時出現在 op #{seen[pid]} 與 #{idx}（會 silent "
+                    f"overwrite）— 請只保留一個動作或先在前端去重"
+                )
+            seen[pid] = idx
+        return self
+
 
 class SamPointInput(BaseModel):
     x: float

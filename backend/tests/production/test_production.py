@@ -835,6 +835,46 @@ async def test_batch_post_process_pending_job(client: AsyncClient, db):
 
 
 @pytest.mark.asyncio
+async def test_batch_post_process_duplicate_polygon_id(client: AsyncClient, db):
+    """同一 polygon_id 在「被改色」位置重複（silent overwrite trap）→ 422。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    res = await client.post(
+        f"{JOBS_URL}/{uuid.uuid4()}{BATCH_URL_SUFFIX}",
+        json={
+            "operations": [
+                {"op": "merge_color", "polygon_id": "r5", "target_template_id": 1},
+                {"op": "merge_color", "polygon_id": "r5", "target_template_id": 2},
+            ],
+        },
+    )
+    assert res.status_code == 422
+    body = res.json()
+    assert "polygon_id=r5" in str(body) or "silent overwrite" in str(body)
+
+
+@pytest.mark.asyncio
+async def test_batch_post_process_duplicate_across_op_types(client: AsyncClient, db):
+    """同 polygon_id 既當 merge target 又當 eliminate 的 absorbed → 仍 422。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    res = await client.post(
+        f"{JOBS_URL}/{uuid.uuid4()}{BATCH_URL_SUFFIX}",
+        json={
+            "operations": [
+                {"op": "merge_color", "polygon_id": "r5", "target_template_id": 1},
+                {
+                    "op": "eliminate_border",
+                    "absorbed_polygon_id": "r5",
+                    "surviving_polygon_id": "r3",
+                },
+            ],
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_batch_post_process_non_admin(client: AsyncClient, db):
     await _make_customer(client, db)
     await _login(client, CUSTOMER_USER["email"], CUSTOMER_USER["password"])

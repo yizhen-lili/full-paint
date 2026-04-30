@@ -23,9 +23,7 @@ import PostProcessDialog from '../components/PostProcessDialog.vue'
 import {
   useApproveJobMutation,
   useBatchPostProcessMutation,
-  useEliminateBorderMutation,
   useJobQuery,
-  useMergeColorMutation,
   useUnapproveJobMutation,
 } from '../queries'
 import type { BatchOperation } from '../api'
@@ -44,8 +42,6 @@ const jobId = computed(() => (typeof route.params.jobId === 'string' ? route.par
 const { data: job, isLoading, isError, error } = useJobQuery(jobId)
 const approveMut = useApproveJobMutation(jobId.value)
 const unapproveMut = useUnapproveJobMutation(jobId.value)
-const mergeMut = useMergeColorMutation(jobId.value)
-const eliminateMut = useEliminateBorderMutation(jobId.value)
 const batchMut = useBatchPostProcessMutation(jobId.value)
 
 // Post-process dialog

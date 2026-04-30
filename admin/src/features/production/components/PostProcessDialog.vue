@@ -238,8 +238,29 @@ function _isLightColor(hex: string): boolean {
   return (r * 299 + g * 587 + b * 114) / 1000 > 155
 }
 
+/** 取出 op 中「會被改色」的 polygon_id（merge 是 polygon_id、eliminate 是 absorbed）。 */
+function _targetPolygonOf(op: BatchOperation): string {
+  return op.op === 'merge_color' ? op.polygon_id : op.absorbed_polygon_id
+}
+
 function addToQueue() {
   if (!validate() || !props.type) return
+
+  // 預檢：同一 polygon_id 在「被改色」位置重複會被後端拒絕（silent overwrite trap）
+  let candidatePid: string
+  if (props.type === 'merge_color') {
+    candidatePid = polygon1.value
+  } else {
+    candidatePid = survivor.value === 'p1' ? polygon2.value : polygon1.value
+  }
+  const dupIdx = queue.value.findIndex((o) => _targetPolygonOf(o) === candidatePid)
+  if (dupIdx >= 0) {
+    errors.value = {
+      polygon: `${candidatePid} 已在佇列第 ${dupIdx + 1} 筆，會被覆蓋；請先移除舊的`,
+    }
+    return
+  }
+
   if (props.type === 'merge_color') {
     queue.value.push({
       op: 'merge_color',

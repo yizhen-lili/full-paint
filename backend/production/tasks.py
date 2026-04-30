@@ -370,14 +370,18 @@ def _resolve_single_op(
     if op_type == "merge_color" or (
         op_type is None and "polygon_id" in params and "target_template_id" in params
     ):
-        polygon_id = str(params["polygon_id"])
-        target_template_id = int(params["target_template_id"])
-        tgt_rgb = _find_rgb_in_palette(palette_json or [], target_template_id)
+        polygon_id = params.get("polygon_id")
+        target_template_id = params.get("target_template_id")
+        if polygon_id is None or target_template_id is None:
+            raise ValueError(
+                "merge_color op 缺欄位（需要 polygon_id 與 target_template_id）"
+            )
+        tgt_rgb = _find_rgb_in_palette(palette_json or [], int(target_template_id))
         if tgt_rgb is None:
             raise ValueError(
                 f"找不到 target_template_id={target_template_id} 在 palette_json 中"
             )
-        return _PostProcessOp(polygon_ids=[polygon_id], tgt_rgb=tgt_rgb)
+        return _PostProcessOp(polygon_ids=[str(polygon_id)], tgt_rgb=tgt_rgb)
 
     # 原 single op 格式（B）或 batch op="eliminate_border"
     if op_type == "eliminate_border" or (
@@ -385,8 +389,14 @@ def _resolve_single_op(
         and "absorbed_polygon_id" in params
         and "surviving_polygon_id" in params
     ):
-        absorbed = str(params["absorbed_polygon_id"])
-        surviving = str(params["surviving_polygon_id"])
+        absorbed = params.get("absorbed_polygon_id")
+        surviving = params.get("surviving_polygon_id")
+        if absorbed is None or surviving is None:
+            raise ValueError(
+                "eliminate_border op 缺欄位（需要 absorbed_polygon_id 與 surviving_polygon_id）"
+            )
+        absorbed = str(absorbed)
+        surviving = str(surviving)
         if absorbed == surviving:
             raise ValueError("absorbed_polygon_id 與 surviving_polygon_id 不可相同")
         tgt_rgb = get_polygon_rgb(snapped_rgb_path, svg_path, surviving)
