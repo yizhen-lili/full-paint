@@ -492,19 +492,23 @@ Response 200: { "url": "https://..." }
 ```
 
 ### POST /admin/production/jobs/{id}/post-process/merge-color
-**權限**：admin｜格子合併
+**權限**：admin｜格子合併（區域層級）
 
 ```json
-Request:  { "source_template_id": 3, "target_template_id": 1 }
+Request:  { "polygon_id": "r5", "target_template_id": 1 }
 ```
-> 修改 snapped_rgb → 重跑 SVG + filled_template → approved 退回 false
+> `polygon_id` = template.svg 中 `<polygon id="rN">` 的識別碼（admin 點該格時前端取得）
+> 後端：解 SVG 取 polygon 頂點 → mask → 把該格像素改成 target_template_id 對應的 RGB →
+> 重跑 SVG + filled_template → approved 退回 false。若該格是該色最後一格，palette 自動縮減。
 
 ### POST /admin/production/jobs/{id}/post-process/eliminate-border
-**權限**：admin｜消除邊界線
+**權限**：admin｜消除邊界線（區域層級）
 
 ```json
-Request:  { "absorbed_template_id": 3, "surviving_template_id": 1 }
+Request:  { "absorbed_polygon_id": "r5", "surviving_polygon_id": "r2" }
 ```
+> 兩個 polygon_id 由 admin 點兩格 + 對話框選擇保留哪邊得來。後端把 absorbed 那格像素改成
+> surviving 那格在 snapped_rgb 中的實際 RGB → 重跑 SVG + filled。鄰接判定屬前端 UI 約束。
 
 ### POST /admin/production/jobs/{id}/sam-mask
 **權限**：admin｜送出 SAM 遮罩參數，後端跑 SAM 模型產生 mask

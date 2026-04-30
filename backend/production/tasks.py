@@ -16,8 +16,9 @@ from typing import Any
 
 from core.celery_app import celery_app
 from production.engine import (
-    apply_color_replacement,
+    apply_region_replacement,
     generate_standard,
+    get_polygon_rgb,
     resolve_engine_params,
 )
 
@@ -333,20 +334,15 @@ def run_post_process_job(self, job_id: str, params: dict) -> None:
 _PHASE2B_NOTE_PREFIX = "[Phase 2-B]"
 
 
-def _resolve_post_process_op(params: dict) -> tuple[int, int]:
-    """從 params dict 解出 (src_template_id, tgt_template_id)。
+class _PostProcessOp:
+    """區域層級後處理 op 描述。
 
-    A 格子合併：{source_template_id, target_template_id}
-    B 消除邊界：{absorbed_template_id, surviving_template_id}
-    其他形狀 → ValueError
+    - polygon_ids：要被改色的 polygon id 列表（A 是 1 個、B 也是 1 個 = absorbed）
+    - tgt_rgb：目標 RGB；A 從 target_template_id 對應，B 從 surviving_polygon_id 對應
     """
-    if "source_template_id" in params and "target_template_id" in params:
-        return int(params["source_template_id"]), int(params["target_template_id"])
-    if "absorbed_template_id" in params and "surviving_template_id" in params:
-        return int(params["absorbed_template_id"]), int(params["surviving_template_id"])
-    raise ValueError(
-        f"無法判斷後處理操作類型；params keys={sorted(params.keys())}"
-    )
+    def __init__(self, polygon_ids: list[str], tgt_rgb: tuple[int, int, int]):
+        self.polygon_ids = polygon_ids
+        self.tgt_rgb = tgt_rgb
 
 
 def _find_rgb_in_palette(palette_json: list, template_id: int) -> tuple[int, int, int] | None:
@@ -357,6 +353,47 @@ def _find_rgb_in_palette(palette_json: list, template_id: int) -> tuple[int, int
             if isinstance(rgb, list) and len(rgb) == 3:
                 return tuple(int(v) for v in rgb)
     return None
+
+
+def _resolve_post_process_op(
+    params: dict,
+    palette_json: list,
+    snapped_rgb_path: str,
+    svg_path: str,
+) -> _PostProcessOp:
+    """從 params 解出區域層級操作；可能需要讀 snapped_rgb + SVG 來找 surviving 格的色。
+
+    A 格子合併：{polygon_id, target_template_id}
+      → polygon_ids=[polygon_id]，tgt_rgb=palette[target_template_id].rgb
+
+    B 消除邊界：{absorbed_polygon_id, surviving_polygon_id}
+      → polygon_ids=[absorbed_polygon_id]，tgt_rgb=該存活格在 snapped_rgb 中的實際 RGB
+        （從 SVG polygon → mask → sample，不從 palette 反查；避免 palette/snapped 不同步）
+    """
+    if "polygon_id" in params and "target_template_id" in params:
+        # A 格子合併
+        polygon_id = str(params["polygon_id"])
+        target_template_id = int(params["target_template_id"])
+        tgt_rgb = _find_rgb_in_palette(palette_json or [], target_template_id)
+        if tgt_rgb is None:
+            raise ValueError(
+                f"找不到 target_template_id={target_template_id} 在 palette_json 中"
+            )
+        return _PostProcessOp(polygon_ids=[polygon_id], tgt_rgb=tgt_rgb)
+
+    if "absorbed_polygon_id" in params and "surviving_polygon_id" in params:
+        # B 消除邊界
+        absorbed = str(params["absorbed_polygon_id"])
+        surviving = str(params["surviving_polygon_id"])
+        if absorbed == surviving:
+            raise ValueError("absorbed_polygon_id 與 surviving_polygon_id 不可相同")
+        # 從 surviving 格在 snapped_rgb 上採樣 RGB
+        tgt_rgb = get_polygon_rgb(snapped_rgb_path, svg_path, surviving)
+        return _PostProcessOp(polygon_ids=[absorbed], tgt_rgb=tgt_rgb)
+
+    raise ValueError(
+        f"無法判斷後處理操作類型；params keys={sorted(params.keys())}"
+    )
 
 
 async def _remap_palette_color_mappings(session, job_id: str, new_palette: list) -> None:
@@ -439,48 +476,28 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
                 logger.warning("run_post_process_job: job %s not found", job_id)
                 return
 
-            # 0. 解析 op type + 找 src/tgt RGB
-            try:
-                src_id, tgt_id = _resolve_post_process_op(params)
-                src_rgb = _find_rgb_in_palette(job.palette_json or [], src_id)
-                tgt_rgb = _find_rgb_in_palette(job.palette_json or [], tgt_id)
-                if src_rgb is None:
-                    raise ValueError(f"找不到 template_id={src_id} 在 palette_json 中")
-                if tgt_rgb is None:
-                    raise ValueError(f"找不到 template_id={tgt_id} 在 palette_json 中")
-                if src_rgb == tgt_rgb:
-                    # 兩個 template_id 不同但 RGB 恰好相同 — palette_json 異常或測試
-                    # 資料；繼續跑會 noop pixel replace 但 mappings 仍被重編號（破壞性）
-                    raise ValueError(
-                        f"src 與 tgt 的 RGB 相同（{src_rgb}），無變更但會重編號 mappings — "
-                        f"拒絕執行（template_id={src_id}/{tgt_id}）"
-                    )
-            except (ValueError, KeyError, TypeError) as e:
-                logger.warning("post_process: bad params for %s — %s", job_id, e)
+            if not job.snapped_rgb_url or not job.svg_url:
                 job.status = JobStatusEnum.failed
-                job.notes = f"後處理參數錯誤：{e}"[:500]
+                job.notes = (
+                    "缺少 snapped_rgb_url 或 svg_url（job 可能未跑過引擎或檔案被清掉）"
+                )
                 await session.commit()
                 return
 
-            if not job.snapped_rgb_url:
-                job.status = JobStatusEnum.failed
-                job.notes = "缺少 snapped_rgb_url（job 可能未跑過引擎或檔案被清掉）"
-                await session.commit()
-                return
-
-            # 0a. 記住舊 url，commit 成功後清 Firebase orphan（避免累積成本）
+            # 0a. 記住舊 url，commit 成功後清 Firebase orphan
             old_svg_url = job.svg_url
             old_filled_url = job.filled_template_url
             old_snapped_url = job.snapped_rgb_url
 
-            # 1. 下載 snapped + 跑引擎 + 上傳新檔
+            # 1. 下載 snapped+SVG、解析 op、跑引擎、上傳新檔
             try:
                 result = await asyncio.to_thread(
                     _run_post_process_engine_and_upload,
                     str(job.id),
                     job.snapped_rgb_url,
-                    src_rgb,
-                    tgt_rgb,
+                    job.svg_url,
+                    params,
+                    list(job.palette_json or []),
                     {
                         "canvas_w_cm": float(job.canvas_w_cm),
                         "canvas_h_cm": float(job.canvas_h_cm),
@@ -489,6 +506,15 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
                     },
                     uploaded_blob_paths,
                 )
+            except ValueError as e:
+                # ValueError = 參數錯誤（polygon_id 不在 SVG、palette 找不到 target_template_id）
+                logger.warning("post_process: bad params for %s — %s", job_id, e)
+                for p in uploaded_blob_paths:
+                    _delete_blob(p)
+                job.status = JobStatusEnum.failed
+                job.notes = f"後處理參數錯誤：{e}"[:500]
+                await session.commit()
+                return
             except Exception as e:  # noqa: BLE001
                 logger.exception("run_post_process_job: engine/upload failed for %s", job_id)
                 for p in uploaded_blob_paths:
@@ -498,19 +524,13 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
                 await session.commit()
                 return
 
-            # 2. 重建 palette_color_mappings（用 algorithm_rgb 重匹配 template_id）
-            await _remap_palette_color_mappings(
-                session, str(job.id), result["palette_data"]
-            )
-
-            # 3. 寫回 job
+            # 2-3. 寫回 job 欄位（不 commit）
             job.svg_url = result["svg_url"]
             job.filled_template_url = result["filled_template_url"]
             job.snapped_rgb_url = result["snapped_rgb_url"]
             job.palette_json = result["palette_data"]
             job.num_colors_used = result["num_colors_used"]
             job.status = JobStatusEnum.completed
-            # 清掉舊的 [Phase 2-B] 標記（如果先前 stub 階段留下）
             if job.notes and _PHASE2B_NOTE_PREFIX in job.notes:
                 cleaned = "\n".join(
                     line for line in job.notes.split("\n")
@@ -518,11 +538,17 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
                 ).strip()
                 job.notes = cleaned or None
 
+            # 4. remap mappings + commit 包在同一個 try 區塊：
+            # remap 失敗（如 UNIQUE 衝突或 DB 暫時錯）必須走 rollback + 清 blob 路徑，
+            # 否則新 blob 會 orphan + job 卡 processing
             try:
+                await _remap_palette_color_mappings(
+                    session, str(job.id), result["palette_data"]
+                )
                 await session.commit()
             except Exception as e:  # noqa: BLE001
                 logger.exception(
-                    "run_post_process_job: final commit failed for %s — rolling back blobs",
+                    "run_post_process_job: remap or commit failed for %s — rolling back blobs",
                     job_id,
                 )
                 try:
@@ -552,28 +578,40 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
 def _run_post_process_engine_and_upload(
     job_id: str,
     snapped_rgb_url: str,
-    src_rgb: tuple[int, int, int],
-    tgt_rgb: tuple[int, int, int],
+    svg_url: str,
+    params: dict,
+    palette_json: list,
     engine_params: dict[str, Any],
     uploaded_blob_paths_out: list[str],
 ) -> dict[str, Any]:
-    """同步部分：下載 snapped → 引擎 → 上傳 3 檔（新 token，避免覆蓋舊版本）。"""
+    """同步部分：下載 snapped + SVG → 解析 op（區域層級）→ 跑引擎 → 上傳 3 檔。
+
+    parse op 在這裡跑（不在外層 async）的理由：op 解析需要存取 SVG 檔案來確認
+    polygon_id 存在 + 採樣 surviving 格 RGB（B 操作），SVG 必須先下載到 tmp。
+    """
     tmp_dir = tempfile.mkdtemp(prefix=f"postproc_{job_id}_")
     try:
-        # 1. 下載 snapped_rgb
-        src_path = os.path.join(tmp_dir, "snapped_in.png")
-        _download_image_to_path(snapped_rgb_url, src_path)
+        # 1. 下載 snapped + svg
+        snapped_path = os.path.join(tmp_dir, "snapped_in.png")
+        svg_in_path = os.path.join(tmp_dir, "template_in.svg")
+        _download_image_to_path(snapped_rgb_url, snapped_path)
+        _download_image_to_path(svg_url, svg_in_path)
 
-        # 2. 跑引擎
+        # 2. 解析 op（可能 raise ValueError → 外層轉 status=failed）
+        op = _resolve_post_process_op(params, palette_json, snapped_path, svg_in_path)
+
+        # 3. 跑引擎
         out_dir = os.path.join(tmp_dir, "out")
-        engine_result = apply_color_replacement(
-            src_path, out_dir,
-            src_rgb=src_rgb,
-            tgt_rgb=tgt_rgb,
+        engine_result = apply_region_replacement(
+            snapped_path,
+            svg_in_path,
+            out_dir,
+            polygon_ids=op.polygon_ids,
+            tgt_rgb=op.tgt_rgb,
             **engine_params,
         )
 
-        # 3. 上傳 3 檔（新 token，舊 url 留在 Firebase 不刪 — admin 看歷史用）
+        # 4. 上傳 3 檔（新 token；舊 blob 在外層 commit 成功後另外清掉，避免 orphan）
         token = uuid.uuid4().hex[:8]
         svg_blob = f"production_jobs/{job_id}/template_{token}.svg"
         filled_blob = f"production_jobs/{job_id}/filled_{token}.png"

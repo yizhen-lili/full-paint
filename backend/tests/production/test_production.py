@@ -659,8 +659,8 @@ async def test_unapprove_unauthenticated(client: AsyncClient, db):
 
 MERGE_COLOR_URL_SUFFIX = "/post-process/merge-color"
 ELIM_BORDER_URL_SUFFIX = "/post-process/eliminate-border"
-MERGE_COLOR_BODY = {"source_template_id": 3, "target_template_id": 1}
-ELIM_BORDER_BODY = {"absorbed_template_id": 3, "surviving_template_id": 1}
+MERGE_COLOR_BODY = {"polygon_id": "r5", "target_template_id": 1}
+ELIM_BORDER_BODY = {"absorbed_polygon_id": "r5", "surviving_polygon_id": "r2"}
 
 
 @pytest.mark.asyncio
@@ -682,12 +682,13 @@ async def test_merge_color_ok(client: AsyncClient, db):
 
 
 @pytest.mark.asyncio
-async def test_merge_color_same_ids(client: AsyncClient, db):
+async def test_merge_color_missing_fields(client: AsyncClient, db):
+    """新區域層級 schema：polygon_id 與 target_template_id 都是必填。"""
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
     res = await client.post(
         f"{JOBS_URL}/{uuid.uuid4()}{MERGE_COLOR_URL_SUFFIX}",
-        json={"source_template_id": 1, "target_template_id": 1},
+        json={"polygon_id": "r5"},  # 缺 target_template_id
     )
     assert res.status_code == 422
 
@@ -746,11 +747,12 @@ async def test_eliminate_border_ok(client: AsyncClient, db):
 
 @pytest.mark.asyncio
 async def test_eliminate_border_same_ids(client: AsyncClient, db):
+    """absorbed 與 surviving 不可相同（區域層級用 polygon_id）。"""
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
     res = await client.post(
         f"{JOBS_URL}/{uuid.uuid4()}{ELIM_BORDER_URL_SUFFIX}",
-        json={"absorbed_template_id": 2, "surviving_template_id": 2},
+        json={"absorbed_polygon_id": "r3", "surviving_polygon_id": "r3"},
     )
     assert res.status_code == 422
 

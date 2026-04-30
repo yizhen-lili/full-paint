@@ -94,24 +94,30 @@ class ApproveRequest(BaseModel):
 
 
 class MergeColorRequest(BaseModel):
-    source_template_id: int
-    target_template_id: int
+    """A 格子合併（區域層級）：admin 點 template.svg 上一格 → 選目標色號。
 
-    @model_validator(mode="after")
-    def validate_different(self) -> "MergeColorRequest":
-        if self.source_template_id == self.target_template_id:
-            raise ValueError("source_template_id 與 target_template_id 不可相同")
-        return self
+    - polygon_id：被合併那一格的 SVG region 識別碼（pbn_gen.py 寫入 id="rN"）
+    - target_template_id：目標色號（從 palette 任選，後端從 palette_json 找對應 RGB）
+    """
+    polygon_id: str
+    target_template_id: int
 
 
 class EliminateBorderRequest(BaseModel):
-    absorbed_template_id: int
-    surviving_template_id: int
+    """B 消除邊界（區域層級）：admin 點兩格 + 對話框選保留哪邊。
+
+    - absorbed_polygon_id：被吸收的那一格（會被改成存活側的顏色）
+    - surviving_polygon_id：存活的那一格（顏色不變、邊界吃掉吸收側）
+    """
+    absorbed_polygon_id: str
+    surviving_polygon_id: str
 
     @model_validator(mode="after")
     def validate_different(self) -> "EliminateBorderRequest":
-        if self.absorbed_template_id == self.surviving_template_id:
-            raise ValueError("absorbed_template_id 與 surviving_template_id 不可相同")
+        if self.absorbed_polygon_id == self.surviving_polygon_id:
+            raise ValueError(
+                "absorbed_polygon_id 與 surviving_polygon_id 不可相同"
+            )
         return self
 
 
