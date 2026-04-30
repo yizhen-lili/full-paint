@@ -55,7 +55,7 @@ function openPostProcess(t: PostProcessType) {
   postProcessOpen.value = true
 }
 
-async function onMerge(payload: { source_template_id: number; target_template_id: number }) {
+async function onMerge(payload: { polygon_id: string; target_template_id: number }) {
   apiError.value = null
   try {
     await mergeMut.mutateAsync(payload)
@@ -64,7 +64,9 @@ async function onMerge(payload: { source_template_id: number; target_template_id
     apiError.value = (e as { message?: string }).message || '合併失敗'
   }
 }
-async function onEliminate(payload: { absorbed_template_id: number; surviving_template_id: number }) {
+async function onEliminate(
+  payload: { absorbed_polygon_id: string; surviving_polygon_id: string },
+) {
   apiError.value = null
   try {
     await eliminateMut.mutateAsync(payload)
@@ -376,7 +378,7 @@ function fmtDateTime(iso: string | null): string {
       :open="postProcessOpen"
       :type="postProcessType"
       :palette="job.palette_json ?? []"
-      :image-url="job.filled_template_url"
+      :svg-url="svgUrl"
       :pending="mergeMut.isPending.value || eliminateMut.isPending.value"
       @close="postProcessOpen = false"
       @confirm-merge="onMerge"

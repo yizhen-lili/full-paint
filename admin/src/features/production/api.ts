@@ -221,16 +221,20 @@ export function recommendCanvasSizes(width: number, height: number, n = 3) {
   })
 }
 
-// ── F06-B Post-process ─────────────────────────────────────────────────
+// ── F06-B Post-process（區域層級 — 用 polygon_id）───────────────────────
 
 export interface MergeColorPayload {
-  source_template_id: number
+  /** template.svg 中該格的 SVG `id="rN"` 屬性，admin 點選後從 DOM 取得 */
+  polygon_id: string
+  /** 目標色號（從 palette 任選） */
   target_template_id: number
 }
 
 export interface EliminateBorderPayload {
-  absorbed_template_id: number
-  surviving_template_id: number
+  /** 被吸收的那一格（會被改成 surviving 那格的顏色） */
+  absorbed_polygon_id: string
+  /** 存活的那一格（顏色不變） */
+  surviving_polygon_id: string
 }
 
 export function mergeColor(jobId: string, payload: MergeColorPayload) {

@@ -4,7 +4,7 @@ import Dialog from '@/shared/ui/Dialog.vue'
 import Button from '@/shared/ui/Button.vue'
 import Label from '@/shared/ui/Label.vue'
 import Select from '@/shared/ui/Select.vue'
-import { Loader2, AlertTriangle, MousePointer } from 'lucide-vue-next'
+import { Loader2, AlertTriangle, Crosshair } from 'lucide-vue-next'
 
 import type { PaletteColor } from '../api'
 
@@ -14,123 +14,154 @@ const props = defineProps<{
   open: boolean
   type: OperationType | null
   palette: PaletteColor[]
-  /** filled_template_url，可選；提供時 dialog 會多一個「點圖選色塊」面板 */
-  imageUrl?: string | null
+  /** template.svg 的 signed URL；點選格子用 */
+  svgUrl?: string | null
   pending: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
-  confirmMerge: [payload: { source_template_id: number; target_template_id: number }]
-  confirmEliminate: [payload: { absorbed_template_id: number; surviving_template_id: number }]
+  confirmMerge: [payload: { polygon_id: string; target_template_id: number }]
+  confirmEliminate: [payload: { absorbed_polygon_id: string; surviving_polygon_id: string }]
 }>()
 
-const param1 = ref<string>('')  // first template_id
-const param2 = ref<string>('')  // second template_id
+// ── 狀態 ────────────────────────────────────────────────────────────────────
+// A: 點 1 格 → 從調色盤選 target_template_id
+// B: 點 2 格 → 對話框問存活
+const polygon1 = ref<string>('')  // 第一格 polygon_id
+const polygon2 = ref<string>('')  // 第二格（B only）
+const targetTemplateId = ref<string>('')  // 目標色（A only）
+const survivor = ref<'p1' | 'p2' | ''>('')  // B 的存活側選擇
 const errors = ref<Record<string, string>>({})
 
-// canvas pick：next click 填到哪個 param
-const canvasMode = ref(false)
-const canvasRef = ref<HTMLCanvasElement | null>(null)
-let imgData: ImageData | null = null
-const canvasError = ref<string | null>(null)
-const canvasLoading = ref(false)
+const svgContainerRef = ref<HTMLDivElement | null>(null)
+const svgLoading = ref(false)
+const svgError = ref<string | null>(null)
+let cleanupClickHandler: (() => void) | null = null
 
 watch(
   [() => props.open, () => props.type],
   () => {
     if (props.open) {
-      param1.value = ''
-      param2.value = ''
+      polygon1.value = ''
+      polygon2.value = ''
+      targetTemplateId.value = ''
+      survivor.value = ''
       errors.value = {}
-      canvasError.value = null
-      // canvas 開啟時不自動進 mode；要等 user 點按鈕（避免每次開 dialog 都重畫）
-      canvasMode.value = false
+      svgError.value = null
     }
   },
 )
+
+// ── 載入 SVG 並 inline 到 DOM；attach click handler 到所有 polygon ────────────
 
 watch(
-  [() => canvasMode.value, () => props.imageUrl],
+  [() => props.open, () => props.svgUrl],
   async () => {
-    if (!canvasMode.value || !props.imageUrl) return
-    canvasLoading.value = true
-    canvasError.value = null
+    if (!props.open || !props.svgUrl) return
+    svgLoading.value = true
+    svgError.value = null
     try {
-      // 等 next tick 讓 canvas DOM 渲染
+      // 等下個 tick 確保 dialog 容器已渲染
       await new Promise((r) => setTimeout(r, 50))
-      const c = canvasRef.value
-      if (!c) return
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve()
-        img.onerror = () => reject(new Error('圖片載入失敗'))
-        img.src = props.imageUrl!
+      const container = svgContainerRef.value
+      if (!container) return
+      const res = await fetch(props.svgUrl)
+      if (!res.ok) throw new Error(`SVG 載入失敗：HTTP ${res.status}`)
+      const svgText = await res.text()
+      container.innerHTML = svgText
+
+      // 強制 SVG 自適應容器寬度
+      const svgEl = container.querySelector('svg')
+      if (svgEl) {
+        svgEl.setAttribute('width', '100%')
+        svgEl.removeAttribute('height')
+        svgEl.style.maxHeight = '480px'
+      }
+
+      // 移除舊 click handler（若有）
+      if (cleanupClickHandler) cleanupClickHandler()
+
+      // 對所有 polygon attach click：把 id="rN" 的 polygon 點擊事件 bubble 到容器
+      const polygons = container.querySelectorAll('polygon[id]')
+      polygons.forEach((poly) => {
+        const el = poly as SVGPolygonElement
+        el.style.cursor = 'pointer'
+        el.style.transition = 'opacity 0.15s'
       })
-      const maxW = 600
-      const ratio = img.width > maxW ? maxW / img.width : 1
-      c.width = Math.round(img.width * ratio)
-      c.height = Math.round(img.height * ratio)
-      const ctx = c.getContext('2d')
-      if (!ctx) return
-      ctx.drawImage(img, 0, 0, c.width, c.height)
-      imgData = ctx.getImageData(0, 0, c.width, c.height)
+
+      const handler = (ev: Event) => {
+        const target = ev.target as Element
+        if (target.tagName.toLowerCase() === 'polygon' && target.id.startsWith('r')) {
+          onPolygonClick(target.id)
+        }
+      }
+      container.addEventListener('click', handler)
+      cleanupClickHandler = () => container.removeEventListener('click', handler)
     } catch (e) {
-      canvasError.value = (e as Error).message
+      svgError.value = (e as Error).message
     } finally {
-      canvasLoading.value = false
+      svgLoading.value = false
     }
   },
 )
 
-function onCanvasClick(e: MouseEvent) {
-  if (!canvasRef.value || !imgData) return
-  const rect = canvasRef.value.getBoundingClientRect()
-  const x = Math.floor((e.clientX - rect.left) * (canvasRef.value.width / rect.width))
-  const y = Math.floor((e.clientY - rect.top) * (canvasRef.value.height / rect.height))
-  const idx = (y * imgData.width + x) * 4
-  const r = imgData.data[idx]
-  const g = imgData.data[idx + 1]
-  const b = imgData.data[idx + 2]
-  // 找 palette 中最近的 RGB
-  let best: { id: number; dist: number } | null = null
-  for (const p of props.palette) {
-    const [pr, pg, pb] = p.rgb
-    const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
-    if (!best || dist < best.dist) best = { id: p.template_id, dist }
-  }
-  if (!best) return
-  // 填到下一個空 slot（先 param1，再 param2）
-  if (!param1.value) {
-    param1.value = String(best.id)
-  } else if (!param2.value) {
-    param2.value = String(best.id)
+function onPolygonClick(polygonId: string) {
+  if (!props.type) return
+  if (props.type === 'merge_color') {
+    polygon1.value = polygonId
+    highlightPolygons([polygonId])
   } else {
-    // 兩個都滿了 → 重置 param1
-    param1.value = String(best.id)
-    param2.value = ''
+    // eliminate_border：依序填 p1/p2，第三次 click 重置
+    if (!polygon1.value) {
+      polygon1.value = polygonId
+    } else if (!polygon2.value && polygonId !== polygon1.value) {
+      polygon2.value = polygonId
+    } else {
+      // 兩格已滿，或重點同一格 → 重置成新的第一格
+      polygon1.value = polygonId
+      polygon2.value = ''
+      survivor.value = ''
+    }
+    highlightPolygons([polygon1.value, polygon2.value].filter(Boolean))
   }
+  errors.value = {}
 }
+
+function highlightPolygons(ids: string[]) {
+  const container = svgContainerRef.value
+  if (!container) return
+  const polys = container.querySelectorAll('polygon[id]')
+  polys.forEach((p) => {
+    const el = p as SVGPolygonElement
+    if (ids.includes(el.id)) {
+      el.style.stroke = '#FF6600'
+      el.style.strokeWidth = '4'
+      el.style.opacity = '1'
+    } else {
+      el.style.stroke = '#AAAAAA'
+      el.style.strokeWidth = '1'
+      el.style.opacity = ids.length ? '0.6' : '1'
+    }
+  })
+}
+
+// ── 顯示文字 ─────────────────────────────────────────────────────────────────
 
 const titles: Record<OperationType, string> = {
   merge_color: '合併色塊',
   eliminate_border: '消除邊界線',
 }
-const labels: Record<OperationType, { p1: string; p2: string; hint: string; warn: string }> = {
-  merge_color: {
-    p1: '來源色塊（會被併掉）',
-    p2: '目標色塊（保留）',
-    hint: '把來源色塊的所有像素改成目標色塊的顏色，重新跑 SVG。',
-    warn: '會把 approved 退回 false（需重新審核）。',
-  },
-  eliminate_border: {
-    p1: '被吸收的色塊（消失）',
-    p2: '存活的色塊（吃掉對方）',
-    hint: '把兩色塊間的邊界消去，被吸收側的像素改成存活側的顏色。',
-    warn: '會把 approved 退回 false。',
-  },
-}
+const hint = computed(() => {
+  if (props.type === 'merge_color') {
+    return '點選 template 上的某一格 → 從下方下拉選目標色 → 該格的像素會改成目標色。'
+  }
+  if (props.type === 'eliminate_border') {
+    return '依序點選兩個相鄰格子 → 對話框選哪個顏色保留 → 兩格融合成一格。'
+  }
+  return ''
+})
+const warn = '會把 approved 退回 false（需重新審核）。'
 
 const paletteOptions = computed(() => [
   { value: '', label: '— 請選 —' },
@@ -140,25 +171,46 @@ const paletteOptions = computed(() => [
   })),
 ])
 
+const survivorOptions = computed(() => {
+  if (!polygon1.value || !polygon2.value) return []
+  return [
+    { value: 'p1', label: `保留 ${polygon1.value}` },
+    { value: 'p2', label: `保留 ${polygon2.value}` },
+  ]
+})
+
+// ── 驗證 + 送出 ──────────────────────────────────────────────────────────────
+
 function validate(): boolean {
   const errs: Record<string, string> = {}
-  const id1 = Number(param1.value)
-  const id2 = Number(param2.value)
-  if (!id1) errs.p1 = '必選'
-  if (!id2) errs.p2 = '必選'
-  if (id1 && id2 && id1 === id2) errs.p2 = '不可選同一個色塊'
+  if (props.type === 'merge_color') {
+    if (!polygon1.value) errs.polygon = '請點選一個格子'
+    if (!targetTemplateId.value) errs.target = '請選目標色'
+  } else if (props.type === 'eliminate_border') {
+    if (!polygon1.value) errs.polygon = '請點選兩個格子（先點第一個）'
+    else if (!polygon2.value) errs.polygon = '請再點選一個相鄰的格子'
+    if (polygon1.value && polygon2.value && !survivor.value) {
+      errs.survivor = '請選保留哪個顏色'
+    }
+  }
   errors.value = errs
   return Object.keys(errs).length === 0
 }
 
 function submit() {
   if (!validate() || !props.type) return
-  const id1 = Number(param1.value)
-  const id2 = Number(param2.value)
   if (props.type === 'merge_color') {
-    emit('confirmMerge', { source_template_id: id1, target_template_id: id2 })
+    emit('confirmMerge', {
+      polygon_id: polygon1.value,
+      target_template_id: Number(targetTemplateId.value),
+    })
   } else if (props.type === 'eliminate_border') {
-    emit('confirmEliminate', { absorbed_template_id: id1, surviving_template_id: id2 })
+    const absorbed = survivor.value === 'p1' ? polygon2.value : polygon1.value
+    const surviving = survivor.value === 'p1' ? polygon1.value : polygon2.value
+    emit('confirmEliminate', {
+      absorbed_polygon_id: absorbed,
+      surviving_polygon_id: surviving,
+    })
   }
 }
 </script>
@@ -167,62 +219,65 @@ function submit() {
   <Dialog
     :open="open"
     :title="type ? titles[type] : ''"
-    size="md"
+    size="lg"
     @close="emit('close')"
   >
     <div v-if="type" class="space-y-4 text-[13px]">
-      <p class="text-ink-default">{{ labels[type].hint }}</p>
+      <p class="text-ink-default">{{ hint }}</p>
       <p class="text-[12px] text-state-warning flex items-start gap-1">
         <AlertTriangle :size="12" :stroke-width="1.5" class="mt-0.5 shrink-0" />
-        <span>{{ labels[type].warn }}</span>
+        <span>{{ warn }}</span>
       </p>
 
-      <!-- 點圖選色塊 toggle -->
-      <div v-if="imageUrl">
-        <button
-          type="button"
-          class="text-[12px] inline-flex items-center gap-1 text-ink-muted hover:text-accent transition-colors"
-          @click="canvasMode = !canvasMode"
-        >
-          <MousePointer :size="12" :stroke-width="1.5" />
-          {{ canvasMode ? '收起預覽圖' : '從預覽圖點選色塊' }}
-        </button>
+      <!-- SVG 預覽（template.svg inline，可點 polygon） -->
+      <div v-if="svgUrl">
+        <div class="flex items-center gap-1 text-[12px] text-ink-muted mb-1">
+          <Crosshair :size="12" :stroke-width="1.5" />
+          <span>點選下方 template 上的格子</span>
+        </div>
         <div
-          v-if="canvasMode"
-          class="mt-2 rounded-[var(--radius-sm)] border border-line-hairline bg-paper-canvas overflow-hidden relative"
+          class="rounded-[var(--radius-sm)] border border-line-hairline bg-paper-canvas overflow-auto relative"
+          style="min-height: 200px; max-height: 480px"
         >
-          <canvas
-            ref="canvasRef"
-            class="block max-w-full h-auto cursor-crosshair"
-            @click="onCanvasClick"
-          />
+          <div ref="svgContainerRef" class="block" />
           <div
-            v-if="canvasLoading"
+            v-if="svgLoading"
             class="absolute inset-0 flex items-center justify-center bg-paper-canvas/80"
           >
             <Loader2 :size="20" :stroke-width="1.5" class="animate-spin text-ink-muted" />
           </div>
-          <p v-if="canvasError" class="p-2 text-[11px] text-state-danger">{{ canvasError }}</p>
+          <p v-if="svgError" class="p-2 text-[11px] text-state-danger">{{ svgError }}</p>
         </div>
-        <p v-if="canvasMode" class="mt-1 text-[11px] text-ink-muted">
-          點圖會依序填到下方第 1 / 第 2 欄；兩格都滿會從第 1 欄重新開始。
-        </p>
       </div>
 
-      <div>
-        <Label>{{ labels[type].p1 }}</Label>
-        <Select v-model="param1" :options="paletteOptions" />
-        <p v-if="errors.p1" class="mt-1 text-[12px] text-state-danger">{{ errors.p1 }}</p>
-      </div>
-      <div>
-        <Label>{{ labels[type].p2 }}</Label>
-        <Select v-model="param2" :options="paletteOptions" />
-        <p v-if="errors.p2" class="mt-1 text-[12px] text-state-danger">{{ errors.p2 }}</p>
+      <!-- 已選格子 -->
+      <div class="text-[12px] space-y-1">
+        <div class="flex gap-2">
+          <Label>已點選：</Label>
+          <span v-if="polygon1" class="font-mono px-1.5 rounded bg-accent/10 text-accent">
+            {{ polygon1 }}
+          </span>
+          <span v-if="polygon2" class="font-mono px-1.5 rounded bg-accent/10 text-accent">
+            {{ polygon2 }}
+          </span>
+          <span v-if="!polygon1" class="text-ink-muted">尚未點選</span>
+        </div>
+        <p v-if="errors.polygon" class="text-state-danger">{{ errors.polygon }}</p>
       </div>
 
-      <p class="text-[11px] text-ink-muted">
-        色塊編號可從上方「調色盤」卡看到（每色 #N 標記）。
-      </p>
+      <!-- A: 目標色下拉 -->
+      <div v-if="type === 'merge_color'">
+        <Label>目標色號</Label>
+        <Select v-model="targetTemplateId" :options="paletteOptions" />
+        <p v-if="errors.target" class="mt-1 text-[12px] text-state-danger">{{ errors.target }}</p>
+      </div>
+
+      <!-- B: 存活選擇 -->
+      <div v-if="type === 'eliminate_border' && polygon1 && polygon2">
+        <Label>保留哪個顏色？</Label>
+        <Select v-model="survivor" :options="survivorOptions" />
+        <p v-if="errors.survivor" class="mt-1 text-[12px] text-state-danger">{{ errors.survivor }}</p>
+      </div>
     </div>
 
     <template #footer>
