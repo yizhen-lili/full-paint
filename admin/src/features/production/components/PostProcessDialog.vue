@@ -197,6 +197,18 @@ function validate(): boolean {
   return Object.keys(errs).length === 0
 }
 
+/** 判斷顏色明暗 — 給色票上的數字選黑或白文字 */
+function _isLightColor(hex: string): boolean {
+  const m = hex.match(/^#([0-9a-f]{6})$/i)
+  if (!m) return true
+  const n = parseInt(m[1], 16)
+  const r = (n >> 16) & 0xff
+  const g = (n >> 8) & 0xff
+  const b = n & 0xff
+  // YIQ 亮度公式
+  return (r * 299 + g * 587 + b * 114) / 1000 > 155
+}
+
 function submit() {
   if (!validate() || !props.type) return
   if (props.type === 'merge_color') {
@@ -265,10 +277,32 @@ function submit() {
         <p v-if="errors.polygon" class="text-state-danger">{{ errors.polygon }}</p>
       </div>
 
-      <!-- A: 目標色下拉 -->
+      <!-- A: 目標色色票網格 -->
       <div v-if="type === 'merge_color'">
         <Label>目標色號</Label>
-        <Select v-model="targetTemplateId" :options="paletteOptions" />
+        <div class="mt-1 grid grid-cols-6 sm:grid-cols-9 gap-1.5">
+          <button
+            v-for="c in palette"
+            :key="c.template_id"
+            type="button"
+            class="relative aspect-square rounded-[var(--radius-xs)] border-2 transition-all hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent"
+            :class="
+              Number(targetTemplateId) === c.template_id
+                ? 'border-accent ring-2 ring-accent/30'
+                : 'border-line-hairline'
+            "
+            :style="{ backgroundColor: c.hex }"
+            :title="`#${c.template_id} ${c.hex}`"
+            @click="targetTemplateId = String(c.template_id)"
+          >
+            <span
+              class="absolute inset-0 flex items-center justify-center text-[11px] font-mono font-medium"
+              :style="{ color: _isLightColor(c.hex) ? '#000' : '#fff' }"
+            >
+              {{ c.template_id }}
+            </span>
+          </button>
+        </div>
         <p v-if="errors.target" class="mt-1 text-[12px] text-state-danger">{{ errors.target }}</p>
       </div>
 
