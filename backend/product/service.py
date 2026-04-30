@@ -1,3 +1,4 @@
+import logging
 import math
 from decimal import Decimal
 from uuid import UUID
@@ -17,6 +18,30 @@ from product.models import (
     Theme,
 )
 from production.models import ProductionJob
+
+logger = logging.getLogger(__name__)
+
+
+def _public_filled_url(raw: str | None) -> str | None:
+    """把 production_jobs.filled_template_url 轉成瀏覽器可載入的 https URL。
+
+    - None → None
+    - 已是 https → 直接回（兼容舊資料 / 測試 stub URL）
+    - gs:// → 走 production._make_signed_url 產 15-min TTL signed URL
+    - 解析失敗 → log warning + return None（避免一筆壞資料把整頁 list endpoint 弄掛）
+    """
+    if not raw:
+        return None
+    if raw.startswith("https://") or raw.startswith("http://"):
+        return raw
+    try:
+        from production.service import _make_signed_url  # noqa: PLC0415
+
+        return _make_signed_url(raw)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("filled_template_url signed URL 失敗：%s — %s", raw, e)
+        return None
+
 
 # ── Pricing formula ──────────────────────────────────────────────────────────
 
@@ -692,7 +717,7 @@ def _variant_with_job(variant: ProductVariant, job: ProductionJob | None) -> dic
             "canvas_w_cm": float(job.canvas_w_cm),
             "canvas_h_cm": float(job.canvas_h_cm),
             "num_colors_used": job.num_colors_used,
-            "filled_template_url": job.filled_template_url,
+            "filled_template_url": _public_filled_url(job.filled_template_url),
             "svg_url": job.svg_url,
         }
     return {
@@ -914,7 +939,7 @@ async def public_get_product(db: AsyncSession, product_id: UUID) -> dict:
             "price": float(v.price),
             "is_active": v.is_active,
             "is_preorder": False,
-            "filled_template_url": j.filled_template_url,
+            "filled_template_url": _public_filled_url(j.filled_template_url),
         }
         for v, j in variant_rows
     ]

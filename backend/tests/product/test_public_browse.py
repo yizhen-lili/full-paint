@@ -243,6 +243,32 @@ async def test_detail_on_sale(client, db):
 
 
 @pytest.mark.asyncio
+async def test_detail_converts_gs_filled_url_to_signed_https(client, db):
+    """Regression：production_jobs.filled_template_url 改 gs:// 後，公開 endpoint 必須回 https
+    （瀏覽器無法載 gs://）。Phase 2-A integration 後新增。"""
+    from unittest.mock import patch
+
+    j = await _make_job(db, w=30, h=40)
+    # 直接覆寫成 gs:// 模擬新引擎輸出
+    j.filled_template_url = "gs://test-bucket/production_jobs/abc/filled.png"
+    p = await _make_product(db, title="gs URL 商品")
+    await _make_variant(db, p.id, j.id, price=600)
+    await db.commit()
+
+    with patch(
+        "production.service._make_signed_url",
+        return_value="https://storage.googleapis.com/test-bucket/.../signed?token=x",
+    ):
+        res = await client.get(f"/api/v1/products/{p.id}")
+
+    assert res.status_code == 200
+    variants = res.json()["variants"]
+    assert len(variants) == 1
+    url = variants[0]["filled_template_url"]
+    assert url.startswith("https://"), f"公開 endpoint 不可回 gs:// — 收到 {url!r}"
+
+
+@pytest.mark.asyncio
 async def test_detail_draft_404(client, db):
     j = await _make_job(db)
     p = await _make_product(db, title="草稿", status=ProductStatusEnum.draft)

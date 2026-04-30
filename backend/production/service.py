@@ -222,7 +222,11 @@ async def get_job(db: AsyncSession, job_id: UUID) -> ProductionJob:
     return job
 
 
-_FILE_FIELD_MAP = {"svg": "svg_url", "snapped_rgb": "snapped_rgb_url"}
+_FILE_FIELD_MAP = {
+    "svg": "svg_url",
+    "snapped_rgb": "snapped_rgb_url",
+    "filled": "filled_template_url",
+}
 
 
 def _make_signed_url(raw_url: str) -> str:

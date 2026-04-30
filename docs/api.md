@@ -483,7 +483,9 @@ Response 200: {
 ### GET /admin/production/jobs/{id}/signed-url
 **權限**：admin｜取得私有檔案簽名 URL（15分鐘 TTL）
 
-Query: `?file=svg|snapped_rgb`
+Query: `?file=svg|snapped_rgb|filled`
+
+`filled` 為 admin UI 顯示用 signed URL（DB 內 filled_template_url 為 `gs://` 私有路徑，需簽名才能讀）。
 
 ```json
 Response 200: { "url": "https://..." }
