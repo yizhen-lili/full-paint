@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -13,6 +14,10 @@ class CostBreakdown(BaseModel):
 class CandidateInfo(BaseModel):
     production_job_id: UUID
     product_title: str | None
+    # 'product'  → 一般商品 job（已綁 ProductVariant）
+    # 'custom'   → 客製訂單 job（CustomRequest 路徑）
+    # 'unbound'  → 既無 product 也無 custom_request（fallback，不該發生）
+    kind: Literal["product", "custom", "unbound"]
     canvas_w_cm: float
     canvas_h_cm: float
     inch_per_unit: float

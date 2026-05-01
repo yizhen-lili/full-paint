@@ -134,13 +134,17 @@ async def _load_candidate_pool(db: AsyncSession) -> list[dict]:
         h = Decimal(str(job.canvas_h_cm))
         if job.id in title_by_job:
             label = title_by_job[job.id]
+            kind = "product"
         elif job.custom_request_id and job.custom_request_id in customer_by_cr:
             label = f"客製 - {customer_by_cr[job.custom_request_id]}"
+            kind = "custom"
         else:
             label = f"製作任務 #{str(job.id)[:8]}"
+            kind = "unbound"
         items.append({
             "production_job_id": job.id,
             "product_title": label,
+            "kind": kind,
             "canvas_w_cm": float(w),
             "canvas_h_cm": float(h),
             "inch_per_unit": float(inch_per_unit(w, h)),

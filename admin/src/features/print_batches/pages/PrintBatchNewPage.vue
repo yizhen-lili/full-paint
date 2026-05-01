@@ -14,6 +14,7 @@ import {
   useFinalizeBatchMutation,
   usePreviewBatchMutation,
 } from '../queries'
+import { CANDIDATE_KIND_BADGE } from '../api'
 import type { CandidateInfo, PreviewResponse } from '../api'
 
 const router = useRouter()
@@ -180,7 +181,7 @@ function fmtMoney(n: number): string {
     <Card class="mb-5">
       <h2 class="font-display text-ink-strong text-[18px] mb-2">必印項目</h2>
       <p class="text-[12px] text-ink-muted mb-4">
-        從待處理的訂單 / 製作任務中選需要列印的數量。底下會列出所有可用 candidate，輸入需要的份數即可。
+        所有「已通過審核」的製作任務都會列出（含未上架商品與客製訂單），輸入需要的份數即可。
       </p>
 
       <div v-if="candidatesLoading" class="py-8 flex justify-center text-ink-muted">
@@ -196,7 +197,13 @@ function fmtMoney(n: number): string {
           class="py-3 flex items-center justify-between gap-3 flex-wrap"
         >
           <div class="flex-1 min-w-0">
-            <p class="font-medium text-ink-strong">{{ c.product_title }}</p>
+            <p class="font-medium text-ink-strong flex items-center gap-2">
+              <span
+                class="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                :class="CANDIDATE_KIND_BADGE[c.kind].cls"
+              >{{ CANDIDATE_KIND_BADGE[c.kind].label }}</span>
+              <span class="truncate">{{ c.product_title }}</span>
+            </p>
             <p class="text-[11px] text-ink-muted">
               {{ c.canvas_w_cm }} × {{ c.canvas_h_cm }} cm · 單份 {{ c.inch_per_unit }} 吋
             </p>

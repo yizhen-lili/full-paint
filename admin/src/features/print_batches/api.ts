@@ -67,12 +67,22 @@ export interface PrintBatchDetail {
   items: BatchItem[]
 }
 
+export type CandidateKind = 'product' | 'custom' | 'unbound'
+
 export interface CandidateInfo {
   production_job_id: string
   product_title: string
+  /** 候選來源類型：商品 / 客製訂單 / 兩者皆無（fallback） */
+  kind: CandidateKind
   canvas_w_cm: number
   canvas_h_cm: number
   inch_per_unit: number
+}
+
+export const CANDIDATE_KIND_BADGE: Record<CandidateKind, { label: string; cls: string }> = {
+  product: { label: '商品', cls: 'bg-aux-rice-mid/20 text-aux-rice-deep' },
+  custom: { label: '客製', cls: 'bg-accent/15 text-accent' },
+  unbound: { label: '任務', cls: 'bg-paper-subtle text-ink-muted' },
 }
 
 export interface PreviewResponse {

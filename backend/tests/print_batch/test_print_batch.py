@@ -225,12 +225,19 @@ async def test_candidates_filter_on_sale_active(client, db):
     assert res.status_code == 200
     items = res.json()["items"]
     titles = [i["product_title"] for i in items]
+    by_title = {i["product_title"]: i for i in items}
     # A/B/C/D 都要列出（放寬後不要求 on_sale + active）
     assert "架上" in titles
     assert "草稿" in titles
     assert "架上但變體停用" in titles
-    # 客製 label
-    assert any(t == f"客製 - {customer.name}" for t in titles)
+    # 商品類型統一 kind=product
+    assert by_title["架上"]["kind"] == "product"
+    assert by_title["草稿"]["kind"] == "product"
+    assert by_title["架上但變體停用"]["kind"] == "product"
+    # 客製 label + kind=custom
+    custom_label = f"客製 - {customer.name}"
+    assert custom_label in titles
+    assert by_title[custom_label]["kind"] == "custom"
     # E/F 不該出現（approved=False / status!=completed）
     job_ids_in_pool = {i["production_job_id"] for i in items}
     assert str(job_e.id) not in job_ids_in_pool
