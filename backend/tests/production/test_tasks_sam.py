@@ -185,7 +185,9 @@ async def test_run_job_sam_weighted_ok(db):
 
 @pytest.mark.asyncio
 async def test_run_job_sam_refine_missing_mask(db):
-    """sam_refine 缺 mask_url → status=failed、引擎不被呼叫。"""
+    """sam_refine 缺 mask_url → status=failed、引擎不被呼叫、admin_notifications 寫入。"""
+    from notifications.models import AdminNotification
+
     image, job = await _seed_sam_job(
         db, mode=ModeEnum.sam_refine, mask_url=None,
     )
@@ -205,6 +207,14 @@ async def test_run_job_sam_refine_missing_mask(db):
     assert "mask_url" in notes
     assert mock_engine.call_count == 0
     assert mock_download.call_count == 0
+
+    # EVENT_MATRIX E29：失敗應插 admin_notifications(type=production_failed)
+    notifs = (await db.execute(
+        select(AdminNotification).where(AdminNotification.reference_id == job.id)
+    )).scalars().all()
+    assert len(notifs) == 1
+    assert notifs[0].type == "production_failed"
+    assert notifs[0].reference_type == "production_job"
 
 
 @pytest.mark.asyncio

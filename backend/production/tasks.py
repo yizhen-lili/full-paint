@@ -150,16 +150,42 @@ def _get_db_url() -> str:
     return settings.database_url
 
 
+async def _mark_failed_with_notification(session, job, notes_message: str) -> None:
+    """把 job 標 failed + notes，並插 admin_notifications(type=production_failed)。
+
+    EVENT_MATRIX E29：失敗只進後台 admin_notifications，**不**通知客戶
+    （不寄 email、不在 custom_request_messages 插入系統訊息）。
+
+    呼叫前 session 必須是健康的；commit 由呼叫端負責（讓 caller 控制一次性提交）。
+    """
+    from notifications.service import create_notification  # noqa: PLC0415
+    from production.models import JobStatusEnum  # noqa: PLC0415
+
+    job.status = JobStatusEnum.failed
+    job.notes = notes_message[:500]
+
+    notification_message = (
+        f"製作任務失敗（job_id={job.id}）：{notes_message[:300]}"
+    )
+    await create_notification(
+        session,
+        type="production_failed",
+        message=notification_message,
+        reference_type="production_job",
+        reference_id=job.id,
+        requires_action=True,
+    )
+
+
 async def _mark_job_failed(job_id: str, notes: str) -> None:
-    """用獨立 engine 標 job=failed + notes。專供主 session 連線壞掉的回滾路徑使用。
+    """用獨立 engine 標 job=failed + notes + admin_notifications。
+    專供主 session 連線壞掉的回滾路徑使用。
 
     任何步驟失敗都吞例外只 log — 因為這已是「最後一道保險」，再 raise 會讓 Celery
     把整個 task 標 failed 反而看不到我們已寫好的 notes。
     """
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
     from sqlalchemy.pool import NullPool  # noqa: PLC0415
-
-    from production.models import JobStatusEnum  # noqa: PLC0415
 
     fallback_engine = create_async_engine(_get_db_url(), poolclass=NullPool)
     try:
@@ -168,8 +194,7 @@ async def _mark_job_failed(job_id: str, notes: str) -> None:
             if job is None:
                 logger.warning("_mark_job_failed: job %s not found in fallback session", job_id)
                 return
-            job.status = JobStatusEnum.failed
-            job.notes = notes[:500]
+            await _mark_failed_with_notification(session, job, notes)
             await session.commit()
     except Exception as e:  # noqa: BLE001
         logger.exception("_mark_job_failed itself failed for %s: %s", job_id, e)
@@ -197,24 +222,26 @@ async def _run_production_job_async(job_id: str) -> None:
                 return
 
             if job.image_id is None:
-                job.status = JobStatusEnum.failed
-                job.notes = "缺少 image_id（custom_request 路徑請先指派 image）"
+                await _mark_failed_with_notification(
+                    session, job, "缺少 image_id（custom_request 路徑請先指派 image）"
+                )
                 await session.commit()
                 return
 
             # sam_* 模式必須先有 mask_url（admin 透過 sam-mask endpoint 編輯後才會有）
             if job.mode != "standard" and not job.mask_url:
-                job.status = JobStatusEnum.failed
-                job.notes = (
-                    f"mode={job.mode} 但缺 mask_url（請先在製作系統編輯遮罩再送出）"
+                await _mark_failed_with_notification(
+                    session, job,
+                    f"mode={job.mode} 但缺 mask_url（請先在製作系統編輯遮罩再送出）",
                 )
                 await session.commit()
                 return
 
             image = await _load_image(session, job.image_id)
             if image is None:
-                job.status = JobStatusEnum.failed
-                job.notes = f"找不到 image_id={job.image_id}"
+                await _mark_failed_with_notification(
+                    session, job, f"找不到 image_id={job.image_id}"
+                )
                 await session.commit()
                 return
 
@@ -240,8 +267,10 @@ async def _run_production_job_async(job_id: str) -> None:
                 # 回滾：刪已上傳
                 for p in uploaded_blob_paths:
                     _delete_blob(p)
-                job.status = JobStatusEnum.failed
-                job.notes = f"引擎或上傳失敗：{type(e).__name__}: {e}"[:500]
+                await _mark_failed_with_notification(
+                    session, job,
+                    f"引擎或上傳失敗：{type(e).__name__}: {e}",
+                )
                 await session.commit()
                 return
 
@@ -584,9 +613,9 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
                 return
 
             if not job.snapped_rgb_url or not job.svg_url:
-                job.status = JobStatusEnum.failed
-                job.notes = (
-                    "缺少 snapped_rgb_url 或 svg_url（job 可能未跑過引擎或檔案被清掉）"
+                await _mark_failed_with_notification(
+                    session, job,
+                    "缺少 snapped_rgb_url 或 svg_url（job 可能未跑過引擎或檔案被清掉）",
                 )
                 await session.commit()
                 return
@@ -618,16 +647,18 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
                 logger.warning("post_process: bad params for %s — %s", job_id, e)
                 for p in uploaded_blob_paths:
                     _delete_blob(p)
-                job.status = JobStatusEnum.failed
-                job.notes = f"後處理參數錯誤：{e}"[:500]
+                await _mark_failed_with_notification(
+                    session, job, f"後處理參數錯誤：{e}",
+                )
                 await session.commit()
                 return
             except Exception as e:  # noqa: BLE001
                 logger.exception("run_post_process_job: engine/upload failed for %s", job_id)
                 for p in uploaded_blob_paths:
                     _delete_blob(p)
-                job.status = JobStatusEnum.failed
-                job.notes = f"後處理失敗：{type(e).__name__}: {e}"[:500]
+                await _mark_failed_with_notification(
+                    session, job, f"後處理失敗：{type(e).__name__}: {e}",
+                )
                 await session.commit()
                 return
 

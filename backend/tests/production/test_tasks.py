@@ -134,7 +134,9 @@ async def test_run_production_job_success(db):
 
 @pytest.mark.asyncio
 async def test_run_production_job_engine_error_marks_failed(db):
-    """引擎 raise → status=failed、notes 含錯誤摘要、未上傳。"""
+    """引擎 raise → status=failed、notes 含錯誤摘要、未上傳、admin_notifications 寫入。"""
+    from notifications.models import AdminNotification
+
     image, job = await _seed_image_and_job(db)
 
     with patch("production.tasks._download_image_to_path"), \
@@ -154,6 +156,15 @@ async def test_run_production_job_engine_error_marks_failed(db):
     assert mock_upload.call_count == 0
     # 沒有上傳就沒得刪
     assert mock_delete.call_count == 0
+
+    # EVENT_MATRIX E29：失敗應插 admin_notifications(type=production_failed)
+    notifs = (await db.execute(
+        select(AdminNotification).where(AdminNotification.reference_id == job.id)
+    )).scalars().all()
+    assert len(notifs) == 1
+    assert notifs[0].type == "production_failed"
+    assert notifs[0].requires_action is True
+    assert "engine boom" in notifs[0].message
 
 
 @pytest.mark.asyncio
