@@ -435,8 +435,13 @@ async def export_job_pdf(db: AsyncSession, job_id: UUID) -> bytes:
 
     w_cm = float(job.canvas_w_cm)
     h_cm = float(job.canvas_h_cm)
-    # SVG 存的是 gs:// URL（私有），httpx 不認識；需要先轉 https signed URL
-    svg_fetch_url = _make_signed_url(job.svg_url) if job.svg_url else None
+    # SVG 存的是 gs:// URL（私有），httpx 不認識；需要先轉 https signed URL。
+    # 已是 http/https 的（測試 fixture 或先前簽過）直接傳給 httpx，不重簽，
+    # 避免 _make_signed_url 對 bucket name 不匹配的測試 URL 失敗。
+    if job.svg_url and job.svg_url.startswith("gs://"):
+        svg_fetch_url = _make_signed_url(job.svg_url)
+    else:
+        svg_fetch_url = job.svg_url
     drawing, png_bytes = await _render_svg_with_fallbacks(svg_fetch_url, w_cm, h_cm)
     if drawing is None and png_bytes is None:
         raise BadRequestError("SVG 渲染失敗（svglib 與 cairosvg 皆無法解析此檔案）")

@@ -20,7 +20,7 @@ async def list_copy_candidates(db: AsyncSession, job_id: UUID) -> list[dict]:
 
     回傳依 created_at desc 排序的 list[dict]，每筆已含 filled signed URL。
     """
-    from sqlalchemy import and_, exists, func, or_
+    from sqlalchemy import and_, func, or_
 
     from production.service import _make_signed_url
 

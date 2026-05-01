@@ -16,15 +16,17 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth.models import User
 from core.exceptions import BadRequestError, NotFoundError
+from custom.models import CustomRequest
 from print_batch.models import (
     PrintBatch,
     PrintBatchItem,
     PrintBatchItemSourceEnum,
     PrintBatchStatusEnum,
 )
-from product.models import Product, ProductStatusEnum, ProductVariant
-from production.models import ProductionJob
+from product.models import Product, ProductVariant
+from production.models import JobStatusEnum, ProductionJob
 
 logger = logging.getLogger(__name__)
 
@@ -84,24 +86,61 @@ def _waste_inch(billable: Decimal) -> Decimal:
 
 
 async def _load_candidate_pool(db: AsyncSession) -> list[dict]:
-    """架上 on_sale + active variant 對應的 production_job 全列。"""
+    """所有 approved=true + status=completed 的 production_job 全列。
+
+    包含兩類：
+    - 一般商品 job（image_id 路徑）— 已通過審核即可印，**不要求商品已上架**
+    - 客製 job（custom_request_id 路徑）— 客製訂單流程內的列印任務
+
+    label 顯示優先順序：
+      1. 商品 title（任一綁定 variant 的商品名稱）
+      2. 「客製 - {user.name}」（custom_request 路徑）
+      3. fallback「製作任務 #{job_id_short}」（兩者都沒有 — 不該發生）
+    """
     rows = (await db.execute(
-        select(ProductionJob, Product.title)
-        .join(ProductVariant, ProductVariant.production_job_id == ProductionJob.id)
+        select(ProductionJob).where(
+            ProductionJob.status == JobStatusEnum.completed,
+            ProductionJob.approved.is_(True),
+        ).order_by(ProductionJob.created_at.desc())
+    )).scalars().all()
+    if not rows:
+        return []
+
+    job_ids = [j.id for j in rows]
+
+    # 撈商品名稱（可能為 None — 沒綁商品）
+    product_title_rows = (await db.execute(
+        select(ProductVariant.production_job_id, Product.title)
         .join(Product, ProductVariant.product_id == Product.id)
-        .where(
-            Product.status == ProductStatusEnum.on_sale,
-            ProductVariant.is_active.is_(True),
-        )
+        .where(ProductVariant.production_job_id.in_(job_ids))
         .distinct()
     )).all()
+    title_by_job: dict = {row[0]: row[1] for row in product_title_rows}
+
+    # 撈客製訂單 user 名稱
+    custom_request_ids = [j.custom_request_id for j in rows if j.custom_request_id]
+    customer_by_cr: dict = {}
+    if custom_request_ids:
+        cr_rows = (await db.execute(
+            select(CustomRequest.id, User.name)
+            .join(User, CustomRequest.user_id == User.id)
+            .where(CustomRequest.id.in_(custom_request_ids))
+        )).all()
+        customer_by_cr = {row[0]: row[1] for row in cr_rows}
+
     items = []
-    for job, title in rows:
+    for job in rows:
         w = Decimal(str(job.canvas_w_cm))
         h = Decimal(str(job.canvas_h_cm))
+        if job.id in title_by_job:
+            label = title_by_job[job.id]
+        elif job.custom_request_id and job.custom_request_id in customer_by_cr:
+            label = f"客製 - {customer_by_cr[job.custom_request_id]}"
+        else:
+            label = f"製作任務 #{str(job.id)[:8]}"
         items.append({
             "production_job_id": job.id,
-            "product_title": title,
+            "product_title": label,
             "canvas_w_cm": float(w),
             "canvas_h_cm": float(h),
             "inch_per_unit": float(inch_per_unit(w, h)),
@@ -520,8 +559,14 @@ async def _generate_pdf(items: list) -> str:
         # NUMERIC → float for reportlab unit math
         w_cm = float(item.canvas_w_cm)
         h_cm = float(item.canvas_h_cm)
+        # SVG 存的是 gs:// URL（私有），httpx 不認識；要先轉 https signed URL，
+        # 否則 fetch 會失敗 → 全部走佔位框 → finalize 後 PDF 全是白框。
+        svg_fetch_url = job.svg_url
+        if svg_fetch_url and svg_fetch_url.startswith("gs://"):
+            from production.service import _make_signed_url
+            svg_fetch_url = _make_signed_url(svg_fetch_url)
         drawing, png_bytes = await _render_svg_with_fallbacks(
-            job.svg_url, w_cm, h_cm,
+            svg_fetch_url, w_cm, h_cm,
         )
         svg_drawings.append({
             "drawing": drawing,

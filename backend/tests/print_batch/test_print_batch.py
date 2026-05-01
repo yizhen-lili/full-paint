@@ -152,11 +152,40 @@ async def test_admin_only_customer_blocked(client, db):
 
 @pytest.mark.asyncio
 async def test_candidates_filter_on_sale_active(client, db):
-    """候選池只列 product.status=on_sale + variant.is_active=true 對應的 production_job。"""
+    """候選池：approved=true + status=completed 全列（不要求商品上架）。
+
+    包含：
+      A. 在架上商品 → label = product.title
+      B. draft 商品（未上架）→ 仍列出（為了囤庫存）
+      C. variant inactive → 仍列出（同上）
+      D. 客製訂單 job（無 product 綁定）→ label = 「客製 - {user.name}」
+      E. approved=False → 排除
+      F. status≠completed → 排除
+    """
+    from custom.models import (
+        CustomRequest,
+        CustomRequestStatusEnum,
+        CustomRequestTypeEnum,
+    )
+
     await _make_admin(db)
-    job_a = await _make_job(db, w=30, h=40)  # 在架上
-    job_b = await _make_job(db, w=50, h=50)  # draft 商品
+    job_a = await _make_job(db, w=30, h=40)  # 上架商品
+    job_b = await _make_job(db, w=50, h=50)  # 草稿商品
     job_c = await _make_job(db, w=60, h=60)  # variant inactive
+    job_d = await _make_job(db, w=20, h=20)  # 客製
+    job_e = ProductionJob(
+        detail="standard", difficulty="beginner", mode="standard",
+        canvas_w_cm=10, canvas_h_cm=10, svg_url="https://example.com/e.svg",
+        approved=False, status="completed",
+    )
+    db.add(job_e)
+    job_f = ProductionJob(
+        detail="standard", difficulty="beginner", mode="standard",
+        canvas_w_cm=15, canvas_h_cm=15, svg_url="https://example.com/f.svg",
+        approved=True, status="processing",
+    )
+    db.add(job_f)
+    await db.flush()
 
     p_a = Product(title="架上", description="", cover_image_url="x",
                   status=ProductStatusEnum.on_sale)
@@ -178,6 +207,17 @@ async def test_candidates_filter_on_sale_active(client, db):
     await db.flush()
     db.add(ProductVariant(product_id=p_c.id, production_job_id=job_c.id,
                           price=500, price_formula_base=500, is_active=False))
+
+    customer = await _make_customer(db, email="custom_buyer@test.com")
+    cr = CustomRequest(
+        user_id=customer.id,
+        request_type=CustomRequestTypeEnum.custom_photo,
+        status=CustomRequestStatusEnum.quote_confirmed,
+    )
+    db.add(cr)
+    await db.flush()
+    job_d.custom_request_id = cr.id
+    db.add(job_d)
     await db.commit()
 
     await _login_admin(client)
@@ -185,9 +225,16 @@ async def test_candidates_filter_on_sale_active(client, db):
     assert res.status_code == 200
     items = res.json()["items"]
     titles = [i["product_title"] for i in items]
+    # A/B/C/D 都要列出（放寬後不要求 on_sale + active）
     assert "架上" in titles
-    assert "草稿" not in titles
-    assert "架上但變體停用" not in titles
+    assert "草稿" in titles
+    assert "架上但變體停用" in titles
+    # 客製 label
+    assert any(t == f"客製 - {customer.name}" for t in titles)
+    # E/F 不該出現（approved=False / status!=completed）
+    job_ids_in_pool = {i["production_job_id"] for i in items}
+    assert str(job_e.id) not in job_ids_in_pool
+    assert str(job_f.id) not in job_ids_in_pool
 
 
 @pytest.mark.asyncio
