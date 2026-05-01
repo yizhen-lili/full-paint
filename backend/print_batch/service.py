@@ -3,8 +3,9 @@
 責任：
 1. 計費：才數計算、雙下限（200 元列印 / 100 元裁切）
 2. 補單建議：3 種策略，目標整單 ≥ 20 才避免下限浪費
-3. PDF 生成：從 production_jobs.svg_url 拼版（stub URL 上傳）
+3. PDF 生成：從 production_jobs.svg_url 拼版 → 上傳 Firebase → gs:// URL
 """
+import asyncio
 import io
 import logging
 import math
@@ -128,6 +129,8 @@ async def _load_candidate_pool(db: AsyncSession) -> list[dict]:
         )).all()
         customer_by_cr = {row[0]: row[1] for row in cr_rows}
 
+    from product.service import _public_filled_url
+
     items = []
     for job in rows:
         w = Decimal(str(job.canvas_w_cm))
@@ -145,6 +148,7 @@ async def _load_candidate_pool(db: AsyncSession) -> list[dict]:
             "production_job_id": job.id,
             "product_title": label,
             "kind": kind,
+            "preview_url": _public_filled_url(job.filled_template_url),
             "canvas_w_cm": float(w),
             "canvas_h_cm": float(h),
             "inch_per_unit": float(inch_per_unit(w, h)),
@@ -237,6 +241,8 @@ def _suggest_combos(
                 "items": [{
                     "production_job_id": c["production_job_id"],
                     "product_title": c.get("product_title"),
+                    "kind": c.get("kind", "unbound"),
+                    "preview_url": c.get("preview_url"),
                     "quantity": qty,
                     "inch_per_unit": float(ipu),
                 }],
@@ -295,6 +301,8 @@ def _greedy_pack(sorted_candidates: list[dict], deficit: Decimal) -> dict | None
             items_dict[cid] = {
                 "production_job_id": cid,
                 "product_title": c.get("product_title"),
+                "kind": c.get("kind", "unbound"),
+                "preview_url": c.get("preview_url"),
                 "quantity": 1,
                 "inch_per_unit": float(ipu),
             }
@@ -426,7 +434,7 @@ async def finalize(db: AsyncSession, batch_id: UUID) -> PrintBatch:
                 code="SVG_NOT_READY",
             )
 
-    pdf_url = await _generate_pdf(items)
+    pdf_url = await _generate_pdf(items, batch_id=batch.id)
 
     from datetime import UTC, datetime
     batch.status = PrintBatchStatusEnum.finalized
@@ -487,6 +495,49 @@ async def _get_batch_or_404(db: AsyncSession, batch_id: UUID) -> PrintBatch:
     return batch
 
 
+def _resolve_pdf_url(raw: str | None) -> str | None:
+    """gs:// → 15-min signed URL（帶 attachment disposition 強制下載）。
+
+    stub.firebase 是上傳失敗的 fallback，會 404，不該讓前端顯示可點的下載按鈕 → 回 None。
+    其他 http/https 直通（測試 fixture / 預先簽過）。
+    """
+    if not raw:
+        return None
+    if "stub.firebase" in raw:
+        return None
+    if raw.startswith(("http://", "https://")):
+        return raw
+    try:
+        return _sign_pdf_url(raw)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("pdf_url 簽名失敗：%s — %s", raw, e)
+        return None
+
+
+def _sign_pdf_url(gs_url: str) -> str:
+    """專用 PDF signed URL：帶 response_disposition=attachment 讓瀏覽器跳下載對話框。
+
+    與 production._make_signed_url 共用 cache 機制不適用 — 這裡的 URL 用途固定是下載
+    PDF，需要不同的 query string，所以走獨立路徑（不快取，每次新簽 15 min TTL）。
+    """
+    from datetime import timedelta
+
+    from core.firebase import get_bucket  # noqa: PLC0415
+
+    bucket = get_bucket()
+    parts = gs_url.split(f"/{bucket.name}/", 1)
+    if len(parts) != 2:
+        raise BadRequestError(f"無法解析 Firebase PDF 路徑：{gs_url}")
+    blob_path = parts[1]
+    filename = blob_path.rsplit("/", 1)[-1]
+    return bucket.blob(blob_path).generate_signed_url(
+        version="v4",
+        expiration=timedelta(minutes=15),
+        method="GET",
+        response_disposition=f'attachment; filename="{filename}"',
+    )
+
+
 def _detail_serialize(batch: PrintBatch, items: list[PrintBatchItem]) -> dict:
     return {
         "id": batch.id,
@@ -496,7 +547,7 @@ def _detail_serialize(batch: PrintBatch, items: list[PrintBatchItem]) -> dict:
         "print_cost": float(batch.print_cost),
         "cut_cost": float(batch.cut_cost),
         "total_cost": float(batch.total_cost),
-        "pdf_url": batch.pdf_url,
+        "pdf_url": _resolve_pdf_url(batch.pdf_url),
         "admin_notes": batch.admin_notes,
         "created_at": batch.created_at,
         "finalized_at": batch.finalized_at,
@@ -525,7 +576,7 @@ def _summary_serialize(batch: PrintBatch, item_count: int) -> dict:
         "status": batch.status.value if hasattr(batch.status, "value") else str(batch.status),
         "total_inch_count": float(batch.total_inch_count),
         "total_cost": float(batch.total_cost),
-        "pdf_url": batch.pdf_url,
+        "pdf_url": _resolve_pdf_url(batch.pdf_url),
         "item_count": item_count,
         "created_at": batch.created_at,
         "finalized_at": batch.finalized_at,
@@ -535,15 +586,15 @@ def _summary_serialize(batch: PrintBatch, item_count: int) -> dict:
 # ── PDF generation ─────────────────────────────────────────────────────────────
 
 
-async def _generate_pdf(items: list) -> str:
-    """從 production_job.svg_url 抓 SVG → 拼到一份 PDF → 上傳（stub）→ 回 URL。
+async def _generate_pdf(items: list, *, batch_id: UUID | None = None) -> str:
+    """從 production_job.svg_url 抓 SVG → 拼到一份 PDF → 上傳 Firebase → 回 gs:// URL。
 
     三層 fallback（最保策略）：
       1. svglib → reportlab Drawing（向量，最佳品質、檔案最小）
       2. cairosvg → PNG @ 300 DPI（複雜 SVG 救援；rasterize 仍可印）
       3. 佔位框（兩者皆失敗才走）
 
-    Stub 模式：輸出 mock URL；實作時上傳到 Firebase。
+    上傳失敗 / batch_id=None（測試）→ 退回 stub URL，不阻擋流程。
     """
     try:
         from reportlab.graphics import renderPDF
@@ -632,9 +683,29 @@ async def _generate_pdf(items: list) -> str:
     c.showPage()
     c.save()
     pdf_bytes = buf.getvalue()
-    _ = pdf_bytes  # 實際應上傳到 Firebase；目前 stub
 
-    return _stub_pdf_url()
+    if batch_id is None:
+        # 測試 / 舊 caller 沒傳 batch_id → 不上傳，回 stub URL（保留 byte 仍丟棄）
+        return _stub_pdf_url()
+    try:
+        gs_url = await asyncio.to_thread(_upload_pdf_bytes, batch_id, pdf_bytes)
+        return gs_url
+    except Exception as e:  # noqa: BLE001
+        # 上傳失敗不能讓整個 finalize 噴錯（PDF 已產出，只是傳不上去）
+        # 寫一個 stub URL 讓 admin 至少能看到「已 finalize」狀態，再手動補傳
+        logger.exception("Firebase PDF upload 失敗 batch=%s — %s", batch_id, e)
+        return _stub_pdf_url()
+
+
+def _upload_pdf_bytes(batch_id: UUID, pdf_bytes: bytes) -> str:
+    """同步上傳 PDF bytes 到 Firebase Storage，回 gs:// URL。"""
+    from core.firebase import get_bucket  # noqa: PLC0415
+
+    bucket = get_bucket()
+    blob_path = f"print_batches/{batch_id}/batch_{uuid.uuid4().hex[:8]}.pdf"
+    blob = bucket.blob(blob_path)
+    blob.upload_from_string(pdf_bytes, content_type="application/pdf")
+    return f"gs://{bucket.name}/{blob_path}"
 
 
 async def _render_svg_with_fallbacks(

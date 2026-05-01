@@ -18,6 +18,8 @@ class CandidateInfo(BaseModel):
     # 'custom'   → 客製訂單 job（CustomRequest 路徑）
     # 'unbound'  → 既無 product 也無 custom_request（fallback，不該發生）
     kind: Literal["product", "custom", "unbound"]
+    # filled_template 的預覽圖（已轉 signed URL）— 讓 admin 視覺確認要印什麼
+    preview_url: str | None
     canvas_w_cm: float
     canvas_h_cm: float
     inch_per_unit: float
@@ -30,6 +32,8 @@ class CandidateListResponse(BaseModel):
 class SuggestedComboItem(BaseModel):
     production_job_id: UUID
     product_title: str | None
+    kind: Literal["product", "custom", "unbound"]
+    preview_url: str | None
     quantity: int
     inch_per_unit: float
 

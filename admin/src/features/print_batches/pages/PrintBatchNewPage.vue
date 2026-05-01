@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronLeft, Plus, Minus, Loader2, Calculator, Send, AlertTriangle } from 'lucide-vue-next'
+import { ChevronLeft, Plus, Minus, Loader2, Calculator, Send, AlertTriangle, ImageOff, Download } from 'lucide-vue-next'
 
 import PageHeader from '@/shared/components/PageHeader.vue'
 import Card from '@/shared/ui/Card.vue'
@@ -15,7 +15,7 @@ import {
   usePreviewBatchMutation,
 } from '../queries'
 import { CANDIDATE_KIND_BADGE } from '../api'
-import type { CandidateInfo, PreviewResponse } from '../api'
+import type { CandidateInfo, PreviewResponse, SuggestedCombo } from '../api'
 
 const router = useRouter()
 
@@ -34,7 +34,13 @@ const previewResult = ref<PreviewResponse | null>(null)
 const finalizedBatchId = ref<string | null>(null)
 const finalizedPdfUrl = ref<string | null>(null)
 
-const { data: candidatesData, isLoading: candidatesLoading } = useCandidatesQuery()
+const {
+  data: candidatesData,
+  isLoading: candidatesLoading,
+  isError: candidatesError,
+  error: candidatesErrorObj,
+  refetch: refetchCandidates,
+} = useCandidatesQuery()
 const candidates = computed(() => candidatesData.value?.items ?? [])
 
 const previewMut = usePreviewBatchMutation()
@@ -125,8 +131,22 @@ function backToStep(s: Step) {
   step.value = s
 }
 
+/** 套用湊單建議：把 combo items 寫進 optionalQty，回 Step 1 並重新預覽 */
+async function applySuggestion(combo: SuggestedCombo) {
+  optionalQty.value = {}
+  for (const it of combo.items) {
+    optionalQty.value[it.production_job_id] = it.quantity
+  }
+  // 直接重新預覽，不退回 Step 1（admin 已看到效果即可）
+  await goPreview()
+}
+
 function fmtMoney(n: number): string {
   return `NT$ ${n.toLocaleString('zh-TW')}`
+}
+
+function fmtInch(n: number): string {
+  return n.toFixed(2)
 }
 </script>
 
@@ -187,8 +207,25 @@ function fmtMoney(n: number): string {
       <div v-if="candidatesLoading" class="py-8 flex justify-center text-ink-muted">
         <Loader2 :size="20" :stroke-width="1.5" class="animate-spin" />
       </div>
+      <div
+        v-else-if="candidatesError"
+        class="py-6 px-4 text-[13px] text-state-danger border border-state-danger/40 bg-[var(--color-state-danger)]/[0.06] rounded-[var(--radius-xs)] flex items-start gap-2"
+      >
+        <AlertTriangle :size="14" :stroke-width="1.5" class="mt-0.5 shrink-0" />
+        <div class="flex-1">
+          <p class="font-medium">載入候選清單失敗</p>
+          <p class="text-[12px] text-ink-muted mt-1">
+            {{ (candidatesErrorObj as { message?: string })?.message || '請確認後端是否運作中' }}
+          </p>
+        </div>
+        <button
+          type="button"
+          class="text-[12px] underline shrink-0"
+          @click="refetchCandidates()"
+        >重試</button>
+      </div>
       <div v-else-if="candidates.length === 0" class="py-8 text-center text-ink-muted text-[13px]">
-        目前沒有可列印的項目
+        目前沒有可列印的項目（需要 approved=true 且 status=completed 的製作任務）
       </div>
       <ul v-else class="divide-y divide-line-hairline">
         <li
@@ -196,17 +233,28 @@ function fmtMoney(n: number): string {
           :key="c.production_job_id"
           class="py-3 flex items-center justify-between gap-3 flex-wrap"
         >
-          <div class="flex-1 min-w-0">
-            <p class="font-medium text-ink-strong flex items-center gap-2">
-              <span
-                class="text-[10px] px-1.5 py-0.5 rounded shrink-0"
-                :class="CANDIDATE_KIND_BADGE[c.kind].cls"
-              >{{ CANDIDATE_KIND_BADGE[c.kind].label }}</span>
-              <span class="truncate">{{ c.product_title }}</span>
-            </p>
-            <p class="text-[11px] text-ink-muted">
-              {{ c.canvas_w_cm }} × {{ c.canvas_h_cm }} cm · 單份 {{ c.inch_per_unit }} 吋
-            </p>
+          <div class="flex-1 min-w-0 flex items-center gap-3">
+            <div class="w-16 h-16 shrink-0 rounded border border-line-hairline overflow-hidden bg-paper-canvas flex items-center justify-center">
+              <img
+                v-if="c.preview_url"
+                :src="c.preview_url"
+                alt="預覽"
+                class="w-full h-full object-cover"
+              />
+              <ImageOff v-else :size="18" :stroke-width="1.25" class="text-ink-muted" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="font-medium text-ink-strong flex items-center gap-2">
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                  :class="CANDIDATE_KIND_BADGE[c.kind].cls"
+                >{{ CANDIDATE_KIND_BADGE[c.kind].label }}</span>
+                <span class="truncate">{{ c.product_title }}</span>
+              </p>
+              <p class="text-[11px] text-ink-muted">
+                {{ c.canvas_w_cm }} × {{ c.canvas_h_cm }} cm · 單份 {{ fmtInch(c.inch_per_unit) }} 吋
+              </p>
+            </div>
           </div>
           <div class="flex items-center gap-1">
             <button
@@ -256,15 +304,15 @@ function fmtMoney(n: number): string {
         <dl class="text-[13px] space-y-1.5">
           <div class="flex justify-between">
             <dt class="text-ink-muted">所需吋數</dt>
-            <dd class="font-mono">{{ previewResult.required_inch_count }}</dd>
+            <dd class="font-mono">{{ fmtInch(previewResult.required_inch_count) }}</dd>
           </div>
           <div class="flex justify-between">
             <dt class="text-ink-muted">計費吋數</dt>
-            <dd class="font-mono">{{ previewResult.billable_inch_count }}</dd>
+            <dd class="font-mono">{{ fmtInch(previewResult.billable_inch_count) }}</dd>
           </div>
           <div class="flex justify-between">
             <dt class="text-ink-muted">浪費吋數</dt>
-            <dd class="font-mono text-state-warning">{{ previewResult.waste_inch }}</dd>
+            <dd class="font-mono text-state-warning">{{ fmtInch(previewResult.waste_inch) }}</dd>
           </div>
           <div class="flex justify-between pt-2 border-t border-line-hairline mt-2">
             <dt class="text-ink-muted">列印成本</dt>
@@ -282,16 +330,61 @@ function fmtMoney(n: number): string {
       </Card>
 
       <Card v-if="previewResult.suggestions.length > 0">
-        <h2 class="font-display text-ink-strong text-[18px] mb-3">湊單建議</h2>
-        <ul class="text-[12px] text-ink-default space-y-1.5">
-          <li v-for="(s, i) in previewResult.suggestions" :key="i" class="flex gap-2">
-            <span class="text-accent shrink-0">•</span>
-            <span>{{ s }}</span>
-          </li>
-        </ul>
-        <p v-if="previewResult.available_candidates.length > 0" class="mt-3 text-[11px] text-ink-muted">
-          系統建議可加入 {{ previewResult.available_candidates.length }} 個 candidate（回上一步調整）
+        <h2 class="font-display text-ink-strong text-[18px] mb-1">湊單建議</h2>
+        <p class="text-[11px] text-ink-muted mb-4">
+          目前未達 20 吋免下限門檻，建議湊單以避免 100 元裁切下限浪費。
         </p>
+        <div class="space-y-3">
+          <div
+            v-for="(s, i) in previewResult.suggestions"
+            :key="i"
+            class="rounded-[var(--radius-sm)] border border-line-hairline p-3 hover:border-accent/40 transition-colors"
+          >
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <div>
+                <p class="font-medium text-ink-strong text-[13px]">{{ s.label }}</p>
+                <p class="text-[11px] text-ink-muted mt-0.5">
+                  總 {{ fmtInch(s.billable_inch_count) }} 吋
+                  · 浪費 <span :class="s.waste_inch === 0 ? 'text-state-success' : 'text-state-warning'">{{ fmtInch(s.waste_inch) }}</span> 吋
+                  · {{ fmtMoney(s.cost_breakdown.total_cost) }}
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                :disabled="previewMut.isPending.value"
+                @click="applySuggestion(s)"
+              >
+                <Plus :size="12" :stroke-width="1.5" />
+                套用
+              </Button>
+            </div>
+            <ul class="space-y-2">
+              <li
+                v-for="it in s.items"
+                :key="it.production_job_id"
+                class="flex items-center gap-2.5 text-[12px]"
+              >
+                <div class="w-10 h-10 shrink-0 rounded border border-line-hairline overflow-hidden bg-paper-canvas flex items-center justify-center">
+                  <img
+                    v-if="it.preview_url"
+                    :src="it.preview_url"
+                    alt="預覽"
+                    class="w-full h-full object-cover"
+                  />
+                  <ImageOff v-else :size="14" :stroke-width="1.25" class="text-ink-muted" />
+                </div>
+                <div class="flex-1 min-w-0 flex items-center gap-1.5">
+                  <span
+                    class="text-[10px] px-1 py-0.5 rounded shrink-0"
+                    :class="CANDIDATE_KIND_BADGE[it.kind].cls"
+                  >{{ CANDIDATE_KIND_BADGE[it.kind].label }}</span>
+                  <span class="truncate text-ink-default">{{ it.product_title }}</span>
+                </div>
+                <span class="font-mono text-ink-muted shrink-0">×{{ it.quantity }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
       </Card>
     </div>
 
@@ -327,13 +420,16 @@ function fmtMoney(n: number): string {
       <p class="text-ink-muted text-[13px] mb-5">PDF 已產出，可立即下載或之後從列表頁取用。</p>
 
       <div class="flex justify-center gap-3">
-        <Button
+        <a
           v-if="finalizedPdfUrl"
-          variant="primary"
-          @click="finalizedPdfUrl && window.open(finalizedPdfUrl, '_blank', 'noopener')"
+          :href="finalizedPdfUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-[var(--radius-xs)] bg-accent text-paper-surface text-[13px] font-medium hover:opacity-90 transition-opacity"
         >
+          <Download :size="14" :stroke-width="1.5" />
           下載 PDF
-        </Button>
+        </a>
         <Button
           variant="secondary"
           @click="finalizedBatchId && router.push(`/admin/print-batches/${finalizedBatchId}`)"

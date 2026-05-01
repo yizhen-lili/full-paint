@@ -234,6 +234,8 @@ async def test_candidates_filter_on_sale_active(client, db):
     assert by_title["架上"]["kind"] == "product"
     assert by_title["草稿"]["kind"] == "product"
     assert by_title["架上但變體停用"]["kind"] == "product"
+    # preview_url 欄位存在（值依 filled_template_url 而定，可為 None）
+    assert "preview_url" in by_title["架上"]
     # 客製 label + kind=custom
     custom_label = f"客製 - {customer.name}"
     assert custom_label in titles
@@ -343,14 +345,38 @@ async def test_finalize_creates_pdf(client, db):
     })
     batch_id = create_res.json()["id"]
 
-    # Mock httpx 避免實際呼叫 example.com
+    # Mock _generate_pdf 避免實際呼叫 Firebase；用 https URL 模擬上傳成功
+    # (stub.firebase 會被 _resolve_pdf_url 過濾為 None — 那是上傳失敗的 fallback)
     with patch("print_batch.service._generate_pdf") as mock_pdf:
-        mock_pdf.return_value = "https://stub.firebase/print_batch/abc/batch.pdf"
+        mock_pdf.return_value = "https://example.com/uploaded/batch.pdf"
         res = await client.post(f"{URL}/{batch_id}/finalize")
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "finalized"
-    assert body["pdf_url"] is not None
+    assert body["pdf_url"] == "https://example.com/uploaded/batch.pdf"
+
+
+@pytest.mark.asyncio
+async def test_finalize_stub_url_filtered_to_none(client, db):
+    """上傳失敗 fallback 的 stub URL 不可漏到前端（會 404）→ pdf_url=null。"""
+    await _make_admin(db)
+    j = await _make_job(db, w=30, h=40)
+    await _make_product_with_variant(db, j.id)
+    await db.commit()
+
+    await _login_admin(client)
+    create_res = await client.post(URL, json={
+        "required": [{"production_job_id": str(j.id), "quantity": 5}],
+    })
+    batch_id = create_res.json()["id"]
+    with patch("print_batch.service._generate_pdf") as mock_pdf:
+        mock_pdf.return_value = "https://stub.firebase/print_batch/abc/batch.pdf"
+        res = await client.post(f"{URL}/{batch_id}/finalize")
+    assert res.status_code == 200
+    # stub URL 被 _resolve_pdf_url 過濾掉，前端拿不到壞連結
+    assert res.json()["pdf_url"] is None
+    # 但 batch 狀態仍是 finalized（admin 可看到結果，PDF 失敗不阻擋流程）
+    assert res.json()["status"] == "finalized"
 
 
 @pytest.mark.asyncio

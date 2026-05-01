@@ -74,6 +74,8 @@ export interface CandidateInfo {
   product_title: string
   /** 候選來源類型：商品 / 客製訂單 / 兩者皆無（fallback） */
   kind: CandidateKind
+  /** filled_template 縮圖預覽（後端已產 signed URL） */
+  preview_url: string | null
   canvas_w_cm: number
   canvas_h_cm: number
   inch_per_unit: number
@@ -85,6 +87,28 @@ export const CANDIDATE_KIND_BADGE: Record<CandidateKind, { label: string; cls: s
   unbound: { label: '任務', cls: 'bg-paper-subtle text-ink-muted' },
 }
 
+export interface SuggestedComboItem {
+  production_job_id: string
+  product_title: string | null
+  kind: CandidateKind
+  preview_url: string | null
+  quantity: number
+  inch_per_unit: number
+}
+
+export interface SuggestedCombo {
+  label: string
+  items: SuggestedComboItem[]
+  total_inch_count: number
+  billable_inch_count: number
+  waste_inch: number
+  cost_breakdown: {
+    print_cost: number
+    cut_cost: number
+    total_cost: number
+  }
+}
+
 export interface PreviewResponse {
   required_inch_count: number
   billable_inch_count: number
@@ -94,7 +118,7 @@ export interface PreviewResponse {
     cut_cost: number
     total_cost: number
   }
-  suggestions: string[]
+  suggestions: SuggestedCombo[]
   available_candidates: CandidateInfo[]
 }
 

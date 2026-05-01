@@ -26,6 +26,10 @@ function fmtDateTime(iso: string | null): string {
 function fmtMoney(n: number): string {
   return `NT$ ${n.toLocaleString('zh-TW')}`
 }
+
+function fmtInch(n: number): string {
+  return n.toFixed(2)
+}
 </script>
 
 <template>
@@ -70,14 +74,16 @@ function fmtMoney(n: number): string {
         </p>
       </div>
       <div class="shrink-0">
-        <Button
+        <a
           v-if="batch.pdf_url"
-          variant="primary"
-          @click="window.open(batch.pdf_url!, '_blank', 'noopener')"
+          :href="batch.pdf_url"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-[var(--radius-xs)] bg-accent text-paper-surface text-[13px] font-medium hover:opacity-90 transition-opacity"
         >
           <Download :size="14" :stroke-width="1.5" />
           下載 PDF
-        </Button>
+        </a>
       </div>
     </header>
 
@@ -100,7 +106,7 @@ function fmtMoney(n: number): string {
               <tr v-for="i in batch.items" :key="i.id" class="border-b border-line-hairline last:border-0">
                 <td class="py-2 font-mono text-[12px]">{{ i.production_job_id.slice(0, 8) }}</td>
                 <td class="py-2 font-mono text-[12px]">{{ i.canvas_w_cm }} × {{ i.canvas_h_cm }} cm</td>
-                <td class="py-2 text-right font-mono">{{ i.inch_per_unit }}</td>
+                <td class="py-2 text-right font-mono">{{ fmtInch(i.inch_per_unit) }}</td>
                 <td class="py-2 text-right font-mono">{{ i.quantity }}</td>
                 <td class="py-2 text-[12px] text-ink-muted">{{ i.source_type === 'order_item' ? '訂單' : '製作' }}</td>
               </tr>
@@ -121,11 +127,11 @@ function fmtMoney(n: number): string {
           <dl class="text-[13px] space-y-1.5">
             <div class="flex justify-between">
               <dt class="text-ink-muted">總吋數</dt>
-              <dd class="font-mono">{{ batch.total_inch_count }}</dd>
+              <dd class="font-mono">{{ fmtInch(batch.total_inch_count) }}</dd>
             </div>
             <div class="flex justify-between">
               <dt class="text-ink-muted">計費吋數</dt>
-              <dd class="font-mono">{{ batch.billable_inch_count }}</dd>
+              <dd class="font-mono">{{ fmtInch(batch.billable_inch_count) }}</dd>
             </div>
             <div class="flex justify-between pt-2 border-t border-line-hairline mt-2">
               <dt class="text-ink-muted">列印成本</dt>

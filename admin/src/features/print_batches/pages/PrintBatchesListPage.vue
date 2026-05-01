@@ -78,7 +78,7 @@ function fmtDateTime(iso: string): string {
       <span class="font-mono text-[12px]">{{ row.item_count }}</span>
     </template>
     <template #cell-inch="{ row }">
-      <span class="font-mono text-[12px]">{{ row.total_inch_count }}</span>
+      <span class="font-mono text-[12px]">{{ row.total_inch_count.toFixed(2) }}</span>
     </template>
     <template #cell-cost="{ row }">
       <span class="font-mono text-[12px] text-ink-strong">NT$ {{ row.total_cost.toLocaleString() }}</span>
