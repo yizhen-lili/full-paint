@@ -610,9 +610,11 @@ async def _render_svg_with_fallbacks(
         return None, None
 
     # Layer 1：svglib（向量）
+    # 注意：svg2rlg 不接受含編碼宣告（<?xml ... encoding="utf-8" ?>）的 Unicode string，
+    # 必須用 bytes 餵入。pbn_gen.output_to_svg 寫的 SVG 第一行就有 encoding 宣告。
     if svg2rlg is not None:
         try:
-            drawing = svg2rlg(io.StringIO(svg_text))
+            drawing = svg2rlg(io.BytesIO(svg_text.encode("utf-8")))
             if drawing is not None:
                 return drawing, None
         except Exception as e:
