@@ -28,6 +28,19 @@ svglib==1.5.1
 cairosvg==2.7.1
 Pillow==11.0.0
 
+# SAM segmentation (Module 04c production sam_refine / sam_weighted)
+# - torch ~800MB；sam_vit_b 模型檔 ~375MB 由 Dockerfile RUN curl 下載
+# - torch 2.4.1 是 pytest 全 pass 的版本（Phase B 已驗）
+# - 注意：本地 Windows 跑 ViT image encoder forward 會 segfault（已知 PyTorch+Windows
+#   相容性問題），不影響 Linux 部署環境（Railway / Docker 容器內穩定運作）。
+# - cv2 / numpy 相依由 paint-by-number 引擎 import 時帶入；
+#   numpy 須 < 2.0（torch 2.4 ABI 限制），cv2 須 < 4.11（搭配 numpy 1.x）
+torch==2.4.1
+torchvision==0.19.1
+segment-anything==1.0
+numpy<2.0
+opencv-python<4.11
+
 # Testing
 httpx==0.28.1
 pytest==8.3.4

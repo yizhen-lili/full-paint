@@ -368,11 +368,12 @@ async def update_sam_mask(
     polygons: list[list[list[float]]] | None,
     mode: str,
 ) -> dict:
-    """admin_production.md §10「遮罩編輯時機限制」：僅 status=pending 可改。
+    """admin_production.md §1.3「遮罩編輯時機限制」：僅 status=pending 可改。
 
     - 寫回 sam_points / polygons（作為可編輯狀態的原始資料）
-    - polygons 給定 → 用 PIL 產生聯集 PNG → 上傳 Firebase（純幾何，不需 SAM）
-    - 純 sam_points（無 polygons）→ mask_url=null，等 Celery worker 用 SAM 推論
+    - polygons 給定 → PIL 畫多邊形 mask（純幾何）
+    - sam_points 給定 → 下載原圖 + SAM 模型推論（Phase B）
+    - 兩者都有 → 聯集；最後上傳同一張 PNG
     - approved 退回 false（與「合併色塊 / 消邊界」一致）
     - mask_coverage 為 0~1 比例（與 api.md 範例 0.42 一致；不是百分比）
 
@@ -413,47 +414,9 @@ async def update_sam_mask(
     job.polygons = polygons or []
     job.mode = mode
 
-    # coverage 為 None 時代表「尚未推論」（純 sam_points 走 Celery 路徑）
-    # polygons 路徑會即時計算為 0~1 比例
-    coverage: float | None = None
-    mask_url: str | None = None
-
-    if polygons:
-        try:
-            from PIL import Image as PILImage
-            from PIL import ImageDraw
-
-            mask = PILImage.new("L", (img_w, img_h), 0)  # 8-bit greyscale
-            draw = ImageDraw.Draw(mask)
-            for poly in polygons:
-                if len(poly) < 3:
-                    continue  # 至少 3 點才能成多邊形
-                pts = [(float(x), float(y)) for x, y in poly]
-                draw.polygon(pts, fill=255)
-
-            # 計算遮罩面積佔比（0~1，與 api.md 範例 0.42 一致）
-            # 兩位精度與 DB Numeric(6,2) 一致
-            white_pixels = sum(mask.histogram()[128:256])
-            coverage = round(white_pixels / (img_w * img_h), 2)
-
-            # 寫入 PNG bytes 並上傳 Firebase
-            import io
-            buf = io.BytesIO()
-            mask.save(buf, format="PNG")
-            png_bytes = buf.getvalue()
-
-            try:
-                bucket = get_bucket()
-                path = f"production_jobs/{job.id}/mask_{uuid.uuid4().hex[:8]}.png"
-                blob = bucket.blob(path)
-                blob.upload_from_string(png_bytes, content_type="image/png")
-                # 此檔私有，下載走 signed URL；先存 GCS 路徑
-                mask_url = f"gs://{bucket.name}/{path}"
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Firebase upload failed for mask: %s", e)
-                mask_url = None  # 上傳失敗 → 保留遮罩座標等下次重試
-        except ImportError as e:
-            raise BadRequestError("Pillow 未安裝，無法產出遮罩 PNG") from e
+    coverage, mask_url = await _compute_and_upload_mask(
+        job, image, sam_points, polygons, img_w, img_h,
+    )
 
     job.mask_url = mask_url
     job.mask_coverage = coverage
@@ -466,6 +429,129 @@ async def update_sam_mask(
         "mask_url": job.mask_url,
         "mask_coverage": float(job.mask_coverage) if job.mask_coverage is not None else None,
     }
+
+
+async def _compute_and_upload_mask(
+    job: ProductionJob,
+    image: Image,
+    sam_points: list[dict] | None,
+    polygons: list[list[list[float]]] | None,
+    img_w: int,
+    img_h: int,
+) -> tuple[float | None, str | None]:
+    """合併 polygons + sam_points 兩種來源的 mask，計 coverage、上傳 Firebase。
+
+    - polygons 為空且 sam_points 為空 → (None, None)（caller 不該走到這裡，validator 已擋）
+    - 任一為空 → 用另一個的 mask
+    - 都有 → 聯集
+    上傳失敗 → mask_url=None，sam_points/polygons 仍保留，admin 可重試。
+    """
+    import asyncio  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    poly_mask = _polygons_to_mask(polygons, img_w, img_h) if polygons else None
+    sam_mask: np.ndarray | None = None
+    if sam_points:
+        try:
+            sam_mask = await asyncio.to_thread(
+                _run_sam_predict, image.original_url, sam_points,
+            )
+        except (ValueError, FileNotFoundError, ImportError) as e:
+            # SAM 推論失敗時：
+            # - 若同時有 polygons → 退化為 polygons-only（規格 §1.3 兩種模式聯集，
+            #   一邊掛掉時不應整批拒絕，admin 至少能保留多邊形選取）+ log warning
+            # - 若純 sam_points 沒有 polygons → 真的無 mask 可產，必須拒絕
+            if poly_mask is not None:
+                logger.warning(
+                    "SAM 推論失敗，退化為純 polygons mask：%s", e,
+                )
+                sam_mask = None
+            else:
+                raise BadRequestError(f"SAM 推論失敗：{e}") from e
+
+    # 聯集
+    final_mask: np.ndarray | None = None
+    if poly_mask is not None and sam_mask is not None:
+        final_mask = np.logical_or(poly_mask > 127, sam_mask).astype(np.uint8) * 255
+    elif poly_mask is not None:
+        final_mask = poly_mask
+    elif sam_mask is not None:
+        final_mask = (sam_mask.astype(np.uint8)) * 255
+
+    if final_mask is None or not np.any(final_mask):
+        return None, None
+
+    # coverage（0~1，兩位精度，與 DB Numeric(6,2) 一致）
+    white_pixels = int(np.sum(final_mask > 127))
+    coverage = round(white_pixels / (img_w * img_h), 2)
+
+    # 編碼 PNG + 上傳 Firebase
+    import io  # noqa: PLC0415
+
+    from PIL import Image as PILImage  # noqa: PLC0415
+
+    buf = io.BytesIO()
+    PILImage.fromarray(final_mask, mode="L").save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    try:
+        bucket = get_bucket()
+        path = f"production_jobs/{job.id}/mask_{uuid.uuid4().hex[:8]}.png"
+        blob = bucket.blob(path)
+        blob.upload_from_string(png_bytes, content_type="image/png")
+        return coverage, f"gs://{bucket.name}/{path}"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Firebase upload failed for mask: %s", e)
+        # 上傳失敗 → coverage 已算但無 url；保留 sam_points/polygons 等下次重試
+        return None, None
+
+
+def _polygons_to_mask(
+    polygons: list[list[list[float]]],
+    img_w: int,
+    img_h: int,
+):
+    """用 PIL 畫多 polygon 聯集成 mask（uint8 0/255）。"""
+    import numpy as np  # noqa: PLC0415
+    from PIL import Image as PILImage  # noqa: PLC0415
+    from PIL import ImageDraw  # noqa: PLC0415
+
+    mask = PILImage.new("L", (img_w, img_h), 0)
+    draw = ImageDraw.Draw(mask)
+    for poly in polygons:
+        if len(poly) < 3:
+            continue
+        pts = [(float(x), float(y)) for x, y in poly]
+        draw.polygon(pts, fill=255)
+    return np.array(mask, dtype=np.uint8)
+
+
+def _run_sam_predict(image_url: str, sam_points: list[dict]):
+    """同步：下載原圖 + SAM 推論 → 回 bool mask。供 update_sam_mask 用 to_thread 包。
+
+    image_url 可能是 gs:// 或 https://（既有圖片儲存格式）。
+    走 in-memory bytes（避免 Windows 上 tempfile race + 累積 %TEMP% 殘檔）。
+    """
+    import cv2  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
+
+    from production.sam_runtime import get_sam_predictor, predict_mask  # noqa: PLC0415
+    from production.tasks import _parse_blob_path  # noqa: PLC0415
+
+    bucket = get_bucket()
+    blob_path = _parse_blob_path(image_url, bucket.name)
+    blob = bucket.blob(blob_path)
+    image_bytes = blob.download_as_bytes()
+
+    img_bgr = cv2.imdecode(
+        np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR,
+    )
+    if img_bgr is None:
+        raise ValueError(f"無法解碼下載的圖片：{image_url}")
+
+    predictor = get_sam_predictor()
+    return predict_mask(predictor, img_bgr, sam_points)
 
 
 # ── PDF export ─────────────────────────────────────────────────────────────────

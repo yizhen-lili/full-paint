@@ -1230,20 +1230,136 @@ async def test_sam_mask_with_polygons_ok(client: AsyncClient, db):
 
 @pytest.mark.asyncio
 async def test_sam_mask_with_only_points(client: AsyncClient, db):
-    """只給 sam_points 沒 polygons → mask_url 為 null（等 Celery 推論），但寫入 DB."""
+    """純 sam_points 路徑（Phase B）：mock SAM runtime → 即時推論 → 寫 mask_url + coverage。"""
+    import numpy as np
+
     job = await _create_sam_pending_job(client, db)
-    res = await client.post(
-        f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
-        json={
-            "sam_points": [{"x": 100, "y": 100, "label": 1}],
-            "mode": "sam_refine",
-        },
-    )
+
+    mock_blob = MagicMock()
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_bucket.name = "test-bucket"
+
+    # mock SAM runtime：直接回固定 mask（80x80 圖、選 40x40 區域 → coverage=0.25）
+    fake_mask = np.zeros((80, 80), dtype=bool)
+    fake_mask[20:60, 20:60] = True
+
+    with patch("production.service.get_bucket", return_value=mock_bucket), \
+         patch("production.service._run_sam_predict", return_value=fake_mask):
+        res = await client.post(
+            f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
+            json={
+                "sam_points": [{"x": 40, "y": 40, "label": 1}],
+                "mode": "sam_refine",
+            },
+        )
     assert res.status_code == 200
     data = res.json()
-    assert data["mask_url"] is None
-    # 純 sam_points 路徑等 Celery 推論，coverage 為 null（語意：尚未推論）
-    assert data["mask_coverage"] is None
+    assert data["mask_url"] is not None
+    assert data["mask_url"].startswith("gs://test-bucket/")
+    assert data["mask_coverage"] is not None
+    assert 0 <= data["mask_coverage"] <= 1
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_union_polygons_and_points(client: AsyncClient, db):
+    """polygons + sam_points 都給 → 聯集（Phase B）。"""
+    import numpy as np
+
+    job = await _create_sam_pending_job(client, db)
+
+    mock_blob = MagicMock()
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_bucket.name = "test-bucket"
+
+    # SAM 回的 mask 跟 polygon 不重疊 → 聯集面積 > 任一單獨
+    # 注意：image dimensions 1920x1080（VALID_IMAGE）；mask 必須對齊
+    fake_mask = np.zeros((1080, 1920), dtype=bool)
+    fake_mask[0:100, 0:100] = True  # 左上角 100x100 區塊
+
+    captured_png_bytes: list[bytes] = []
+
+    def _capture_upload(payload, content_type=None):
+        captured_png_bytes.append(payload)
+
+    mock_blob.upload_from_string.side_effect = _capture_upload
+
+    with patch("production.service.get_bucket", return_value=mock_bucket), \
+         patch("production.service._run_sam_predict", return_value=fake_mask):
+        res = await client.post(
+            f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
+            json={
+                "sam_points": [{"x": 50, "y": 50, "label": 1}],
+                # polygon 在右下角，跟 SAM mask 不重疊
+                "polygons": [[[1800, 1000], [1900, 1000], [1900, 1080], [1800, 1080]]],
+                "mode": "sam_refine",
+            },
+        )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["mask_url"] is not None
+    assert data["mask_coverage"] is not None
+    # 聯集面積：SAM 100x100 + polygon ~100x80 = ~18000 pixels；total=1920*1080=2073600
+    # coverage 應 > 0（有非零選取區）
+    assert data["mask_coverage"] > 0
+    # 確認真的有上傳一個 PNG
+    assert len(captured_png_bytes) == 1
+    assert captured_png_bytes[0].startswith(b"\x89PNG")  # PNG magic bytes
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_sam_runtime_error_returns_400(client: AsyncClient, db):
+    """純 sam_points 但 SAM 推論失敗（如模型路徑缺）→ 400 BadRequest（無 polygons 可 fallback）。"""
+    job = await _create_sam_pending_job(client, db)
+
+    with patch(
+        "production.service._run_sam_predict",
+        side_effect=ValueError("settings.sam_model_path 未設定"),
+    ):
+        res = await client.post(
+            f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
+            json={
+                "sam_points": [{"x": 50, "y": 50, "label": 1}],
+                "mode": "sam_refine",
+            },
+        )
+    assert res.status_code == 400
+    assert "SAM 推論失敗" in res.json().get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_sam_mask_sam_failure_fallback_to_polygons(client: AsyncClient, db):
+    """polygons + sam_points 都有，SAM 失敗 → 退化用純 polygons mask（200，仍寫 mask_url）。
+
+    符合規格 §1.3「兩種模式聯集」精神：一邊掛掉時不應整批拒絕，admin 至少能保留多邊形選取。
+    """
+    job = await _create_sam_pending_job(client, db)
+
+    mock_blob = MagicMock()
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_bucket.name = "test-bucket"
+
+    with patch("production.service.get_bucket", return_value=mock_bucket), \
+         patch(
+             "production.service._run_sam_predict",
+             side_effect=ValueError("SAM model not loaded"),
+         ):
+        res = await client.post(
+            f"{JOBS_URL}/{job['id']}{SAM_MASK_URL_SUFFIX}",
+            json={
+                "sam_points": [{"x": 50, "y": 50, "label": 1}],
+                "polygons": [[[100, 100], [200, 100], [200, 200], [100, 200]]],
+                "mode": "sam_refine",
+            },
+        )
+    assert res.status_code == 200
+    data = res.json()
+    # polygons 成功產生 mask（不被 SAM 失敗連帶丟棄）
+    assert data["mask_url"] is not None
+    assert data["mask_coverage"] is not None
 
 
 @pytest.mark.asyncio

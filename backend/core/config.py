@@ -20,6 +20,10 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
 
+    # SAM 模型檔（vit_b ~375MB）；本地預設指向 paint-by-number/models/sam_vit_b.pth
+    # 部署環境由 Dockerfile RUN curl 下載到 /app/models/ 並設此 env var
+    sam_model_path: str | None = None
+
     class Config:
         env_file = ".env"
 

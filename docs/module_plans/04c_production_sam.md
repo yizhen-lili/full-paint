@@ -119,6 +119,36 @@ sam_refine / sam_weighted 缺 mask_url → status=failed, notes="mode=X 但缺 m
 
 ## 四、Phase B 詳細規劃
 
+### B.0 規格比對報告決議（2026-05-01）
+
+- **依賴安裝策略**：
+  - `backend/requirements.txt` 加 `segment-anything` + `torch==2.4.1` + `numpy<2.0` + `opencv-python<4.11`
+  - 本地 backend venv `pip install` 真裝
+  - 自動化測試（pytest）走 `unittest.mock.patch` mock 掉 segment_anything
+- **執行模型**：`update_sam_mask` 內 SAM 推論用 `asyncio.to_thread` 包
+- **模型路徑**：`core/config.py` 加 `sam_model_path: str | None = None`
+- **載入路徑**：sam_runtime 繞開 segment_anything 內部 `torch.load(file_object)`（在 Windows 會 segfault），改用 `sam_model_registry["vit_b"](checkpoint=None)` 建空模型 → `torch.load(path, weights_only=True)` 讀 state_dict → `load_state_dict()` 注入
+
+### B.0.1 Known limitation（2026-05-01）
+
+**本地 Windows 跑 SAM ViT image encoder forward pass 會 segfault**
+
+- 症狀：`predictor.set_image(image)` 必崩；模型載入正常、predict 也設置好，只在 forward pass 那行 crash（exit 139 segmentation fault）
+- 觸發條件：Windows + PyTorch（試過 2.2.2 / 2.4.1 / 2.5.1）+ segment_anything 1.0 + sam_vit_b
+- 與 numpy / cv2 / OMP_NUM_THREADS 設定無關（試過全部組合）
+- 與圖片尺寸、來源資料夾無關（egg.jpg / Mom.jpg in images_sam 都崩）
+- Linux 容器（Railway / Docker）內無此問題
+
+**影響**：
+- Phase B 程式碼**已驗證正確**（175 production tests + 6 sam_runtime tests 全 pass、模型載入成功）
+- 本地 admin UI 用 SAM 推論會 500（直到部署 Linux）
+- Phase B 不做本地 smoke test，e2e 驗收延到 Railway 部署後
+
+**未來解法**：
+1. 等部署到 Railway Linux 自然解（首選）
+2. 用 WSL2 / Docker 跑本地 backend（次選）
+3. 排查 Windows root cause（投入產出比低，不建議）
+
 ### B.1 要建立 / 修改的檔案
 
 | 動作 | 檔案 | 說明 |
