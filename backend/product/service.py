@@ -771,7 +771,10 @@ def _variant_with_job(variant: ProductVariant, job: ProductionJob | None) -> dic
             "canvas_w_cm": float(job.canvas_w_cm),
             "canvas_h_cm": float(job.canvas_h_cm),
             "num_colors_used": job.num_colors_used,
+            # 顯示用（15-min signed URL）
             "filled_template_url": _public_filled_url(job.filled_template_url),
+            # 寫入永久欄位用（Firebase download URL，無 TTL）
+            "cover_url": _persistent_firebase_url(job.filled_template_url),
             "svg_url": job.svg_url,
         }
     return {

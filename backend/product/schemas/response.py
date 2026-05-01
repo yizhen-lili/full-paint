@@ -82,7 +82,10 @@ class VariantJobSpecResponse(BaseModel):
     canvas_w_cm: float
     canvas_h_cm: float
     num_colors_used: int | None
+    # 顯示用（15-min signed URL，過期即失效；不可寫入永久欄位）
     filled_template_url: str | None
+    # 寫入永久欄位用（Firebase download URL，無 TTL）
+    cover_url: str | None
     svg_url: str | None
 
 

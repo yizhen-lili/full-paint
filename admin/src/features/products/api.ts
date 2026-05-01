@@ -92,7 +92,10 @@ export interface VariantJobSpec {
   canvas_w_cm: number
   canvas_h_cm: number
   num_colors_used: number | null
+  /** 短期 signed URL（15-min TTL）— 只用於 picker 顯示縮圖 */
   filled_template_url: string | null
+  /** 永久 Firebase 下載 URL — 寫入 cover_image_url / product_images.image_url 用 */
+  cover_url: string | null
   svg_url: string | null
 }
 

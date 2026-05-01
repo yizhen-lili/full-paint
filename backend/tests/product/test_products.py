@@ -758,6 +758,57 @@ async def test_list_available_jobs_unauthenticated(client: AsyncClient, db):
     assert res.status_code == 401
 
 
+# ── Regression: cover_url 必須是 persistent firebase URL ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_variant_job_spec_cover_url_is_persistent(client: AsyncClient, db):
+    """Regression：admin 從變體模板選封面時，job_spec.cover_url 必須是
+    Firebase download URL（無 TTL），而非 15-min signed URL；
+    否則寫入 products.cover_image_url 後 15 分鐘就失效。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    product = await _create_product(db)
+    job = await _create_approved_job(db)
+    job.filled_template_url = "gs://test-bucket/production_jobs/abc/filled.png"
+    await db.commit()
+
+    await client.post(f"{PRODUCTS_URL}/{product.id}/variants", json={
+        "production_job_id": str(job.id), "price": 450,
+    })
+    res = await client.get(f"{PRODUCTS_URL}/{product.id}/variants")
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    cover = items[0]["job_spec"]["cover_url"]
+    # 必須是 Firebase download URL 形式，不可是 signed URL（含 X-Goog-Signature）
+    assert cover is not None
+    assert cover.startswith("https://firebasestorage.googleapis.com/v0/b/"), (
+        f"cover_url 必須是 persistent firebase download URL — 收到 {cover!r}"
+    )
+    assert "X-Goog-Signature" not in cover
+
+
+@pytest.mark.asyncio
+async def test_available_jobs_cover_url_is_persistent(client: AsyncClient, db):
+    """Regression：available-for-variant endpoint 回的 cover_url 也必須是 persistent。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    job = await _create_approved_job(db)
+    job.filled_template_url = "gs://test-bucket/production_jobs/abc/filled.png"
+    await db.commit()
+
+    res = await client.get("/api/v1/admin/production/jobs/available-for-variant")
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    cover = items[0]["cover_url"]
+    assert cover is not None
+    assert cover.startswith("https://firebasestorage.googleapis.com/v0/b/"), (
+        f"cover_url 必須是 persistent firebase download URL — 收到 {cover!r}"
+    )
+    assert "X-Goog-Signature" not in cover
+
+
 # ── Auth guards (products) ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

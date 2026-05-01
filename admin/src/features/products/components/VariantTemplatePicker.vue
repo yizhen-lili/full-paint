@@ -25,10 +25,11 @@ const { data: variants, isLoading } = useVariantsQuery(() => props.productId)
 
 const selected = ref<Set<string>>(new Set())
 
+// 必須 preview（顯示）+ cover（寫入永久欄位）兩種 URL 都有
 const candidates = computed(() =>
   (variants.value ?? [])
     .filter((v): v is Variant & { job_spec: NonNullable<Variant['job_spec']> } =>
-      Boolean(v.job_spec?.filled_template_url),
+      Boolean(v.job_spec?.filled_template_url && v.job_spec?.cover_url),
     ),
 )
 
@@ -50,6 +51,8 @@ function toggle(url: string) {
 }
 
 function confirm() {
+  // 寫入永久欄位（cover_image_url / product_images.image_url）必須用 cover_url；
+  // filled_template_url 是 15-min signed URL，過期就 ORB-blocked。
   emit('pick', Array.from(selected.value))
   emit('close')
 }
@@ -78,11 +81,11 @@ function confirm() {
         type="button"
         class="relative aspect-square rounded-[var(--radius-sm)] border-2 overflow-hidden bg-paper-canvas transition-colors text-left"
         :class="
-          selected.has(v.job_spec.filled_template_url!)
+          selected.has(v.job_spec.cover_url!)
             ? 'border-accent'
             : 'border-line-hairline hover:border-line-strong'
         "
-        @click="toggle(v.job_spec.filled_template_url!)"
+        @click="toggle(v.job_spec.cover_url!)"
       >
         <img
           :src="v.job_spec.filled_template_url!"
@@ -90,7 +93,7 @@ function confirm() {
           class="w-full h-full object-cover"
         />
         <span
-          v-if="selected.has(v.job_spec.filled_template_url!)"
+          v-if="selected.has(v.job_spec.cover_url!)"
           class="absolute top-2 right-2 h-6 w-6 inline-flex items-center justify-center rounded-full bg-accent text-paper-surface"
         >
           <Check :size="14" :stroke-width="2.25" />
