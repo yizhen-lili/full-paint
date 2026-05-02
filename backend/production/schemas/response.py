@@ -133,9 +133,16 @@ class SuggestCanvasSizesResponse(BaseModel):
 
 
 class SamMaskResponse(BaseModel):
+    # 注意：DB 內 mask_url 存的是 gs://...，回 client 前轉 https signed URL
+    # （HTML <img> 不認 gs://）
     mask_url: str | None
     # 遮罩面積佔圖片面積比例 0~1；純 sam_points 等 Celery 推論時為 null
     mask_coverage: float | None
+
+    @field_validator("mask_url", mode="before")
+    @classmethod
+    def _convert_mask(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
 
 
 class BatchStartSkippedItem(BaseModel):
