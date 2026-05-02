@@ -45,6 +45,9 @@ class JobSummaryResponse(BaseModel):
     model_config = {"from_attributes": True}
 
     id: UUID
+    image_id: UUID | None
+    custom_request_id: UUID | None
+    batch_id: UUID | None
     status: str
     approved: bool
     detail: str
@@ -52,8 +55,16 @@ class JobSummaryResponse(BaseModel):
     mode: str
     canvas_w_cm: float
     canvas_h_cm: float
-    batch_id: UUID | None
+    filled_template_url: str | None
+    num_colors_used: int | None
+    notes: str | None
     created_at: datetime
+    approved_at: datetime | None
+
+    @field_validator("filled_template_url", mode="before")
+    @classmethod
+    def _convert_filled(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
 
 
 class JobListResponse(BaseModel):
