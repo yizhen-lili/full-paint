@@ -19,6 +19,9 @@ cd /app
 echo "[start_web] initializing schema..."
 python scripts/init_db.py
 
+echo "[start_web] initializing admin user (idempotent)..."
+python scripts/init_admin.py
+
 echo "[start_web] starting uvicorn on port ${PORT:-8000}..."
 exec uvicorn main:app \
     --host 0.0.0.0 \
