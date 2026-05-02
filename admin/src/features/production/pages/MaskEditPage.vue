@@ -107,11 +107,13 @@ const actionStack = ref<Action[]>([])
 const canUndo = computed(() => actionStack.value.length > 0)
 const canConfirm = computed(() => {
   if (isLocked.value) return false
-  // 至少有一個 sam_point、一個閉合 polygon、或 ≥3 點待閉合
+  // 至少有一個 sam_point、一個閉合 polygon、或任何進行中頂點
+  // 進行中頂點 < 3 時 confirm() 會跳警告；≥ 3 時會自動閉合
+  // 改成 length > 0 是為了讓使用者點得到按鈕、看得到警告（而非按鈕灰著卡死）
   return (
     samPoints.value.length > 0 ||
     polygons.value.length > 0 ||
-    currentPolygon.value.length >= 3
+    currentPolygon.value.length > 0
   )
 })
 
