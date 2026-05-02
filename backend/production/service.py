@@ -306,12 +306,13 @@ async def get_job(db: AsyncSession, job_id: UUID) -> ProductionJob:
     return job
 
 
-async def delete_job(db: AsyncSession, job_id: UUID) -> None:
+async def delete_job(db: AsyncSession, job_id: UUID, *, force: bool = False) -> None:
     """硬刪除任務 row + palette_color_mappings 子資料 + Firebase 物件。
 
     安全規則：
     - status=processing → BadRequestError（worker 可能還在寫入，刪了會 race）
-    - 被 product_variants / print_batches / order_items 引用 → BadRequestError 409 語意
+      - force=True 時繞過此檢查，用於 worker 卡死永不結束的 zombie task
+    - 被 product_variants / print_batches / order_items 引用 → BadRequestError 拒絕
     - palette_color_mappings 連帶刪（FK NOT NULL，不刪 cascade 會 IntegrityError）
     - Firebase 物件（svg / filled / snapped_rgb / mask）best-effort 刪：
       失敗只 log warning，不回滾 DB（DB 已 commit）
@@ -320,9 +321,10 @@ async def delete_job(db: AsyncSession, job_id: UUID) -> None:
 
     job = await get_job(db, job_id)
 
-    if job.status == "processing":
+    if job.status == "processing" and not force:
         raise BadRequestError(
-            "任務正在處理中，無法刪除（請等待完成或失敗後再試）"
+            "任務正在處理中，無法刪除（請等待完成或失敗後再試）。"
+            "若 worker 確認卡死，可改用 force=true 強制刪除（產生的 Firebase 物件可能成 orphan）。"
         )
 
     # 檢查是否被其他表引用 — 一律拒絕，防止商品/訂單/批次斷鏈

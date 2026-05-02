@@ -212,9 +212,13 @@ export function unapproveJob(id: string) {
 /**
  * 硬刪除 job — 連帶刪 palette_color_mappings 子資料 + Firebase svg/filled/snapped/mask 物件。
  * Backend 拒絕情況：status=processing（worker 在跑）或被 product/batch/order 引用。
+ *
+ * @param force 為 true 時繞過 processing 檢查，用於 worker 卡死的 zombie task
+ *   （注意：產生的 Firebase 物件可能成 orphan，需手動清理）
  */
-export function deleteJob(id: string) {
-  return request<null>(`/admin/production/jobs/${id}`, {
+export function deleteJob(id: string, options: { force?: boolean } = {}) {
+  const qs = options.force ? '?force=true' : ''
+  return request<null>(`/admin/production/jobs/${id}${qs}`, {
     method: 'DELETE',
   })
 }

@@ -81,12 +81,16 @@ export function useUnapproveJobMutation(id: string) {
   })
 }
 
-/** 硬刪除 job — 成功後 invalidate list / detail，前端自行處理 router.push 跳轉。 */
+/** 硬刪除 job — 成功後 invalidate list / detail，前端自行處理 router.push 跳轉。
+ *
+ * 接受 { id, force? }：force=true 用於強制刪除卡死的 processing job。
+ */
 export function useDeleteJobMutation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => deleteJob(id),
-    onSuccess: (_, id) => invalidate(qc, id),
+    mutationFn: ({ id, force = false }: { id: string; force?: boolean }) =>
+      deleteJob(id, { force }),
+    onSuccess: (_, vars) => invalidate(qc, vars.id),
   })
 }
 

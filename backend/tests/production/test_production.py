@@ -692,6 +692,29 @@ async def test_delete_processing_job_rejected(client: AsyncClient, db):
 
 
 @pytest.mark.asyncio
+async def test_delete_processing_job_with_force_ok(client: AsyncClient, db):
+    """processing 任務 + ?force=true → 允許強制刪除（worker 卡死的 zombie task）。"""
+    from sqlalchemy import select, update
+    from production.models import ProductionJob
+
+    job_id = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id).values(status="processing")
+    )
+    await db.commit()
+
+    with patch("production.service.get_bucket"):
+        res = await client.delete(f"{JOBS_URL}/{job_id}?force=true")
+    assert res.status_code == 204
+
+    # row 應已刪
+    found = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job_id)
+    )).scalar_one_or_none()
+    assert found is None
+
+
+@pytest.mark.asyncio
 async def test_delete_job_referenced_by_product_rejected(client: AsyncClient, db):
     """job 被 product_variants 引用 → 拒絕 400 + 提示具體引用。"""
     from sqlalchemy import update

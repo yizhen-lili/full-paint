@@ -61,13 +61,35 @@ async function doDelete() {
   if (deleteArmTimer) clearTimeout(deleteArmTimer)
   deleteArmed.value = false
   try {
-    await deleteMut.mutateAsync(jobId.value)
+    await deleteMut.mutateAsync({ id: jobId.value })
     router.push('/admin/production')
   } catch (e) {
     apiError.value = (e as { message?: string }).message || '刪除失敗'
   }
 }
 const canDelete = computed(() => job.value && job.value.status !== 'processing')
+
+// 強制取消：只在 status=processing 時顯示，用於 worker 卡死的 zombie task
+const forceArmed = ref(false)
+let forceArmTimer: ReturnType<typeof setTimeout> | null = null
+async function doForceCancel() {
+  apiError.value = null
+  if (!forceArmed.value) {
+    forceArmed.value = true
+    if (forceArmTimer) clearTimeout(forceArmTimer)
+    forceArmTimer = setTimeout(() => { forceArmed.value = false }, 3000)
+    return
+  }
+  if (forceArmTimer) clearTimeout(forceArmTimer)
+  forceArmed.value = false
+  try {
+    await deleteMut.mutateAsync({ id: jobId.value, force: true })
+    router.push('/admin/production')
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '強制取消失敗'
+  }
+}
+const canForceCancel = computed(() => job.value?.status === 'processing')
 
 // Post-process dialog
 type PostProcessType = 'merge_color' | 'eliminate_border'
@@ -225,6 +247,18 @@ function fmtDateTime(iso: string | null): string {
           顏色對應
         </Button>
         <Button
+          v-if="canForceCancel"
+          :variant="forceArmed ? 'danger' : 'secondary'"
+          :disabled="deleteMut.isPending.value"
+          :title="forceArmed ? '再點一次確認 — Firebase 物件可能成 orphan' : 'worker 卡死時用：強制標記為已刪，繞過 processing 檢查'"
+          @click="doForceCancel"
+        >
+          <Loader2 v-if="deleteMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+          <Trash2 v-else :size="14" :stroke-width="1.5" />
+          {{ deleteMut.isPending.value ? '取消中...' : (forceArmed ? '再點一次確認強制取消' : '強制取消（worker 卡死）') }}
+        </Button>
+        <Button
+          v-else
           :variant="deleteArmed ? 'danger' : 'secondary'"
           :disabled="!canDelete || deleteMut.isPending.value"
           :title="canDelete ? (deleteArmed ? '再點一次確認，3 秒內無動作會取消' : '刪除任務 + Firebase 物件') : '處理中無法刪除'"
