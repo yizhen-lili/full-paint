@@ -15,10 +15,20 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 把 paint-by-number/src 加到 import path（CLAUDE.md 規範：不複製、只 import）
-_PBN_SRC = Path(__file__).resolve().parents[2] / "paint-by-number" / "src"
-if str(_PBN_SRC) not in sys.path:
-    sys.path.insert(0, str(_PBN_SRC))
+# 把 paint-by-number/src 加到 import path（CLAUDE.md 規範：不複製、只 import）。
+# 嘗試多個路徑，容錯本地 dev 與 Docker 部署的 layout 差異：
+#   - 本地：<repo>/backend/production/engine.py → ../.. = <repo>，<repo>/paint-by-number/src
+#   - Docker：/app/production/engine.py（backend 平鋪到 /app）+ /app/paint-by-number/src
+_HERE = Path(__file__).resolve()
+_PBN_CANDIDATES = [
+    _HERE.parents[2] / "paint-by-number" / "src",  # 本地 dev: backend/production → repo root
+    _HERE.parents[1] / "paint-by-number" / "src",  # Docker: /app/production → /app
+    Path("/app/paint-by-number/src"),               # Docker absolute fallback
+]
+for _candidate in _PBN_CANDIDATES:
+    if _candidate.exists() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
+        break
 
 
 def _calc_min_radius_px(canvas_w_cm: float, img_w_px: int, min_brush_diam_cm: float) -> float:
