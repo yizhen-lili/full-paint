@@ -10,12 +10,15 @@ import {
   getJob,
   listJobs,
   mergeColor,
+  startBatch,
   unapproveJob,
+  updateSamMask,
   type BatchPostProcessPayload,
   type CreateJobsRequest,
   type EliminateBorderPayload,
   type JobsListParams,
   type MergeColorPayload,
+  type SamMaskRequest,
 } from './api'
 
 export const PJ_KEYS = {
@@ -100,6 +103,24 @@ export function useBatchPostProcessMutation(id: string) {
   return useMutation({
     mutationFn: (payload: BatchPostProcessPayload) => batchPostProcess(id, payload),
     onSuccess: () => invalidate(qc, id),
+  })
+}
+
+// ── SAM mask + Batch start mutations ──────────────────────────────────
+
+export function useSamMaskMutation(jobId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: SamMaskRequest) => updateSamMask(jobId, payload),
+    onSuccess: () => invalidate(qc, jobId),
+  })
+}
+
+export function useStartBatchMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (batchId: string) => startBatch(batchId),
+    onSuccess: () => invalidate(qc),
   })
 }
 

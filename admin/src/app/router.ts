@@ -108,6 +108,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/features/production/pages/ProductionJobDetailPage.vue'),
       },
       {
+        path: 'production/:jobId/mask',
+        name: 'admin-production-mask',
+        component: () => import('@/features/production/pages/MaskEditPage.vue'),
+      },
+      {
         path: 'discounts',
         name: 'admin-discounts',
         component: () => import('@/features/discounts/pages/DiscountsPage.vue'),

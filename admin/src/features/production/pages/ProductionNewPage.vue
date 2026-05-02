@@ -27,11 +27,14 @@ import {
   createImage,
   recommendCanvasSizes,
   requestUploadProductionImage,
+  startBatch,
+  updateSamMask,
   type CanvasSizeSuggestion,
   type CreateJobsRequest,
   type Detail,
   type Difficulty,
   type Mode,
+  type SamPoint,
 } from '../api'
 import { fetchPhotoSignedUrl, useCustomRequestsQuery } from '@/features/custom_requests/queries'
 
@@ -306,7 +309,12 @@ async function submit() {
 
   try {
     const res = await createJobsMut.mutateAsync(payload)
-    if (res.batch_id) {
+    // 任一 SAM mode → 跳第一筆的 mask 編輯頁
+    // （v1 spec 要求：先擋多筆 SAM，但若用戶送了多筆，導去第一筆的 mask 編輯頁，
+    // 編完啟動批次時 backend 會反映哪些 job 缺 mask；這層邏輯交給 MaskEditPage 處理。）
+    if (hasSamMode.value && res.job_ids.length > 0) {
+      router.push(`/admin/production/${res.job_ids[0]}/mask`)
+    } else if (res.batch_id) {
       router.push(`/admin/production?batch_id=${res.batch_id}`)
     } else {
       router.push(`/admin/production/${res.job_ids[0]}`)

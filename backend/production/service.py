@@ -326,9 +326,33 @@ def _make_signed_url(raw_url: str) -> str:
 async def get_job_signed_url(
     db: AsyncSession, job_id: UUID, file: str
 ) -> str | None:
+    """取 job 相關檔案的 signed URL。
+
+    - file=svg/snapped_rgb/filled → 從 production_jobs 同名欄位取（Phase A/B 結果）
+    - file=image / mask → 跨表取：image 從 images.original_url（job.image_id），
+      mask 從 production_jobs.mask_url。Phase C 遮罩編輯用。
+    - file=custom_photo → 從 custom_requests.photo_url（job.custom_request_id）
+    """
+    if file == "mask":
+        job = await get_job(db, job_id)
+        return _make_signed_url(job.mask_url) if job.mask_url else None
+    if file == "image":
+        job = await get_job(db, job_id)
+        if not job.image_id:
+            return None
+        from sqlalchemy import select  # noqa: PLC0415
+
+        from production.models import Image  # noqa: PLC0415
+        result = await db.execute(select(Image).where(Image.id == job.image_id))
+        image = result.scalar_one_or_none()
+        if not image or not image.original_url:
+            return None
+        return _make_signed_url(image.original_url)
     field = _FILE_FIELD_MAP.get(file)
     if field is None:
-        raise BadRequestError(f"不支援的檔案：{file}，可選值：{', '.join(_FILE_FIELD_MAP)}")
+        raise BadRequestError(
+            f"不支援的檔案：{file}，可選值：{', '.join(list(_FILE_FIELD_MAP) + ['image', 'mask'])}"
+        )
     job = await get_job(db, job_id)
     raw = getattr(job, field, None)
     return _make_signed_url(raw) if raw else None

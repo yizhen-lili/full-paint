@@ -218,6 +218,23 @@ function fmtDateTime(iso: string | null): string {
       Celery 處理中，每 5 秒自動更新...
     </div>
 
+    <!-- SAM mode + pending → 編輯遮罩入口 -->
+    <div
+      v-if="job.status === 'pending' && (job.mode === 'sam_refine' || job.mode === 'sam_weighted')"
+      class="mb-5 px-4 py-3 border border-accent/40 bg-[var(--color-accent)]/[0.06] text-ink-strong text-[13px] rounded-[var(--radius-xs)] flex items-center justify-between gap-2"
+    >
+      <span class="flex items-center gap-2">
+        <span class="font-medium">SAM 模式（{{ job.mode }}）— 需先編輯遮罩才能啟動批次</span>
+      </span>
+      <button
+        type="button"
+        class="px-3 h-8 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] bg-accent text-paper-surface text-[12px] hover:opacity-90 transition-opacity"
+        @click="router.push(`/admin/production/${job.id}/mask`)"
+      >
+        編輯遮罩 →
+      </button>
+    </div>
+
     <div
       v-if="job.status === 'failed' || job.status === 'cancelled'"
       class="mb-5 px-4 py-3 border border-state-danger/40 bg-[var(--color-state-danger)]/[0.06] text-state-danger text-[13px] rounded-[var(--radius-xs)] flex items-center gap-2"

@@ -180,7 +180,10 @@ export function getJob(id: string) {
   return request<JobDetail>(`/admin/production/jobs/${id}`)
 }
 
-export function getJobSignedUrl(id: string, file: 'svg' | 'snapped_rgb') {
+export function getJobSignedUrl(
+  id: string,
+  file: 'svg' | 'snapped_rgb' | 'filled' | 'image' | 'mask',
+) {
   return request<SignedUrlResponse>(`/admin/production/jobs/${id}/signed-url?file=${file}`)
 }
 
@@ -222,6 +225,46 @@ export function recommendCanvasSizes(width: number, height: number, n = 3) {
   return request<SuggestCanvasSizesResponse>('/admin/production/canvas-sizes/recommend', {
     method: 'POST',
     body: JSON.stringify({ width, height, n }),
+  })
+}
+
+// ── SAM mask + Batch start ─────────────────────────────────────────────
+
+export interface SamPoint {
+  x: number
+  y: number
+  /** 1 = foreground（保留 / 主體）；0 = background */
+  label: 0 | 1
+}
+
+export interface SamMaskRequest {
+  sam_points?: SamPoint[]
+  polygons?: number[][][]
+  mode: 'sam_refine' | 'sam_weighted'
+}
+
+export interface SamMaskResponse {
+  mask_url: string | null
+  mask_coverage: number | null
+}
+
+/** SAM 遮罩編輯：sam_points 觸發 SAM 推論（30-60s），polygons 即時生成 mask PNG。 */
+export function updateSamMask(jobId: string, payload: SamMaskRequest) {
+  return request<SamMaskResponse>(`/admin/production/jobs/${jobId}/sam-mask`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export interface BatchStartResponse {
+  enqueued: number
+  skipped: { job_id: string; reason: string }[]
+}
+
+/** 啟動 SAM batch — 把 batch 內所有有 mask 的 pending job 送進 Celery。 */
+export function startBatch(batchId: string) {
+  return request<BatchStartResponse>(`/admin/production/batches/${batchId}/start`, {
+    method: 'POST',
   })
 }
 
