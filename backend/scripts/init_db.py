@@ -1,0 +1,68 @@
+"""首次部署用：用 Base.metadata.create_all 建 schema + alembic stamp head 記錄版本。
+
+背景：alembic migrations 缺 `production_jobs` 表的 create_table（疑似遺漏），
+但 ORM models 完整。本地 dev/test 都靠 create_all 建 schema，alembic 從未驗證過 from-scratch。
+從乾淨 DB 跑 alembic upgrade head 會在 product_variants FK reference production_jobs 處炸掉。
+
+短期解（本檔案）：
+  1. import 所有 models 註冊 metadata
+  2. Base.metadata.create_all → 一次建好所有 ORM-defined tables（idempotent，已存在不重建）
+  3. alembic stamp head → 把 alembic_version 推到最新，未來增量 migration 才能正常
+"""
+from __future__ import annotations
+
+import asyncio
+import subprocess
+import sys
+
+from sqlalchemy.ext.asyncio import create_async_engine
+
+# 註冊所有 ORM models 的 metadata
+import auth.models  # noqa: F401
+import color.models  # noqa: F401
+import content.models  # noqa: F401
+import custom.models  # noqa: F401
+import discount.models  # noqa: F401
+import notifications.models  # noqa: F401
+import orders.models  # noqa: F401
+import palette.models  # noqa: F401
+import print_batch.models  # noqa: F401
+import product.models  # noqa: F401
+import production.models  # noqa: F401
+import users.models  # noqa: F401
+from core.config import settings
+from core.database import Base
+
+
+async def init_schema() -> None:
+    print("[init_db] connecting to DB ...", flush=True)
+    engine = create_async_engine(settings.database_url)
+    try:
+        async with engine.begin() as conn:
+            print("[init_db] running Base.metadata.create_all (idempotent) ...", flush=True)
+            await conn.run_sync(Base.metadata.create_all)
+        print("[init_db] schema created/verified", flush=True)
+    finally:
+        await engine.dispose()
+
+
+def stamp_alembic_head() -> None:
+    print("[init_db] alembic stamp head ...", flush=True)
+    result = subprocess.run(
+        ["alembic", "stamp", "head"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        print(f"[init_db] alembic stamp warning (non-fatal): {result.stderr}", flush=True)
+    else:
+        print("[init_db] alembic stamped to head", flush=True)
+
+
+def main() -> None:
+    asyncio.run(init_schema())
+    stamp_alembic_head()
+    print("[init_db] DONE", flush=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
