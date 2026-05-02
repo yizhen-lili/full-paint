@@ -343,9 +343,18 @@ const inv = computed(() => 1 / zoom.value)
           @contextmenu.stop.prevent="deletePolyAt(i)"
         />
 
-        <!-- 進行中多邊形（虛線）-->
+        <!-- 進行中多邊形：≥3 點時顯示半透明 fill 預覽（前端即時，不送後端）；
+             < 3 點時只畫虛線連線。讓使用者立刻看到目前選取範圍，不用等右鍵閉合。 -->
+        <polygon
+          v-if="currentPolygon.length >= 3"
+          :points="currentPolygon.map((pt) => `${pt[0]},${pt[1]}`).join(' ')"
+          fill="rgba(34, 197, 94, 0.30)"
+          stroke="#0284c7"
+          :stroke-width="2 * inv"
+          :stroke-dasharray="`${6 * inv},${4 * inv}`"
+        />
         <polyline
-          v-if="currentPolygon.length > 0"
+          v-else-if="currentPolygon.length > 0"
           :points="currentPolygon.map((pt) => `${pt[0]},${pt[1]}`).join(' ')"
           fill="none"
           stroke="#0284c7"
