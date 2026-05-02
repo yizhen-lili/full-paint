@@ -16,9 +16,10 @@ dockerfilePath = "backend/Dockerfile"
 rootDirectory = "."
 
 [deploy]
-# 預設 startCommand（適用 backend-web）
-# backend-worker service 內 override 為 "bash scripts/start_worker.sh"
-startCommand = "bash scripts/start_web.sh"
+# 注意：startCommand **不寫**在這裡，避免鎖死所有 service。
+# 每個 service 在 Railway dashboard 自己設 Custom Start Command：
+#   - backend-web    → bash scripts/start_web.sh
+#   - backend-worker → bash scripts/start_worker.sh
 
 # Railway 健康檢查：backend main.py 有 GET /health endpoint
 healthcheckPath = "/health"
