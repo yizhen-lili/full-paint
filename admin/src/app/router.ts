@@ -113,6 +113,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/features/production/pages/MaskEditPage.vue'),
       },
       {
+        path: 'production/batches/:batchId/mask',
+        name: 'admin-production-batch-mask-wizard',
+        component: () => import('@/features/production/pages/BatchMaskWizardPage.vue'),
+      },
+      {
         path: 'discounts',
         name: 'admin-discounts',
         component: () => import('@/features/discounts/pages/DiscountsPage.vue'),
