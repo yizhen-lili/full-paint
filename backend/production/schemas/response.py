@@ -106,6 +106,11 @@ class JobDetailResponse(BaseModel):
     def _convert_filled(cls, v: Any) -> Any:
         return _resolve_filled_url(v)
 
+    @field_validator("mask_url", mode="before")
+    @classmethod
+    def _convert_mask(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
 
 class CreateJobsResponse(BaseModel):
     batch_id: UUID | None

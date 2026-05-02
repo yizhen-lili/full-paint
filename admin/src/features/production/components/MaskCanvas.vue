@@ -147,14 +147,22 @@ function onRightClick(e: MouseEvent) {
       @contextmenu="onRightClick"
     />
 
-    <!-- 3. Mask PNG overlay（半透明綠，後端產出）-->
-    <img
+    <!-- 3. Mask overlay：用 CSS mask-image 把純綠色 div 限制在 mask 白色區域 -->
+    <!--    white 像素 → 顯示綠色，black 像素 → 透明（純 CSS，不依賴 hue filter）-->
+    <div
       v-if="maskUrl"
-      :src="maskUrl"
-      class="absolute inset-0 w-full h-full object-contain pointer-events-none mix-blend-multiply opacity-50"
-      style="filter: hue-rotate(80deg) saturate(2);"
-      alt="mask overlay"
-      draggable="false"
+      class="absolute inset-0 pointer-events-none"
+      :style="{
+        backgroundColor: 'rgb(34, 197, 94)',
+        opacity: 0.45,
+        WebkitMaskImage: `url('${maskUrl}')`,
+        maskImage: `url('${maskUrl}')`,
+        WebkitMaskSize: '100% 100%',
+        maskSize: '100% 100%',
+        WebkitMaskRepeat: 'no-repeat',
+        maskRepeat: 'no-repeat',
+      }"
+      aria-label="mask overlay"
     />
 
     <!-- 4. SVG overlay：sam points + polygons -->

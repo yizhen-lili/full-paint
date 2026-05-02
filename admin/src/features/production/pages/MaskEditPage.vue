@@ -112,14 +112,20 @@ const canConfirm = computed(() => {
   return samPoints.value.length > 0 || polygons.value.length > 0
 })
 
-// 載入既有 sam_points / polygons（job 之前已編輯過）
+// 載入既有 sam_points / polygons / mask_url（job 之前已編輯過）
 watch(job, (j) => {
   if (!j) return
   // JobDetail 還沒把 sam_points / polygons 帶出來（schema 有，type 沒）
   // 暫時用 any — 之後補強型別
-  const anyJ = j as unknown as { sam_points?: SamPoint[]; polygons?: number[][][] }
+  const anyJ = j as unknown as {
+    sam_points?: SamPoint[]
+    polygons?: number[][][]
+    mask_url?: string | null
+  }
   if (anyJ.sam_points && samPoints.value.length === 0) samPoints.value = [...anyJ.sam_points]
   if (anyJ.polygons && polygons.value.length === 0) polygons.value = anyJ.polygons.map((p) => [...p])
+  // 重新進頁時把既有 mask_url 帶上來，避免「點過了但 reload 後 overlay 消失」的怪 UX
+  if (anyJ.mask_url && !maskUrl.value) maskUrl.value = anyJ.mask_url
 }, { immediate: true })
 
 // ── 互動 handler ────────────────────────────────────────────────────────
