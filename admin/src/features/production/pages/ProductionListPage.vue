@@ -17,6 +17,7 @@ import {
   type JobStatus,
   DETAIL_LABEL,
   DIFFICULTY_LABEL,
+  MODE_LABEL,
 } from '../api'
 
 const router = useRouter()
@@ -144,11 +145,18 @@ function fmtDateTime(iso: string): string {
     @row-click="(r) => goDetail(r.id)"
   >
     <template #cell-cover="{ row }">
+      <!-- 已完成 job：filled_template；其他狀態 fallback 原圖 thumbnail -->
       <img
         v-if="row.filled_template_url"
         :src="row.filled_template_url"
         alt=""
         class="w-12 h-12 object-cover rounded-[var(--radius-xs)] border border-line-hairline"
+      />
+      <img
+        v-else-if="row.image_preview_url"
+        :src="row.image_preview_url"
+        alt=""
+        class="w-12 h-12 object-cover rounded-[var(--radius-xs)] border border-line-hairline opacity-70"
       />
       <div
         v-else
@@ -174,7 +182,15 @@ function fmtDateTime(iso: string): string {
 
     <template #cell-spec="{ row }">
       <div class="text-[12px] text-ink-default leading-snug">
-        <div>{{ row.canvas_w_cm }} × {{ row.canvas_h_cm }} cm</div>
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span>{{ row.canvas_w_cm }} × {{ row.canvas_h_cm }} cm</span>
+          <span
+            class="inline-flex items-center px-1.5 h-[18px] text-[10px] tracking-[0.04em] rounded-[var(--radius-xs)]"
+            :class="row.mode === 'standard'
+              ? 'bg-paper-subtle text-ink-muted'
+              : 'bg-[var(--color-accent)]/[0.10] text-accent'"
+          >{{ MODE_LABEL[row.mode] }}</span>
+        </div>
         <div class="text-ink-muted">
           {{ DIFFICULTY_LABEL[row.difficulty] }} · {{ DETAIL_LABEL[row.detail] }}
           <span v-if="row.num_colors_used" class="ml-1">· {{ row.num_colors_used }} 色</span>

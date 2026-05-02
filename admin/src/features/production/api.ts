@@ -65,6 +65,8 @@ export interface JobListItem {
   canvas_w_cm: number
   canvas_h_cm: number
   filled_template_url: string | null
+  /** 等待中/失敗/處理中 job 的原圖縮圖 URL — 給 fallback 預覽用 */
+  image_preview_url: string | null
   num_colors_used: number | null
   created_at: string
   approved_at: string | null
@@ -401,4 +403,10 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   completed: '已完成',
   failed: '失敗',
   cancelled: '已取消',
+}
+
+export const MODE_LABEL: Record<Mode, string> = {
+  standard: '標準',
+  sam_refine: 'SAM 細化',
+  sam_weighted: 'SAM 加權',
 }

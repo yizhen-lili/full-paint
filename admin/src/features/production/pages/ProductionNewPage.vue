@@ -521,13 +521,25 @@ async function submit() {
           class="border border-line-hairline rounded-[var(--radius-xs)]"
         >
           <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 p-3">
-            <Select v-model="c.canvas_size" :options="canvasOptions" />
-            <Select v-model="c.difficulty" :options="difficultyOptions" />
-            <Select v-model="c.detail" :options="detailOptions" />
-            <Select v-model="c.mode" :options="modeOptions" />
+            <div>
+              <label class="block text-[11px] text-ink-muted mb-1">畫布尺寸</label>
+              <Select v-model="c.canvas_size" :options="canvasOptions" />
+            </div>
+            <div>
+              <label class="block text-[11px] text-ink-muted mb-1">難易度</label>
+              <Select v-model="c.difficulty" :options="difficultyOptions" />
+            </div>
+            <div>
+              <label class="block text-[11px] text-ink-muted mb-1">細緻度</label>
+              <Select v-model="c.detail" :options="detailOptions" />
+            </div>
+            <div>
+              <label class="block text-[11px] text-ink-muted mb-1">模式</label>
+              <Select v-model="c.mode" :options="modeOptions" />
+            </div>
             <button
               type="button"
-              class="h-9 w-9 inline-flex items-center justify-center rounded-[var(--radius-xs)] text-ink-muted hover:bg-[var(--color-state-danger)]/[0.10] hover:text-state-danger transition-colors disabled:opacity-30"
+              class="h-9 w-9 mt-[22px] inline-flex items-center justify-center rounded-[var(--radius-xs)] text-ink-muted hover:bg-[var(--color-state-danger)]/[0.10] hover:text-state-danger transition-colors disabled:opacity-30"
               :disabled="combos.length === 1"
               aria-label="移除"
               @click="removeCombo(idx)"

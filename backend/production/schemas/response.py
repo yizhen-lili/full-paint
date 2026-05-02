@@ -56,6 +56,9 @@ class JobSummaryResponse(BaseModel):
     canvas_w_cm: float
     canvas_h_cm: float
     filled_template_url: str | None
+    # 列表頁用：filled_template_url 不存在時 fallback 顯原圖縮圖
+    # （由 service.list_jobs 動態 attach 到 ORM 物件）
+    image_preview_url: str | None = None
     num_colors_used: int | None
     notes: str | None
     created_at: datetime
@@ -64,6 +67,11 @@ class JobSummaryResponse(BaseModel):
     @field_validator("filled_template_url", mode="before")
     @classmethod
     def _convert_filled(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
+    @field_validator("image_preview_url", mode="before")
+    @classmethod
+    def _convert_image_preview(cls, v: Any) -> Any:
         return _resolve_filled_url(v)
 
 

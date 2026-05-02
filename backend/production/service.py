@@ -276,7 +276,26 @@ async def list_jobs(
     result = await db.execute(
         q.order_by(ProductionJob.created_at.desc()).offset(offset).limit(page_size)
     )
-    return list(result.scalars().all()), total
+    jobs = list(result.scalars().all())
+
+    # 補 image_preview_url：等待中 / 失敗 / processing 的 job 沒有 filled_template，
+    # 列表頁需要原圖 thumbnail 才能視覺辨識。Schema validator 會把 gs:// 簽成 https。
+    image_ids = {j.image_id for j in jobs if j.image_id is not None}
+    if image_ids:
+        img_rows = (
+            await db.execute(
+                select(Image.id, Image.original_url).where(Image.id.in_(image_ids))
+            )
+        ).all()
+        url_map: dict[UUID, str] = {row.id: row.original_url for row in img_rows}
+        for j in jobs:
+            # 動態屬性 — Pydantic from_attributes 會讀到（不寫 DB）
+            j.image_preview_url = url_map.get(j.image_id)  # type: ignore[attr-defined]
+    else:
+        for j in jobs:
+            j.image_preview_url = None  # type: ignore[attr-defined]
+
+    return jobs, total
 
 
 async def get_job(db: AsyncSession, job_id: UUID) -> ProductionJob:
