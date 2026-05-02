@@ -14,13 +14,17 @@ dockerfilePath = "backend/Dockerfile"
 rootDirectory = "."
 
 [deploy]
-# startCommand **不寫**這裡 — 寫了會鎖死兩個 service。
-#   paint-web    → Dockerfile CMD（預設）= bash scripts/start_web.sh
-#   paint-worker → 用 env var RAILWAY_RUN_COMMAND 覆寫為 bash scripts/start_worker.sh
+# 兩個 service 共用同一個 startCommand：dispatcher start.sh
+# 它依 SERVICE_TYPE env var 分流：
+#   paint-web    → Variables 設 SERVICE_TYPE=web    → 跑 start_web.sh    (uvicorn)
+#   paint-worker → Variables 設 SERVICE_TYPE=worker → 跑 start_worker.sh (celery + healthcheck)
+# 這樣 Railway dashboard "Custom Start Command" 欄位被綁定為 bash scripts/start.sh，
+# 不需要任何 per-service 覆寫（不靠 RAILWAY_RUN_COMMAND 等 magic）。
+startCommand = "bash scripts/start.sh"
 
 # healthcheck **不寫**這裡 — 寫了會套到 paint-worker，worker 沒 HTTP 必失敗導致無限 restart。
-#   paint-web 的 /health healthcheck 由 Railway 自身在沒設定時不執行；
-#   實務上 paint-web Active 後即正常服務，不依賴 healthcheck。
+# paint-worker 在容器內背景跑 healthcheck_server.py 開 port 給 Railway ping，
+# paint-web 由 uvicorn 自己 listen PORT，兩邊都不需要 Railway-side 的 healthcheckPath。
 
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
