@@ -647,7 +647,7 @@ async def test_delete_pending_job_ok(client: AsyncClient, db):
 
 @pytest.mark.asyncio
 async def test_delete_completed_job_cleans_firebase(client: AsyncClient, db):
-    """completed 任務可刪 + Firebase blob delete 被呼叫到所有 4 個 url。"""
+    """completed 任務可刪 + 掃 production_jobs/{id}/ prefix 把所有 blob 刪光。"""
     from sqlalchemy import update
     from production.models import ProductionJob
 
@@ -655,23 +655,38 @@ async def test_delete_completed_job_cleans_firebase(client: AsyncClient, db):
     await db.execute(
         update(ProductionJob).where(ProductionJob.id == job_id).values(
             status="completed",
-            svg_url="gs://b/jobs/x.svg",
-            filled_template_url="gs://b/jobs/x_filled.png",
-            snapped_rgb_url="gs://b/jobs/x_snapped.png",
-            mask_url="gs://b/jobs/x_mask.png",
+            svg_url=f"gs://b/production_jobs/{job_id}/svg.svg",
+            filled_template_url=f"gs://b/production_jobs/{job_id}/filled.png",
+            snapped_rgb_url=f"gs://b/production_jobs/{job_id}/snapped.png",
+            mask_url=f"gs://b/production_jobs/{job_id}/mask.png",
         )
     )
     await db.commit()
 
+    # 模擬 prefix 下有 5 個 blob（含一個 worker 寫的中間檔）
+    mock_blobs = [MagicMock(name=f"blob{i}") for i in range(5)]
+    for b, name in zip(mock_blobs, [
+        f"production_jobs/{job_id}/svg.svg",
+        f"production_jobs/{job_id}/filled.png",
+        f"production_jobs/{job_id}/snapped.png",
+        f"production_jobs/{job_id}/mask.png",
+        f"production_jobs/{job_id}/intermediate_v1.png",  # 中間檔
+    ]):
+        b.name = name
+
     mock_bucket = MagicMock()
     mock_bucket.name = "b"
-    mock_bucket.blob = MagicMock(return_value=MagicMock())
+    mock_bucket.list_blobs = MagicMock(return_value=mock_blobs)
 
     with patch("production.service.get_bucket", return_value=mock_bucket):
         res = await client.delete(f"{JOBS_URL}/{job_id}")
     assert res.status_code == 204
-    # 每個 url 都呼到 bucket.blob().delete()
-    assert mock_bucket.blob.call_count == 4
+    # list_blobs 被呼叫一次以正確 prefix
+    mock_bucket.list_blobs.assert_called_once()
+    assert mock_bucket.list_blobs.call_args.kwargs.get("prefix") == f"production_jobs/{job_id}/"
+    # 每個 blob 都被刪（含中間檔）
+    for b in mock_blobs:
+        b.delete.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -693,7 +708,8 @@ async def test_delete_processing_job_rejected(client: AsyncClient, db):
 
 @pytest.mark.asyncio
 async def test_delete_processing_job_with_force_ok(client: AsyncClient, db):
-    """processing 任務 + ?force=true → 允許強制刪除（worker 卡死的 zombie task）。"""
+    """processing 任務 + ?force=true → 允許強制刪除（worker 卡死的 zombie task）+ 排程 90s
+    後再清一次 Firebase（防 worker race window 寫新檔）。"""
     from sqlalchemy import select, update
     from production.models import ProductionJob
 
@@ -703,7 +719,12 @@ async def test_delete_processing_job_with_force_ok(client: AsyncClient, db):
     )
     await db.commit()
 
-    with patch("production.service.get_bucket"):
+    mock_bucket = MagicMock()
+    mock_bucket.name = "b"
+    mock_bucket.list_blobs = MagicMock(return_value=[])
+
+    with patch("production.service.get_bucket", return_value=mock_bucket), \
+         patch("production.tasks.cleanup_job_firebase") as mock_cleanup:
         res = await client.delete(f"{JOBS_URL}/{job_id}?force=true")
     assert res.status_code == 204
 
@@ -712,6 +733,12 @@ async def test_delete_processing_job_with_force_ok(client: AsyncClient, db):
         select(ProductionJob).where(ProductionJob.id == job_id)
     )).scalar_one_or_none()
     assert found is None
+
+    # 應排程 90 秒後再清一次（force=true 才有）
+    mock_cleanup.apply_async.assert_called_once()
+    kwargs = mock_cleanup.apply_async.call_args.kwargs
+    assert kwargs["countdown"] == 90
+    assert kwargs["args"] == [str(job_id)]
 
 
 @pytest.mark.asyncio
@@ -783,7 +810,8 @@ async def test_delete_job_firebase_failure_does_not_rollback_db(client: AsyncCli
     mock_bucket.name = "b"
     mock_blob = MagicMock()
     mock_blob.delete.side_effect = RuntimeError("firebase fail")
-    mock_bucket.blob.return_value = mock_blob
+    mock_blob.name = f"production_jobs/{job_id}/x.svg"
+    mock_bucket.list_blobs = MagicMock(return_value=[mock_blob])
 
     with patch("production.service.get_bucket", return_value=mock_bucket):
         res = await client.delete(f"{JOBS_URL}/{job_id}")

@@ -818,5 +818,24 @@ async def _cancel_batch_async(batch_id: str) -> None:
         await engine_db.dispose()
 
 
+# ── Deferred Firebase cleanup（force-cancel 後 worker race 補洗一次）──────────
+
+
+@celery_app.task(bind=True, name="production.cleanup_job_firebase")
+def cleanup_job_firebase(self, job_id: str) -> None:
+    """force-cancel 後延遲 cleanup：再次掃 production_jobs/{job_id}/ prefix 刪光。
+
+    使用情境：admin force=true 刪除 processing 任務，worker 仍可能繼續寫 Firebase
+    幾十秒（卡死後 OOM kill / Railway 重啟 / 完成最後 step）。delete_job 立即清一次
+    後，再 schedule 此 task 90 秒後跑一次補洗，catch worker race window。
+    """
+    from production.service import _delete_firebase_job_prefix  # noqa: PLC0415
+
+    try:
+        _delete_firebase_job_prefix(uuid.UUID(job_id))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("deferred cleanup task for %s failed: %s", job_id, e)
+
+
 # silence unused-import linting in some envs
 _ = traceback

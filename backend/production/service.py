@@ -334,12 +334,6 @@ async def delete_job(db: AsyncSession, job_id: UUID, *, force: bool = False) -> 
             f"任務被以下資料引用，無法刪除：{'、'.join(refs)}"
         )
 
-    # 收集 Firebase 物件路徑（先抓住，DB 刪掉後 row 就沒了）
-    blob_urls = [
-        u for u in (job.svg_url, job.filled_template_url, job.snapped_rgb_url, job.mask_url)
-        if u
-    ]
-
     # DB 刪除：先刪子資料再刪 job row（palette_color_mappings FK NOT NULL，
     # 不能 SET NULL；schema 沒 ondelete CASCADE 所以手動 DELETE）
     await db.execute(
@@ -350,8 +344,20 @@ async def delete_job(db: AsyncSession, job_id: UUID, *, force: bool = False) -> 
     await db.delete(job)
     await db.commit()
 
-    # Firebase 清理（best-effort — DB 已 commit，物件失敗只 log）
-    _delete_firebase_blobs(blob_urls)
+    # Firebase 清理 — 掃整個 production_jobs/{job_id}/ prefix 把所有 blob 刪光
+    # （比僅刪 4 個 URL 欄位更徹底：worker 寫的中間檔 / mask 多版本 / 異常產生的孤兒
+    #  都會一併清掉）。失敗只 log，不回滾 DB（DB 已 commit）。
+    _delete_firebase_job_prefix(job_id)
+
+    # force=True 取消 processing 任務時，worker 可能還在跑（最壞情況 OOM 卡死中），
+    # 仍會繼續寫 Firebase。schedule 90 秒後再做一次 cleanup 把 race window 內
+    # worker 寫的新 blob 也清掉（雙重保險）。一般刪除不需此步。
+    if force:
+        try:
+            from production.tasks import cleanup_job_firebase  # noqa: PLC0415
+            cleanup_job_firebase.apply_async(args=[str(job_id)], countdown=90)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("schedule deferred firebase cleanup failed for %s: %s", job_id, e)
 
 
 async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[str]:
@@ -378,19 +384,35 @@ async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[str]:
     return refs
 
 
-def _delete_firebase_blobs(urls: list[str]) -> None:
-    """逐一刪 Firebase blob — 任一失敗只 log（DB 已 commit，無法回滾）。"""
-    if not urls:
-        return
-    from production.tasks import _parse_blob_path  # noqa: PLC0415
+def _delete_firebase_job_prefix(job_id: UUID) -> None:
+    """掃 Firebase production_jobs/{job_id}/ prefix 下所有 blob 刪光。
 
-    bucket = get_bucket()
-    for u in urls:
+    比逐一刪 4 個 URL 欄位徹底：worker 中間檔 / mask 多版本 / 異常孤兒都包含。
+    任一失敗只 log，不影響其他 blob 與 DB（DB 已 commit）。
+    """
+    try:
+        bucket = get_bucket()
+        prefix = f"production_jobs/{job_id}/"
+        blobs = list(bucket.list_blobs(prefix=prefix))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("delete-job firebase list failed for %s — %s", job_id, e)
+        return
+
+    if not blobs:
+        return
+
+    deleted, failed = 0, 0
+    for blob in blobs:
         try:
-            blob_path = _parse_blob_path(u, bucket.name)
-            bucket.blob(blob_path).delete()
+            blob.delete()
+            deleted += 1
         except Exception as e:  # noqa: BLE001
-            logger.warning("delete-job firebase blob failed (orphan): %s — %s", u, e)
+            logger.warning("delete-job firebase blob failed (orphan): %s — %s", blob.name, e)
+            failed += 1
+    logger.info(
+        "delete-job firebase cleanup for %s: prefix=%s deleted=%d failed=%d",
+        job_id, prefix, deleted, failed,
+    )
 
 
 _FILE_FIELD_MAP = {
