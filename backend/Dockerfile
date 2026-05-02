@@ -42,9 +42,9 @@ ENV PYTHONUNBUFFERED=1 \
 # ── 取 paint-by-number 引擎 source（engine.py 透過 sys.path 載入）─────────
 # 不依賴 git submodule fetch（Railway clone 不一定 --recursive）；
 # 不用 git clone（Docker non-interactive 環境 git 對 GitHub 觸發 auth prompt 失敗）；
-# 改用 curl 抓 GitHub source tarball（純 HTTP，匿名可讀，無 auth 問題）。
-ARG PBN_COMMIT=3e66ecebda1d6a5e6f4bf87e94adb237a19d55bf
-RUN curl -fL "https://github.com/yiznmin/PaintingNumber/archive/${PBN_COMMIT}.tar.gz" \
+# 改用 curl 抓 GitHub codeload tarball（純 HTTP，匿名可讀，無 auth 問題）。
+# commit hash 直接寫死於 RUN 內，避免 Docker ARG 展開不可預期的問題。
+RUN curl -fL "https://codeload.github.com/yiznmin/PaintingNumber/tar.gz/3e66ecebda1d6a5e6f4bf87e94adb237a19d55bf" \
         -o /tmp/pbn.tar.gz \
  && mkdir -p /tmp/pbn /app/paint-by-number \
  && tar -xzf /tmp/pbn.tar.gz -C /tmp/pbn --strip-components=1 \
