@@ -287,6 +287,91 @@ async def get_job(db: AsyncSession, job_id: UUID) -> ProductionJob:
     return job
 
 
+async def delete_job(db: AsyncSession, job_id: UUID) -> None:
+    """硬刪除任務 row + palette_color_mappings 子資料 + Firebase 物件。
+
+    安全規則：
+    - status=processing → BadRequestError（worker 可能還在寫入，刪了會 race）
+    - 被 product_variants / print_batches / order_items 引用 → BadRequestError 409 語意
+    - palette_color_mappings 連帶刪（FK NOT NULL，不刪 cascade 會 IntegrityError）
+    - Firebase 物件（svg / filled / snapped_rgb / mask）best-effort 刪：
+      失敗只 log warning，不回滾 DB（DB 已 commit）
+    """
+    from palette.models import PaletteColorMapping  # noqa: PLC0415
+
+    job = await get_job(db, job_id)
+
+    if job.status == "processing":
+        raise BadRequestError(
+            "任務正在處理中，無法刪除（請等待完成或失敗後再試）"
+        )
+
+    # 檢查是否被其他表引用 — 一律拒絕，防止商品/訂單/批次斷鏈
+    refs = await _check_job_references(db, job_id)
+    if refs:
+        raise BadRequestError(
+            f"任務被以下資料引用，無法刪除：{'、'.join(refs)}"
+        )
+
+    # 收集 Firebase 物件路徑（先抓住，DB 刪掉後 row 就沒了）
+    blob_urls = [
+        u for u in (job.svg_url, job.filled_template_url, job.snapped_rgb_url, job.mask_url)
+        if u
+    ]
+
+    # DB 刪除：先刪子資料再刪 job row（palette_color_mappings FK NOT NULL，
+    # 不能 SET NULL；schema 沒 ondelete CASCADE 所以手動 DELETE）
+    await db.execute(
+        PaletteColorMapping.__table__.delete().where(
+            PaletteColorMapping.production_job_id == job_id
+        )
+    )
+    await db.delete(job)
+    await db.commit()
+
+    # Firebase 清理（best-effort — DB 已 commit，物件失敗只 log）
+    _delete_firebase_blobs(blob_urls)
+
+
+async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[str]:
+    """回傳所有引用此 job_id 的表標籤（中文），空 list 代表沒引用可安全刪。"""
+    from orders.models import OrderItem  # noqa: PLC0415
+    from print_batch.models import PrintBatchItem  # noqa: PLC0415
+    from product.models import ProductVariant  # noqa: PLC0415
+
+    refs = []
+    for model, label in (
+        (ProductVariant, "商品 variant"),
+        (PrintBatchItem, "列印批次"),
+        (OrderItem, "訂單項目"),
+    ):
+        cnt = (
+            await db.execute(
+                select(func.count()).select_from(model).where(
+                    model.production_job_id == job_id
+                )
+            )
+        ).scalar() or 0
+        if cnt > 0:
+            refs.append(f"{label}（{cnt} 筆）")
+    return refs
+
+
+def _delete_firebase_blobs(urls: list[str]) -> None:
+    """逐一刪 Firebase blob — 任一失敗只 log（DB 已 commit，無法回滾）。"""
+    if not urls:
+        return
+    from production.tasks import _parse_blob_path  # noqa: PLC0415
+
+    bucket = get_bucket()
+    for u in urls:
+        try:
+            blob_path = _parse_blob_path(u, bucket.name)
+            bucket.blob(blob_path).delete()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("delete-job firebase blob failed (orphan): %s — %s", u, e)
+
+
 _FILE_FIELD_MAP = {
     "svg": "svg_url",
     "snapped_rgb": "snapped_rgb_url",

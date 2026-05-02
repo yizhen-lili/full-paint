@@ -612,6 +612,166 @@ async def test_approve_unauthenticated(client: AsyncClient, db):
     assert res.status_code == 401
 
 
+# ── DELETE /admin/production/jobs/{id} ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_delete_pending_job_ok(client: AsyncClient, db):
+    """pending 任務可刪 + palette_color_mappings 連帶刪 + 回 204。"""
+    from color.models import PhysicalColor
+    from palette.models import MappedByEnum, PaletteColorMapping
+    from sqlalchemy import select
+
+    job_id = await _create_pending_job(client, db)
+    # 加一筆 PhysicalColor 給 mapping 用（physical_color_id NOT NULL）
+    color = PhysicalColor(code="C001", name="test", rgb=[10, 20, 30], stock_ml=100, is_active=True)
+    db.add(color)
+    await db.flush()
+    db.add(PaletteColorMapping(
+        production_job_id=job_id,
+        template_id=1,
+        algorithm_rgb=[10, 20, 30],
+        physical_color_id=color.id,
+        mapped_by=MappedByEnum.system,
+    ))
+    await db.commit()
+
+    with patch("production.service.get_bucket"):
+        res = await client.delete(f"{JOBS_URL}/{job_id}")
+    assert res.status_code == 204
+    # 連帶子資料也應沒了
+    cnt = (await db.execute(
+        select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job_id)
+    )).scalars().all()
+    assert len(cnt) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_completed_job_cleans_firebase(client: AsyncClient, db):
+    """completed 任務可刪 + Firebase blob delete 被呼叫到所有 4 個 url。"""
+    from sqlalchemy import update
+    from production.models import ProductionJob
+
+    job_id = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id).values(
+            status="completed",
+            svg_url="gs://b/jobs/x.svg",
+            filled_template_url="gs://b/jobs/x_filled.png",
+            snapped_rgb_url="gs://b/jobs/x_snapped.png",
+            mask_url="gs://b/jobs/x_mask.png",
+        )
+    )
+    await db.commit()
+
+    mock_bucket = MagicMock()
+    mock_bucket.name = "b"
+    mock_bucket.blob = MagicMock(return_value=MagicMock())
+
+    with patch("production.service.get_bucket", return_value=mock_bucket):
+        res = await client.delete(f"{JOBS_URL}/{job_id}")
+    assert res.status_code == 204
+    # 每個 url 都呼到 bucket.blob().delete()
+    assert mock_bucket.blob.call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_delete_processing_job_rejected(client: AsyncClient, db):
+    """processing 任務不可刪（worker 在跑）→ 400。"""
+    from sqlalchemy import update
+    from production.models import ProductionJob
+
+    job_id = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id).values(status="processing")
+    )
+    await db.commit()
+
+    res = await client.delete(f"{JOBS_URL}/{job_id}")
+    assert res.status_code == 400
+    assert "處理中" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_job_referenced_by_product_rejected(client: AsyncClient, db):
+    """job 被 product_variants 引用 → 拒絕 400 + 提示具體引用。"""
+    from sqlalchemy import update
+    from product.models import Product, ProductVariant
+    from production.models import ProductionJob
+
+    job_id = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id).values(status="completed")
+    )
+    # 建一個 product + variant 引用該 job
+    prod = Product(title="T", cover_image_url="gs://b/cover.png")
+    db.add(prod)
+    await db.flush()
+    db.add(ProductVariant(
+        product_id=prod.id,
+        production_job_id=job_id,
+        price=100,
+        price_formula_base=80,
+    ))
+    await db.commit()
+
+    res = await client.delete(f"{JOBS_URL}/{job_id}")
+    assert res.status_code == 400
+    assert "商品 variant" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_job_not_found(client: AsyncClient, db):
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    res = await client.delete(f"{JOBS_URL}/{uuid.uuid4()}")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_job_non_admin(client: AsyncClient, db):
+    await _make_customer(client, db)
+    await _login(client, CUSTOMER_USER["email"], CUSTOMER_USER["password"])
+    res = await client.delete(f"{JOBS_URL}/{uuid.uuid4()}")
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_delete_job_unauthenticated(client: AsyncClient, db):
+    res = await client.delete(f"{JOBS_URL}/{uuid.uuid4()}")
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_job_firebase_failure_does_not_rollback_db(client: AsyncClient, db):
+    """Firebase delete 失敗應只 log，不影響 DB（已 commit）→ 仍回 204。"""
+    from sqlalchemy import update, select
+    from production.models import ProductionJob
+
+    job_id = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id).values(
+            status="failed",
+            svg_url="gs://b/jobs/x.svg",
+        )
+    )
+    await db.commit()
+
+    mock_bucket = MagicMock()
+    mock_bucket.name = "b"
+    mock_blob = MagicMock()
+    mock_blob.delete.side_effect = RuntimeError("firebase fail")
+    mock_bucket.blob.return_value = mock_blob
+
+    with patch("production.service.get_bucket", return_value=mock_bucket):
+        res = await client.delete(f"{JOBS_URL}/{job_id}")
+    assert res.status_code == 204
+    # DB row 確實刪掉
+    found = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job_id)
+    )).scalar_one_or_none()
+    assert found is None
+
+
 # ── POST /admin/production/jobs/{id}/unapprove ────────────────────────────────
 
 @pytest.mark.asyncio

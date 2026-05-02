@@ -6,6 +6,7 @@ import {
   approveJob,
   batchPostProcess,
   createJobs,
+  deleteJob,
   eliminateBorder,
   getJob,
   listJobs,
@@ -77,6 +78,15 @@ export function useUnapproveJobMutation(id: string) {
   return useMutation({
     mutationFn: () => unapproveJob(id),
     onSuccess: () => invalidate(qc, id),
+  })
+}
+
+/** 硬刪除 job — 成功後 invalidate list / detail，前端自行處理 router.push 跳轉。 */
+export function useDeleteJobMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deleteJob(id),
+    onSuccess: (_, id) => invalidate(qc, id),
   })
 }
 

@@ -13,6 +13,7 @@ import {
   Palette,
   Combine,
   Eraser,
+  Trash2,
 } from 'lucide-vue-next'
 
 import Card from '@/shared/ui/Card.vue'
@@ -23,6 +24,7 @@ import PostProcessDialog from '../components/PostProcessDialog.vue'
 import {
   useApproveJobMutation,
   useBatchPostProcessMutation,
+  useDeleteJobMutation,
   useJobQuery,
   useUnapproveJobMutation,
 } from '../queries'
@@ -43,6 +45,29 @@ const { data: job, isLoading, isError, error } = useJobQuery(jobId)
 const approveMut = useApproveJobMutation(jobId.value)
 const unapproveMut = useUnapproveJobMutation(jobId.value)
 const batchMut = useBatchPostProcessMutation(jobId.value)
+const deleteMut = useDeleteJobMutation()
+
+// 刪除：2-click 確認（armed 3 秒）防誤觸
+const deleteArmed = ref(false)
+let deleteArmTimer: ReturnType<typeof setTimeout> | null = null
+async function doDelete() {
+  apiError.value = null
+  if (!deleteArmed.value) {
+    deleteArmed.value = true
+    if (deleteArmTimer) clearTimeout(deleteArmTimer)
+    deleteArmTimer = setTimeout(() => { deleteArmed.value = false }, 3000)
+    return
+  }
+  if (deleteArmTimer) clearTimeout(deleteArmTimer)
+  deleteArmed.value = false
+  try {
+    await deleteMut.mutateAsync(jobId.value)
+    router.push('/admin/production')
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '刪除失敗'
+  }
+}
+const canDelete = computed(() => job.value && job.value.status !== 'processing')
 
 // Post-process dialog
 type PostProcessType = 'merge_color' | 'eliminate_border'
@@ -198,6 +223,16 @@ function fmtDateTime(iso: string | null): string {
         >
           <Palette :size="14" :stroke-width="1.5" />
           顏色對應
+        </Button>
+        <Button
+          :variant="deleteArmed ? 'danger' : 'secondary'"
+          :disabled="!canDelete || deleteMut.isPending.value"
+          :title="canDelete ? (deleteArmed ? '再點一次確認，3 秒內無動作會取消' : '刪除任務 + Firebase 物件') : '處理中無法刪除'"
+          @click="doDelete"
+        >
+          <Loader2 v-if="deleteMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+          <Trash2 v-else :size="14" :stroke-width="1.5" />
+          {{ deleteMut.isPending.value ? '刪除中...' : (deleteArmed ? '再點一次確認' : '刪除任務') }}
         </Button>
       </div>
     </header>

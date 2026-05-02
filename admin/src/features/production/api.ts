@@ -207,6 +207,16 @@ export function unapproveJob(id: string) {
   })
 }
 
+/**
+ * 硬刪除 job — 連帶刪 palette_color_mappings 子資料 + Firebase svg/filled/snapped/mask 物件。
+ * Backend 拒絕情況：status=processing（worker 在跑）或被 product/batch/order 引用。
+ */
+export function deleteJob(id: string) {
+  return request<null>(`/admin/production/jobs/${id}`, {
+    method: 'DELETE',
+  })
+}
+
 export function requestUploadProductionImage(payload: UploadProductionImageRequest) {
   return request<UploadProductionImageResponse>('/upload/production-image', {
     method: 'POST',

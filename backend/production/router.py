@@ -126,6 +126,27 @@ async def get_job(
     return await service.get_job(db, job_id)
 
 
+@router.delete(
+    "/admin/production/jobs/{job_id}",
+    status_code=204,
+    response_class=Response,
+)
+async def delete_job(
+    job_id: UUID,
+    operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """硬刪除製作任務 + 連帶子資料 + Firebase 物件。
+    安全規則：
+    - status=processing → 400（worker 在跑）
+    - 被 product_variants / print_batches / order_items 引用 → 409
+    - palette_color_mappings 自動連帶刪
+    - Firebase svg/filled/snapped_rgb/mask 物件 best-effort 刪
+    """
+    await service.delete_job(db, job_id)
+    return Response(status_code=204)
+
+
 @router.get("/admin/production/jobs/{job_id}/signed-url", response_model=SignedUrlResponse)
 async def get_job_signed_url(
     job_id: UUID,
