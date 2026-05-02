@@ -1,12 +1,12 @@
-# Railway 部署配置 — yiimui 專案
+# Railway 配置 — paint-web service（master 分支）
 #
-# 兩個 service 共用同一個 Docker image（backend/Dockerfile）：
-#   - paint-web    → 預設跑 Dockerfile CMD = bash scripts/start_web.sh
-#   - paint-worker → 用 env var RAILWAY_RUN_COMMAND = bash scripts/start_worker.sh 覆寫
+# paint-web Railway service 連 master 分支：
+#   Settings → Source → Branch = master
 #
-# Plugin（在 Railway dashboard 加）：
-#   - PostgreSQL（自動注入 DATABASE_URL）
-#   - Redis（自動注入 REDIS_URL）
+# paint-worker Railway service 連 deploy/worker 分支（railway.toml 不同：startCommand = start_worker.sh）：
+#   Settings → Source → Branch = deploy/worker
+#
+# 兩分支只差 railway.toml 的 startCommand 一行，code 透過定期 git merge 同步。
 
 [build]
 builder = "dockerfile"
@@ -14,17 +14,7 @@ dockerfilePath = "backend/Dockerfile"
 rootDirectory = "."
 
 [deploy]
-# 兩個 service 共用同一個 startCommand：dispatcher start.sh
-# 它依 SERVICE_TYPE env var 分流：
-#   paint-web    → Variables 設 SERVICE_TYPE=web    → 跑 start_web.sh    (uvicorn)
-#   paint-worker → Variables 設 SERVICE_TYPE=worker → 跑 start_worker.sh (celery + healthcheck)
-# 這樣 Railway dashboard "Custom Start Command" 欄位被綁定為 bash scripts/start.sh，
-# 不需要任何 per-service 覆寫（不靠 RAILWAY_RUN_COMMAND 等 magic）。
-startCommand = "bash scripts/start.sh"
-
-# healthcheck **不寫**這裡 — 寫了會套到 paint-worker，worker 沒 HTTP 必失敗導致無限 restart。
-# paint-worker 在容器內背景跑 healthcheck_server.py 開 port 給 Railway ping，
-# paint-web 由 uvicorn 自己 listen PORT，兩邊都不需要 Railway-side 的 healthcheckPath。
+startCommand = "bash scripts/start_web.sh"
 
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
