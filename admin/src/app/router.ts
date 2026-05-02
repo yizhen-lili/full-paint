@@ -193,3 +193,22 @@ export const router = createRouter({
   history: createWebHistory(),
   routes,
 })
+
+// 處理 SPA chunk stale 問題：Vercel 新 deploy 後舊 entry 還在跑，
+// route lazy import 嘗試載已被新 hash 取代的 chunk → 404 → MIME 變
+// text/html → 「Failed to fetch dynamically imported module」。
+// 全域接住此錯誤 → 強制 reload 拉新 entry HTML（會重新 link 到新 chunks）。
+router.onError((err, to) => {
+  const msg = String(err?.message || err || '')
+  const isChunkLoadError =
+    /Failed to fetch dynamically imported module/i.test(msg) ||
+    /Loading chunk \S+ failed/i.test(msg) ||
+    /Importing a module script failed/i.test(msg)
+  if (!isChunkLoadError) return
+  // 完整 reload 到目標路徑（瀏覽器拿新 index.html → 新 chunk hash）
+  if (to?.fullPath) {
+    window.location.assign(to.fullPath)
+  } else {
+    window.location.reload()
+  }
+})
