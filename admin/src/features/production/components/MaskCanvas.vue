@@ -258,7 +258,10 @@ const inv = computed(() => 1 / zoom.value)
         draggable="false"
       />
 
-      <!-- mask overlay：CSS mask-image 限制純色到 mask 白色區 -->
+      <!-- mask overlay：CSS mask-image 限制純色到 mask 白色區。
+           Backend 產的 PNG 若含 alpha channel（全不透明），瀏覽器預設用 alpha
+           當 mask → 整張顯示綠色（bug）。強制 mask-mode: luminance 用亮度判斷：
+           白色像素 = 顯示綠色、黑色像素 = 透明。 -->
       <div
         v-if="maskUrl && !hideMask"
         class="absolute inset-0 pointer-events-none"
@@ -271,6 +274,8 @@ const inv = computed(() => 1 / zoom.value)
           maskSize: '100% 100%',
           WebkitMaskRepeat: 'no-repeat',
           maskRepeat: 'no-repeat',
+          WebkitMaskMode: 'luminance',
+          maskMode: 'luminance',
         }"
         aria-label="mask overlay"
       />
