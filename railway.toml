@@ -1,32 +1,8 @@
-# Railway 部署配置 — yiimui 專案
+# 已棄用 — 改用 per-service 配置：
+#   paint-web    → railway.web.toml
+#   paint-worker → railway.worker.toml
 #
-# 兩個 service 共用同一個 Docker image（backend/Dockerfile）：
-#   - backend-web: FastAPI + alembic migrate
-#   - backend-worker: Celery worker（含 SAM 推論）
+# 各 service 在 Railway dashboard 設定：
+#   Settings → Source → Config Path = railway.{web,worker}.toml
 #
-# Plugin（在 Railway dashboard 加）：
-#   - PostgreSQL（自動注入 DATABASE_URL）
-#   - Redis（自動注入 REDIS_URL）
-
-[build]
-builder = "dockerfile"
-dockerfilePath = "backend/Dockerfile"
-
-# 根目錄要包含 backend/ + paint-by-number/src/（Dockerfile COPY 兩個都要）
-rootDirectory = "."
-
-[deploy]
-# 注意：startCommand **不寫**在這裡，避免鎖死所有 service。
-# 每個 service 在 Railway dashboard 自己設 Custom Start Command：
-#   - backend-web    → bash scripts/start_web.sh
-#   - backend-worker → bash scripts/start_worker.sh
-
-# 健康檢查 **不寫**在這裡，避免套到 worker（worker 沒 HTTP，會誤判 fail）。
-# paint-web 在 Railway dashboard 個別設定：
-#   Settings → Deploy → Healthcheck Path = /health
-#   Settings → Deploy → Healthcheck Timeout = 300
-# paint-worker 不需要 healthcheck（Celery 不開 HTTP port）。
-
-# 部署失敗時的重啟策略
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
+# 此檔保留為空殼，避免 Railway 預設讀到舊內容。
