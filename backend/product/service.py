@@ -858,8 +858,17 @@ async def public_list_products(
     sort: str,
     page: int,
     page_size: int,
+    theme_id: UUID | None = None,
 ) -> dict:
     query = select(Product).where(Product.status == ProductStatusEnum.on_sale)
+
+    # theme_id 過濾：撈該主題下所有 series_id，再用 series_id 過濾
+    # （Product 沒直接 theme_id，要透過 series 查）
+    if theme_id is not None:
+        theme_series_ids = (
+            select(ProductSeries.id).where(ProductSeries.theme_id == theme_id)
+        )
+        query = query.where(Product.series_id.in_(theme_series_ids))
 
     # Always require at least one active variant — exclude "zombie" products
     active_variant_pids = (
@@ -1091,3 +1100,191 @@ async def public_related_products(db: AsyncSession, product_id: UUID) -> dict:
 async def public_list_tags(db: AsyncSession) -> dict:
     rows = (await db.execute(select(Tag).order_by(Tag.name))).scalars().all()
     return {"items": [{"id": t.id, "name": t.name} for t in rows]}
+
+
+# ── Public Themes / Series ────────────────────────────────────────────────────
+# store_design_brief.md §P0+ 主題與系列公開瀏覽。
+# 跟 admin list_themes/list_series 區分：
+#   - 公開只回 series_count + product_count（admin 沒 product_count）
+#   - 依 sort_order 排（admin 端用 search 找）
+#   - 過濾 published 商品（only on_sale + 有 active variant）
+
+async def public_list_themes(db: AsyncSession) -> dict:
+    """所有主題（不分頁，量級小且 store 通常一次顯示完）。每個含 series_count + product_count。"""
+    themes = (await db.execute(
+        select(Theme).order_by(Theme.sort_order.asc(), Theme.created_at.desc())
+    )).scalars().all()
+
+    if not themes:
+        return {"items": []}
+
+    # 各 theme 的 series_count
+    series_count_rows = (await db.execute(
+        select(ProductSeries.theme_id, func.count(ProductSeries.id).label("cnt"))
+        .where(ProductSeries.theme_id.in_([t.id for t in themes]))
+        .group_by(ProductSeries.theme_id)
+    )).all()
+    series_count_map = {r.theme_id: r.cnt for r in series_count_rows}
+
+    # 各 theme 的 product_count（透過 series 連 Product，僅 on_sale）
+    # SELECT s.theme_id, COUNT(p.id) FROM product_series s JOIN products p ON p.series_id=s.id
+    #   WHERE s.theme_id IN (...) AND p.status='on_sale' GROUP BY s.theme_id
+    product_count_rows = (await db.execute(
+        select(ProductSeries.theme_id, func.count(Product.id).label("cnt"))
+        .join(Product, Product.series_id == ProductSeries.id)
+        .where(
+            ProductSeries.theme_id.in_([t.id for t in themes]),
+            Product.status == ProductStatusEnum.on_sale,
+        )
+        .group_by(ProductSeries.theme_id)
+    )).all()
+    product_count_map = {r.theme_id: r.cnt for r in product_count_rows}
+
+    items = [
+        {
+            "id": t.id,
+            "name": t.name,
+            "description": t.description,
+            "cover_image_url": t.cover_image_url,
+            "sort_order": t.sort_order,
+            "series_count": series_count_map.get(t.id, 0),
+            "product_count": product_count_map.get(t.id, 0),
+        }
+        for t in themes
+    ]
+    return {"items": items}
+
+
+async def public_get_theme(db: AsyncSession, theme_id: UUID) -> dict:
+    """單一主題詳情 + 該主題下所有系列（含 product_count）。"""
+    theme = await _get_theme_or_404(db, theme_id)
+
+    # 撈該 theme 的所有 series
+    series_rows = (await db.execute(
+        select(ProductSeries).where(ProductSeries.theme_id == theme_id)
+        .order_by(ProductSeries.created_at.asc())
+    )).scalars().all()
+
+    # 各 series 的 product_count
+    if series_rows:
+        count_rows = (await db.execute(
+            select(Product.series_id, func.count(Product.id).label("cnt"))
+            .where(
+                Product.series_id.in_([s.id for s in series_rows]),
+                Product.status == ProductStatusEnum.on_sale,
+            )
+            .group_by(Product.series_id)
+        )).all()
+        count_map = {r.series_id: r.cnt for r in count_rows}
+    else:
+        count_map = {}
+
+    return {
+        "id": theme.id,
+        "name": theme.name,
+        "description": theme.description,
+        "cover_image_url": theme.cover_image_url,
+        "sort_order": theme.sort_order,
+        "series": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "description": s.description,
+                "product_count": count_map.get(s.id, 0),
+            }
+            for s in series_rows
+        ],
+    }
+
+
+async def public_list_series(db: AsyncSession, theme_id: UUID | None = None) -> dict:
+    """所有系列。可帶 theme_id 過濾。每個含 theme_name + product_count。"""
+    query = select(ProductSeries)
+    if theme_id is not None:
+        query = query.where(ProductSeries.theme_id == theme_id)
+
+    series_rows = (await db.execute(
+        query.order_by(ProductSeries.created_at.desc())
+    )).scalars().all()
+
+    if not series_rows:
+        return {"items": []}
+
+    # product_count（only on_sale）
+    count_rows = (await db.execute(
+        select(Product.series_id, func.count(Product.id).label("cnt"))
+        .where(
+            Product.series_id.in_([s.id for s in series_rows]),
+            Product.status == ProductStatusEnum.on_sale,
+        )
+        .group_by(Product.series_id)
+    )).all()
+    count_map = {r.series_id: r.cnt for r in count_rows}
+
+    # theme_name
+    theme_ids = {s.theme_id for s in series_rows if s.theme_id is not None}
+    theme_map: dict[UUID, str] = {}
+    if theme_ids:
+        theme_rows = (await db.execute(
+            select(Theme.id, Theme.name).where(Theme.id.in_(theme_ids))
+        )).all()
+        theme_map = {r.id: r.name for r in theme_rows}
+
+    items = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "description": s.description,
+            "theme_id": s.theme_id,
+            "theme_name": theme_map.get(s.theme_id) if s.theme_id else None,
+            "product_count": count_map.get(s.id, 0),
+        }
+        for s in series_rows
+    ]
+    return {"items": items}
+
+
+async def public_get_series(db: AsyncSession, series_id: UUID) -> dict:
+    """單一系列詳情 + 該系列下所有 on_sale 商品（依 series_order ASC）。"""
+    series_row = (await db.execute(
+        select(ProductSeries).where(ProductSeries.id == series_id)
+    )).scalar_one_or_none()
+    if series_row is None:
+        raise NotFoundError("系列不存在")
+
+    # 撈該系列下所有 on_sale + 至少一個 active variant 的商品
+    active_variant_pids = (
+        select(ProductVariant.product_id).where(ProductVariant.is_active.is_(True))
+    )
+    products = (await db.execute(
+        select(Product)
+        .where(
+            Product.series_id == series_id,
+            Product.status == ProductStatusEnum.on_sale,
+            Product.id.in_(active_variant_pids),
+        )
+        .order_by(
+            # series_order NULL 放最後；等同 PostgreSQL NULLS LAST
+            Product.series_order.asc().nulls_last(),
+            Product.created_at.asc(),
+        )
+    )).scalars().all()
+
+    items = [await _public_product_brief(db, p) for p in products]
+
+    # theme_name
+    theme_name: str | None = None
+    if series_row.theme_id is not None:
+        theme_row = (await db.execute(
+            select(Theme.name).where(Theme.id == series_row.theme_id)
+        )).scalar_one_or_none()
+        theme_name = theme_row
+
+    return {
+        "id": series_row.id,
+        "name": series_row.name,
+        "description": series_row.description,
+        "theme_id": series_row.theme_id,
+        "theme_name": theme_name,
+        "products": items,
+    }

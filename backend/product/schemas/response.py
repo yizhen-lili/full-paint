@@ -242,3 +242,68 @@ class PublicProductDetailResponse(BaseModel):
 class RelatedProductsResponse(BaseModel):
     series: PublicSeriesBrief | None
     items: list[PublicSeriesProductBrief]
+
+
+# ── Public themes / series ────────────────────────────────────────────────────
+# 公開主題與系列瀏覽（store_design_brief.md 第 4a/4b/4c 頁）
+# 跟 admin 端的 ThemeResponse / SeriesResponse 區分：
+#   - 公開只回 store 需要的欄位（不含 updated_at）
+#   - 加 product_count（admin 端只有 series_count）
+
+class PublicThemeBrief(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    cover_image_url: str | None
+    sort_order: int
+    series_count: int
+    product_count: int
+
+    model_config = {"from_attributes": True}
+
+
+class PublicThemeListResponse(BaseModel):
+    items: list[PublicThemeBrief]
+
+
+class PublicSeriesInTheme(BaseModel):
+    """主題詳情頁巢狀的系列摘要（含 product_count）。"""
+    id: UUID
+    name: str
+    description: str | None
+    product_count: int
+
+    model_config = {"from_attributes": True}
+
+
+class PublicThemeDetailResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    cover_image_url: str | None
+    sort_order: int
+    series: list[PublicSeriesInTheme]
+
+
+class PublicSeriesBriefWithCount(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    theme_id: UUID | None
+    theme_name: str | None
+    product_count: int
+
+    model_config = {"from_attributes": True}
+
+
+class PublicSeriesListResponse(BaseModel):
+    items: list[PublicSeriesBriefWithCount]
+
+
+class PublicSeriesDetailResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    theme_id: UUID | None
+    theme_name: str | None
+    products: list[PublicProductBrief]   # 依 series_order ASC 排

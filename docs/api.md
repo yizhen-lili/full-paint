@@ -223,7 +223,9 @@ Response 200: { "issued_count": 5 }
 ### GET /products
 **權限**：public
 
-Query: `?difficulty=beginner|elementary|intermediate|advanced&detail=rough|standard|detailed|premium&canvas_size=30x40&tag_id=uuid&series_id=uuid&sort=latest|popular|price_asc|price_desc&page=1&page_size=24`
+Query: `?difficulty=beginner|elementary|intermediate|advanced&detail=rough|standard|detailed|premium&canvas_size=30x40&tag_id=uuid&series_id=uuid&theme_id=uuid&sort=latest|popular|price_asc|price_desc&page=1&page_size=24`
+
+> `theme_id` 過濾撈該主題下所有 series 的商品（透過 series_id IN 子查詢）。
 
 ```json
 Response 200: {
@@ -276,6 +278,66 @@ Response 200: {
 
 ### GET /tags
 **權限**：public
+
+### GET /themes
+**權限**：public｜所有主題（依 sort_order 排）
+
+```json
+Response 200: {
+  "items": [{
+    "id": "uuid", "name": "萌寵", "description": "string|null",
+    "cover_image_url": "string|null", "sort_order": 10,
+    "series_count": 3, "product_count": 12
+  }]
+}
+```
+
+> `product_count` 只計 `status='on_sale'` 的商品。
+
+### GET /themes/{id}
+**權限**：public｜單主題詳情 + 該主題下所有系列
+
+```json
+Response 200: {
+  "id": "uuid", "name": "string", "description": "string|null",
+  "cover_image_url": "string|null", "sort_order": 10,
+  "series": [{ "id": "uuid", "name": "string", "description": "string|null", "product_count": 5 }]
+}
+Response 404: 主題不存在
+```
+
+### GET /series
+**權限**：public｜所有系列（含 theme_name + product_count）
+
+Query: `?theme_id=uuid` 過濾（可選）
+
+```json
+Response 200: {
+  "items": [{
+    "id": "uuid", "name": "string", "description": "string|null",
+    "theme_id": "uuid|null", "theme_name": "string|null",
+    "product_count": 5
+  }]
+}
+```
+
+### GET /series/{id}
+**權限**：public｜單系列詳情 + 該系列下所有 on_sale 商品（依 series_order ASC）
+
+```json
+Response 200: {
+  "id": "uuid", "name": "string", "description": "string|null",
+  "theme_id": "uuid|null", "theme_name": "string|null",
+  "products": [{
+    "id": "uuid", "title": "string", "cover_image_url": "string",
+    "difficulty_range": ["beginner","advanced"],
+    "price_min": 397, "price_max": 860, "is_preorder": false
+  }]
+}
+Response 404: 系列不存在
+```
+
+> `series_order` NULL 排在最後（NULLS LAST）。
 
 ---
 
