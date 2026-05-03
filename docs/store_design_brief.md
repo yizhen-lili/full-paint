@@ -39,10 +39,26 @@
 
 | # | 頁面 | 路徑 | 重點 |
 |---|---|---|---|
-| 1 | **首頁** | `/` | hero、最新上架橫向捲動、熱門商品、三個分類入口（難易度 / 標籤主題 / 細緻度）、客製化服務 banner |
-| 2 | **商品列表** | `/products` | 卡片網格、左側篩選（難易度 / 細緻度 / 尺寸 / 標籤）、排序（最新 / 熱門 / 價格升降）、24 筆/頁 + 頁碼 |
+| 1 | **首頁** | `/` | hero、最新上架橫向捲動、熱門商品、**主題瀏覽橫向捲動**（3-5 個主題卡片，導 /themes/:id）、**精選系列橫向捲動**（導 /series/:id）、三個分類入口（難易度 / 標籤主題 / 細緻度）、客製化服務 banner |
+| 2 | **商品列表** | `/products` | 卡片網格、左側篩選（**主題 / 系列** / 難易度 / 細緻度 / 尺寸 / 標籤）、排序（最新 / 熱門 / 價格升降）、24 筆/頁 + 頁碼。URL 支援 `?theme_id=&series_id=&difficulty=&...` 帶入預選 |
 | 3 | **搜尋結果** | `/search?q=xxx` | 同列表頁，篩選保留 |
 | 4 | **商品詳情** | `/products/:id` | 圖片輪播（封面 + 多圖）、規格三層級選擇器（尺寸→難易度→細緻度，無對應變體灰階禁用）、價格、庫存（現貨/預購標示）、加購車、同系列商品橫列、商品說明摺疊區（畫具內容 / 畫布材質 / 使用建議 / 注意事項，4 區）、「想要不同規格？」展開客製規格表單 |
+
+### 🔴 P0+ — 主題與系列瀏覽（差異化導覽）
+
+> **背景**：商品結構是 `theme（主題）→ series（系列）→ product（商品）→ variants（規格）` 三層 + tags。Admin 認真組織了主題與系列，store 端要有對應公開頁面讓用戶順著瀏覽。
+>
+> Backend 將補 `GET /themes` / `GET /themes/:id` / `GET /series` / `GET /series/:id` / `GET /products?theme_id=` 五個 public endpoint（目前只有 admin 端）— 設計時假設這些已存在。
+
+| # | 頁面 | 路徑 | 重點 |
+|---|---|---|---|
+| 4a | **主題列表** | `/themes` | 所有主題卡片：cover_image_url、name、description、series_count、product_count。點擊進主題詳情 |
+| 4b | **主題詳情** | `/themes/:id` | hero：主題封面 + 名稱 + 描述。下方該主題下的所有系列卡片 + 「該主題全部商品」按鈕（→ /products?theme_id=...） |
+| 4c | **系列詳情** | `/series/:id` | hero：系列名稱 + 描述（系列無 cover，可借用第一個商品圖）。下方該系列所有商品卡片，依 series_order 排 |
+
+**首頁也要展示**（更新原 #1）：
+- 加一區「主題瀏覽」橫向捲動，3-5 個主題卡片
+- 加一區「精選系列」橫向捲動
 
 ### 🟠 P1 — 結帳 + 訂單核心
 
@@ -88,7 +104,7 @@
 | 27 | **訂製流程** | `/custom-process` | 申請 → 審核 → 報價 → 付款 → 製作 → 出貨 6 步驟 |
 | 28 | **報價參考** | `/pricing` | 文字說明 + 目錄商品價格區間表（17 尺寸 × 4 難易度 matrix）+ 客製照片參考區間 |
 | 29 | **退款退貨政策** | `/refund-policy` | 條件、流程、處理時間、客服聯繫 |
-| 30 | **共用導覽列 + Footer** | 全站 | 導覽列：商品列 / 尺寸指南 / 客製化商品 / 🔍 搜尋 / 購物車（件數）/ 登入 or 會員下拉。Footer：資訊頁連結 + 版權 |
+| 30 | **共用導覽列 + Footer** | 全站 | 導覽列：商品列 / **主題** / 客製化商品 / 尺寸指南 / 🔍 搜尋 / 購物車（件數）/ 登入 or 會員下拉。「商品列」「主題」可滑鼠 hover 顯示下拉 mega-menu（列出主要主題或熱門系列）。Footer：資訊頁連結 + 版權 |
 
 ---
 
@@ -112,11 +128,19 @@
 - `PATCH /users/me/shipping-profiles/:id/set-default`
 
 ### 商品（公開）
-- `GET /products?difficulty=&detail=&canvas_size=&tag_id=&series_id=&sort=&page=&page_size=`
+- `GET /products?difficulty=&detail=&canvas_size=&tag_id=&series_id=&theme_id=&sort=&page=&page_size=`
 - `GET /products/search?q=`（ILIKE title / description / tags.name）
 - `GET /products/:id`（含 variants、images、series、tags）
 - `GET /products/:id/related`（同系列）
 - `GET /tags`
+
+### 主題 + 系列（公開，**新規劃**）
+- `GET /themes` — 所有主題（含 cover_image_url、series_count、product_count，依 sort_order 排）
+- `GET /themes/:id` — 單主題詳情 + 該主題下所有 series（每個 series 含 product_count）
+- `GET /series` — 所有系列（可帶 `?theme_id=` 過濾）
+- `GET /series/:id` — 單系列詳情 + 該系列下所有 products（依 series_order ASC 排）
+
+> 這 4 個 endpoint backend 目前只有 admin 端，會新增 public 版本。設計時假設可用。
 
 ### 購物車
 - `GET /cart` / `POST /cart/items` / `PATCH /cart/items/:id` / `DELETE /cart/items/:id`
@@ -176,6 +200,19 @@
 
 ## 六、規格細節
 
+### 商品分類三層 + 標籤
+```
+theme（主題，例：萌寵 / 風景 / 藝術畫）
+   └── series（系列，例：貓咪日常 / 日本和風）
+          └── product（商品）
+                 └── variants（規格 = 尺寸 × 難易度 × 細緻度 組合）
+                 └── tags（多對多，自由標籤）
+```
+- 主題：粗分類，store 端有獨立瀏覽頁（/themes /themes/:id）
+- 系列：細分類，可關聯主題（也可不關聯，獨立系列），有獨立詳情頁 /series/:id
+- 商品：實際銷售單位，每個有多個 variants（規格組合）
+- 標籤：橫切式關鍵字（例：療癒、送禮、節慶），多對多關聯
+
 ### 畫布尺寸（17 種固定）
 - 正方：20×20、30×30、40×40、50×50、60×60
 - 直幅：30×40、30×50、30×60、40×50、40×60、50×60
@@ -232,11 +269,15 @@ pending_payment → paid → processing → shipped → completed
 - 商品卡標示「預購中」
 - 結帳要選**合併出貨**（等齊）或**分開出貨**（現貨先出，運費仍只一次）
 
-### 訊息系統（僅客製申請有）
+### 訊息系統（僅客製申請有，**只有會員能用**）
+- 出現位置：**客製申請詳情頁**內（`/custom/requests/:id`）
+- **使用者必須是「已登入會員」**才能看訊息 / 發訊息（訪客一律無法使用）
+- 訪客若想申請客製，可填客製申請表單（暫存 sessionStorage），**送出時跳登入頁**，登入後自動送出 → 接著進到該申請的詳情頁開始對談
 - 客戶 ↔ 管理員 雙向對話
 - **用戶在頁面**：SSE 即時推送新訊息，不發 email
 - **用戶離開頁面**：發 email 通知，附連結回對話頁
 - sender_type = `customer | admin`，UI 左右氣泡分
+- **不是全站客服**：店面其他頁（商品、購物車等）不要放對談 widget；想諮詢的客戶請走「客製申請」管道，或站尾 footer 留 email 聯繫資訊
 
 ### 折扣三層機制（結帳套用優先序）
 1. **promo_code**（公開折扣碼）有填 → 以 public_code 為準，**不套 auto_checkout**
@@ -314,9 +355,9 @@ inline 顯示在欄位下方，土紅色 + 圖示，不用 alert。
 
 請按以下順序出 mockup（HTML + Tailwind CSS，artifact 格式）：
 
-第一輪 — 視覺定調：
-1. 全站共用導覽列 + footer
-2. 首頁 hero 區 + 最新上架橫向捲動列
+第一輪 — 視覺定調與通用元件：
+1. 全站共用導覽列 + footer（含主題下拉 mega-menu）
+2. 首頁完整版（hero / 最新上架 / 主題瀏覽橫列 / 精選系列橫列 / 三個分類入口 / 客製 banner）
 3. 商品卡片元件（單張，3 個變體：現貨 / 預購 / 缺貨）
 4. 訊息對談 UI 元件（聊天氣泡客戶 vs 管理員）
 
@@ -327,9 +368,11 @@ inline 顯示在欄位下方，土紅色 + 圖示，不用 alert。
 
 每張 mockup 完成後我會 feedback，再修第二輪。
 
-之後依序：商品列表 → 商品詳情 → 購物車 → 結帳 → 訂單頁
-        → 客製申請列表 → 客製申請詳情（含訊息）→ 報價確認頁
-        → 會員（個人資料 / 收件 / 折扣錢包）→ 註冊登入 → 資訊頁
+之後依序：
+  主題列表 → 主題詳情 → 系列詳情 → 商品列表 → 商品詳情
+  → 購物車 → 結帳 → 訂單列表 → 訂單詳情
+  → 客製申請列表 → 客製申請詳情（含訊息）→ 報價確認頁
+  → 會員（個人資料 / 收件 / 折扣錢包）→ 註冊登入流程 → 資訊頁
 ```
 
 ---
