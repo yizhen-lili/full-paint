@@ -1,0 +1,79 @@
+/* Google Fonts — must be the very first @import per CSS spec */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500&family=Noto+Serif+TC:wght@300;400;500&family=Noto+Sans+TC:wght@300;400;500&family=Manrope:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap');
+@import "tailwindcss";
+
+/* ── Yiimui Store Design Tokens (see store/docs/design_system.md §3.4) ────── */
+@theme {
+  /* Paper & ink */
+  --color-paper-canvas: #F5F1E8;
+  --color-paper-surface: #FAF7F0;
+  --color-paper-deep: #ECE3CE;
+
+  --color-ink-strong: #2E2823;
+  --color-ink-default: #4D4338;
+  --color-ink-muted: #7A6F60;
+  --color-ink-disabled: #A89E8E;
+
+  --color-line-subtle: #E5DCC3;
+  --color-line: #DCD0B6;
+
+  /* Accent — Walnut Light */
+  --color-accent: #7B5841;
+  --color-accent-deep: #5A3F2D;
+  --color-accent-soft: #B8956F;
+  --color-accent-tint: #E8DCC8;
+
+  /* States */
+  --color-state-success: #7A8C5A;
+  --color-state-warning: #B89149;
+  --color-state-danger: #A04A3F;
+  --color-state-info: #6B7889;
+
+  /* Typography */
+  --font-display: 'Cormorant Garamond', 'Noto Serif TC', serif;
+  --font-cn-serif: 'Noto Serif TC', serif;
+  --font-body: 'Manrope', 'Noto Sans TC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Radius */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+}
+
+/* ── Base reset ───────────────────────────────────────────────────────────── */
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-weight: 300;
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--color-ink-default);
+  background-color: var(--color-paper-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular figures for numeric font */
+.font-mono {
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Focus ring — accent, 2px, offset 2px */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* Selection */
+::selection {
+  background-color: var(--color-accent-tint);
+  color: var(--color-ink-strong);
+}

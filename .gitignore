@@ -67,3 +67,6 @@ backend/scripts/review_history/
 
 # DocFinal: local docs mirror, not part of project source of truth
 DocFinal/
+
+# store-mockup/: 設計探索 HTML + screenshots（非交付物，工作成果在 store/）
+store-mockup/
