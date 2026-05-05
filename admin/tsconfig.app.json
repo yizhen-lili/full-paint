@@ -9,6 +9,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
+    "ignoreDeprecations": "6.0",
 
     /* Linting — Vercel build 不卡 unused/implicit-any，這些是程式碼整潔度問題、非功能 bug */
     "noUnusedLocals": false,

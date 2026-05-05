@@ -1,4 +1,4 @@
-<script setup lang="ts" generic="T extends Record<string, unknown>">
+<script setup lang="ts" generic="T extends object">
 import { Loader2 } from 'lucide-vue-next'
 
 export interface Column<R> {

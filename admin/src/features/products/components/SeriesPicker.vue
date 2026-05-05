@@ -25,7 +25,12 @@ async function submitNew() {
   const name = newName.value.trim()
   if (!name) return
   try {
-    const created = await create.mutateAsync({ name, description: null })
+    const created = await create.mutateAsync({
+      name,
+      description: null,
+      theme_id: null,
+      is_featured: false,
+    })
     emit('update:modelValue', created.id)
     newName.value = ''
     inlineMode.value = false

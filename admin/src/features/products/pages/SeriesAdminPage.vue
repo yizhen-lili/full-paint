@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Plus, Pencil, Trash2, Loader2, X, Layers } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, Loader2, X, Layers, Star } from 'lucide-vue-next'
 
 import PageHeader from '@/shared/components/PageHeader.vue'
 import Card from '@/shared/ui/Card.vue'
@@ -30,12 +30,14 @@ const editing = ref<Series | null>(null)
 const formName = ref('')
 const formDesc = ref('')
 const formThemeId = ref<string | null>(null)
+const formIsFeatured = ref(false)
 
 function openCreate() {
   editing.value = null
   formName.value = ''
   formDesc.value = ''
   formThemeId.value = null
+  formIsFeatured.value = false
   dialogOpen.value = true
 }
 
@@ -44,6 +46,7 @@ function openEdit(s: Series) {
   formName.value = s.name
   formDesc.value = s.description ?? ''
   formThemeId.value = s.theme_id
+  formIsFeatured.value = s.is_featured
   dialogOpen.value = true
 }
 
@@ -54,6 +57,7 @@ async function submit() {
     name,
     description: formDesc.value.trim() || null,
     theme_id: formThemeId.value,
+    is_featured: formIsFeatured.value,
   }
   try {
     if (editing.value) {
@@ -64,6 +68,22 @@ async function submit() {
     dialogOpen.value = false
   } catch (e) {
     alert((e as { message?: string }).message || '儲存失敗')
+  }
+}
+
+async function quickToggleFeatured(s: Series) {
+  try {
+    await updateMut.mutateAsync({
+      id: s.id,
+      payload: {
+        name: s.name,
+        description: s.description,
+        theme_id: s.theme_id,
+        is_featured: !s.is_featured,
+      },
+    })
+  } catch (e) {
+    alert((e as { message?: string }).message || '更新失敗')
   }
 }
 
@@ -118,8 +138,15 @@ async function handleDelete(s: Series) {
         class="flex items-start gap-4 px-6 py-4 border-b border-line-hairline last:border-0 hover:bg-paper-subtle transition-colors"
       >
         <div class="flex-1 min-w-0">
-          <div class="flex items-baseline gap-2">
+          <div class="flex items-baseline gap-2 flex-wrap">
             <p class="text-[14px] font-medium text-ink-strong">{{ s.name }}</p>
+            <span
+              v-if="s.is_featured"
+              class="text-[11px] px-1.5 h-[18px] inline-flex items-center gap-0.5 rounded-[var(--radius-xs)] bg-[var(--color-state-warning)]/[0.12] text-state-warning"
+              title="精選系列"
+            >
+              <Star :size="10" :stroke-width="1.75" fill="currentColor" />精選
+            </span>
             <span
               v-if="s.theme_name"
               class="text-[11px] px-1.5 h-[18px] inline-flex items-center rounded-[var(--radius-xs)] bg-accent-tint text-ink-strong"
@@ -133,6 +160,17 @@ async function handleDelete(s: Series) {
           {{ s.product_count }} 商品
         </span>
         <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class="h-8 w-8 inline-flex items-center justify-center rounded-[var(--radius-xs)] transition-colors"
+            :class="s.is_featured
+              ? 'text-state-warning hover:bg-[var(--color-state-warning)]/[0.10]'
+              : 'text-ink-muted hover:bg-paper-subtle hover:text-state-warning'"
+            :title="s.is_featured ? '取消精選' : '設為精選'"
+            @click="quickToggleFeatured(s)"
+          >
+            <Star :size="14" :stroke-width="1.5" :fill="s.is_featured ? 'currentColor' : 'none'" />
+          </button>
           <button
             type="button"
             class="h-8 w-8 inline-flex items-center justify-center rounded-[var(--radius-xs)] text-ink-muted hover:bg-paper-subtle hover:text-ink-strong transition-colors"
@@ -169,6 +207,16 @@ async function handleDelete(s: Series) {
       <div>
         <Label>主題（選填）</Label>
         <ThemePicker v-model="formThemeId" />
+      </div>
+      <div>
+        <label class="flex items-center gap-2 cursor-pointer text-[13px] text-ink-default">
+          <input
+            type="checkbox"
+            v-model="formIsFeatured"
+            class="w-[16px] h-[16px] accent-[var(--color-accent)] cursor-pointer"
+          />
+          <span>設為精選系列（store 端「精選系列」入口會顯示）</span>
+        </label>
       </div>
     </div>
     <template #footer>
