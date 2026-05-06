@@ -11,7 +11,6 @@ import SiteLogo from '@/shared/components/SiteLogo.vue'
 
     <main class="auth-main">
       <div class="auth-card">
-        <span class="card-stripe" aria-hidden="true"></span>
         <span class="card-mark" aria-hidden="true">Y</span>
         <RouterView />
       </div>
@@ -55,21 +54,6 @@ import SiteLogo from '@/shared/components/SiteLogo.vue'
     0 1px 0 rgba(31, 26, 21, 0.02),
     0 12px 32px -16px rgba(31, 26, 21, 0.08);
   overflow: hidden;
-}
-
-/* 頂部苔綠細條 — magazine masthead 風格 */
-.card-stripe {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(
-    90deg,
-    var(--color-fresh) 0%,
-    var(--color-accent-soft) 60%,
-    var(--color-accent-wine-soft) 100%
-  );
 }
 
 /* 右上 Y 裝飾 — 編輯誌字標 */
