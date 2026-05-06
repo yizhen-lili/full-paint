@@ -3,34 +3,34 @@
 @import "tailwindcss";
 
 /* ── Yiimui Store Design Tokens (see store/docs/design_system.md §3.4) ────── */
-/* 2026-05 update: moodboard 沙米/焦糖/核桃/酒紅 — 比舊版 D5 更暖更深 */
+/* 2026-05 update: moodboard 米沙風 — 底色保持淺乳白，只在 accent / 點綴用焦糖酒紅 */
 @theme {
-  /* Paper & ink — 米沙底 */
-  --color-paper-canvas: #EDE4D3;
-  --color-paper-surface: #F4ECDA;
-  --color-paper-deep: #DBC8B0;
+  /* Paper & ink — 淺乳白底（接近紙本） */
+  --color-paper-canvas: #F7F2E5;
+  --color-paper-surface: #FCF8EC;
+  --color-paper-deep: #EFE5CF;
 
-  --color-ink-strong: #2E2823;
-  --color-ink-default: #4A3A2A;
-  --color-ink-muted: #7A6A55;
-  --color-ink-disabled: #A89E8E;
+  --color-ink-strong: #3A3128;
+  --color-ink-default: #5A4D3E;
+  --color-ink-muted: #8A7C68;
+  --color-ink-disabled: #B8AC98;
 
-  --color-line-subtle: #E0D2B8;
-  --color-line: #CCB897;
+  --color-line-subtle: #ECE0C5;
+  --color-line: #D8C8A8;
 
-  /* Accent — Caramel + Walnut + Wine */
-  --color-accent: #A88161;
-  --color-accent-deep: #6A4A34;
-  --color-accent-soft: #C4A37D;
-  --color-accent-tint: #E5D5BC;
-  --color-accent-wine: #781D35;
-  --color-accent-wine-soft: #9B3850;
+  /* Accent — Caramel + Walnut（只用於文字、icon、邊線、hover） */
+  --color-accent: #B08966;
+  --color-accent-deep: #8B6A4A;
+  --color-accent-soft: #CDAD86;
+  --color-accent-tint: #EFE2CC;
+  --color-accent-wine: #9B3A50;
+  --color-accent-wine-soft: #B5586D;
 
-  /* States — 對齊新底色 */
-  --color-state-success: #7A8C5A;
-  --color-state-warning: #B89149;
-  --color-state-danger: #781D35;
-  --color-state-info: #6B7889;
+  /* States — 配合淺底，state warning/danger 微調 */
+  --color-state-success: #889A66;
+  --color-state-warning: #C29A55;
+  --color-state-danger: #9B3A50;
+  --color-state-info: #7B889B;
 
   /* Typography */
   --font-display: 'Cormorant Garamond', 'Noto Serif TC', serif;

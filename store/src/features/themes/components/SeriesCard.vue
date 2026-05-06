@@ -14,10 +14,10 @@ defineProps<{
 }>()
 
 const VISUAL_GRADIENTS = [
-  'linear-gradient(135deg, #DBC8B0 0%, #A88161 55%, #6A4A34 110%)',
-  'linear-gradient(135deg, #EDE4D3 0%, #9B3850 55%, #781D35 110%)',
-  'linear-gradient(135deg, #F4ECDA 0%, #C4A37D 55%, #A88161 110%)',
-  'linear-gradient(135deg, #E0D2B8 0%, #8E6044 55%, #6A4A34 110%)',
+  'linear-gradient(135deg, #FCF8EC 0%, #EFE5CF 65%, #DCC8AC 130%)',
+  'linear-gradient(135deg, #F7F2E5 0%, #E8D8BC 60%, #CDAD86 130%)',
+  'linear-gradient(135deg, #FCF8EC 0%, #EFE2CC 60%, #D8C2A0 130%)',
+  'linear-gradient(135deg, #F7F2E5 0%, #ECE0C5 60%, #CDAD86 140%)',
 ]
 function gradientFor(idx: number) {
   return VISUAL_GRADIENTS[idx % VISUAL_GRADIENTS.length]

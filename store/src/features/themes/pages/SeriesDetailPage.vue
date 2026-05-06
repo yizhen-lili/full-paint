@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
-import { Loader2, Layers, Star, ImageOff } from 'lucide-vue-next'
+import { Loader2, Layers, Star } from 'lucide-vue-next'
 import { useSeriesDetailQuery } from '@/features/browse/queries'
 import { useProductsQuery } from '@/features/products/queries'
 import ProductCard from '@/features/products/components/ProductCard.vue'
@@ -13,13 +13,13 @@ const id = computed(() => String(route.params.id || ''))
 const seriesQuery = useSeriesDetailQuery(id)
 const series = computed(() => seriesQuery.data.value ?? null)
 
-// 該系列中真實精選的商品（admin 在後台勾選 is_featured）
+// 該系列中真實精選的商品（admin 在後台勾選 is_featured）— 拼貼最多 5 格
 const featuredQuery = useProductsQuery(
   computed(() => ({
     series_id: id.value,
     featured: true,
     page: 1,
-    page_size: 3,
+    page_size: 5,
   })),
 )
 
@@ -36,17 +36,44 @@ const allProducts = computed<ProductBrief[]>(() => {
   }))
 })
 
-// Pick 區塊：優先 admin 真實精選；無精選則 fallback 前 3 個（依 series_order）
-const showcaseProducts = computed<ProductBrief[]>(() => {
+// 拼貼區塊：優先真實精選；無則 fallback 前 5 個
+const collageProducts = computed<ProductBrief[]>(() => {
   const featured = featuredQuery.data.value?.items ?? []
-  if (featured.length > 0) return featured.slice(0, 3)
-  return allProducts.value.slice(0, 3)
+  if (featured.length > 0) return featured.slice(0, 5)
+  return allProducts.value.slice(0, 5)
 })
 
-// 排除 showcase 中已顯示的，剩下的放下方
+// 5 格拼貼位置 — 依 product 數量決定要填幾格，不夠的位置用淺色裝飾格補
+// 位置：a (大左 2x2) / b (右上 1x1) / c (右下 1x1) / d (左下 1x1) / e (中下 1x1)
+const collageSlots = computed(() => {
+  const list = collageProducts.value
+  const slots: Array<{ key: 'a' | 'b' | 'c' | 'd' | 'e'; product: ProductBrief | null; tone: number }> = [
+    { key: 'a', product: list[0] ?? null, tone: 0 },
+    { key: 'b', product: list[1] ?? null, tone: 1 },
+    { key: 'c', product: list[2] ?? null, tone: 2 },
+    { key: 'd', product: list[3] ?? null, tone: 3 },
+    { key: 'e', product: list[4] ?? null, tone: 0 },
+  ]
+  return slots
+})
+
+// 4 種淺米沙裝飾色，給沒有 product 的 cell 用 — 整體偏乳白
+const TONES = [
+  'linear-gradient(135deg, #FCF8EC 0%, #EFE5CF 100%)',
+  'linear-gradient(160deg, #F7F2E5 0%, #DCC8AC 110%)',
+  'linear-gradient(135deg, #EFE5CF 0%, #CDAD86 130%)',
+  'linear-gradient(135deg, #FCF8EC 0%, #ECE0C5 90%)',
+]
+function toneFor(idx: number) {
+  return TONES[idx % TONES.length]
+}
+
+// 排除 collage 中已顯示的，剩下的放下方
 const restProducts = computed<ProductBrief[]>(() => {
-  const showcaseIds = new Set(showcaseProducts.value.map((p) => p.id))
-  return allProducts.value.filter((p) => !showcaseIds.has(p.id))
+  const usedIds = new Set(
+    collageProducts.value.map((p) => p.id),
+  )
+  return allProducts.value.filter((p) => !usedIds.has(p.id))
 })
 </script>
 
@@ -113,37 +140,46 @@ const restProducts = computed<ProductBrief[]>(() => {
             </div>
           </div>
 
-          <!-- 右：精選商品展示 -->
+          <!-- 右：拼貼/collage 雜誌格（5 格不對稱） -->
           <div class="hero-showcase">
             <div class="showcase-eyebrow">— Pick of this Series —</div>
 
-            <!-- 有商品時：1 大 + 2 小 雜誌排版 -->
-            <template v-if="showcaseProducts.length > 0">
-              <div
-                class="showcase-grid"
-                :class="`showcase-grid-${showcaseProducts.length}`"
+            <div class="collage">
+              <RouterLink
+                v-for="slot in collageSlots"
+                :key="slot.key"
+                :class="['cell', `cell-${slot.key}`, { 'cell-empty': !slot.product }]"
+                :to="slot.product ? `/products/${slot.product.id}` : `#`"
+                @click="!slot.product && $event.preventDefault()"
               >
-                <div class="showcase-main">
-                  <ProductCard :product="showcaseProducts[0]" />
-                </div>
-                <div v-if="showcaseProducts.length > 1" class="showcase-side">
+                <template v-if="slot.product">
+                  <img
+                    v-if="slot.product.cover_image_url"
+                    :src="slot.product.cover_image_url"
+                    :alt="slot.product.title"
+                    class="cell-img"
+                    loading="lazy"
+                  />
                   <div
-                    v-for="p in showcaseProducts.slice(1)"
-                    :key="p.id"
-                    class="showcase-side-item"
-                  >
-                    <ProductCard :product="p" />
+                    v-else
+                    class="cell-tone"
+                    :style="{ background: toneFor(slot.tone) }"
+                  ></div>
+                  <div class="cell-overlay">
+                    <div class="cell-title">{{ slot.product.title }}</div>
+                    <div class="cell-price">NT$ {{ slot.product.price_min.toLocaleString() }} 起</div>
                   </div>
-                </div>
-              </div>
-            </template>
+                </template>
+                <template v-else>
+                  <div
+                    class="cell-tone cell-tone-empty"
+                    :style="{ background: toneFor(slot.tone) }"
+                  ></div>
+                </template>
+              </RouterLink>
 
-            <!-- 無商品 fallback -->
-            <div v-else class="showcase-fallback">
-              <div class="fallback-band">
-                <ImageOff class="fallback-icon" />
-                <span class="fallback-name">{{ series.name }}</span>
-                <span class="fallback-text">本系列商品準備中</span>
+              <div v-if="collageProducts.length === 0" class="collage-empty-hint">
+                <span>{{ series.name }} · 商品準備中</span>
               </div>
             </div>
           </div>
@@ -234,9 +270,9 @@ const restProducts = computed<ProductBrief[]>(() => {
   padding: 80px 64px;
   background: linear-gradient(
     135deg,
-    var(--color-paper-surface) 0%,
-    var(--color-paper-deep) 60%,
-    var(--color-accent-tint) 130%
+    #FCF8EC 0%,
+    #F7F2E5 55%,
+    #EFE5CF 130%
   );
   border: 1px solid var(--color-line-subtle);
   overflow: hidden;
@@ -369,7 +405,7 @@ const restProducts = computed<ProductBrief[]>(() => {
   gap: 8px;
   align-self: flex-start;
   padding: 10px 20px;
-  background: rgba(237, 228, 211, 0.6);
+  background: rgba(247, 242, 229, 0.7);
   backdrop-filter: blur(4px);
   border: 1px solid var(--color-line-subtle);
   border-radius: var(--radius-xs);
@@ -407,65 +443,118 @@ const restProducts = computed<ProductBrief[]>(() => {
   text-align: right;
 }
 
-.showcase-grid {
+/* ── Collage 拼貼 5 格 ── */
+.collage {
   display: grid;
-  gap: 16px;
-}
-/* 1 商品 → 占滿；2-3 商品 → 1 大 + 1-2 小 */
-.showcase-grid-1 .showcase-main { grid-column: 1 / -1; }
-.showcase-grid-1 .showcase-side { display: none; }
-.showcase-grid-2,
-.showcase-grid-3 {
-  grid-template-columns: 1.4fr 1fr;
-}
-.showcase-side {
-  display: grid;
-  gap: 16px;
-}
-
-.showcase-side-item :deep(.title) { font-size: 16px !important; }
-.showcase-side-item :deep(.body) { padding: 14px 14px 16px !important; }
-.showcase-side-item :deep(.price-row) { padding-top: 10px !important; }
-
-.showcase-fallback {
-  aspect-ratio: 4 / 5;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 10px;
+  aspect-ratio: 5 / 4;
   position: relative;
 }
-.fallback-band {
+.cell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-line-subtle);
+  background: var(--color-paper-surface);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 400ms ease, box-shadow 300ms;
+  cursor: pointer;
+}
+.cell:not(.cell-empty):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(46, 40, 35, 0.08);
+}
+.cell-empty { cursor: default; }
+.cell-empty:hover { transform: none; box-shadow: none; }
+
+/* 5 格 magazine 排版：a 大左 2x2、b 右上、c 左下、d 中下、e 右下 */
+.cell-a { grid-column: 1; grid-row: 1 / span 2; }
+.cell-b { grid-column: 2 / span 2; grid-row: 1; }
+.cell-c { grid-column: 2; grid-row: 2; }
+.cell-d { grid-column: 3; grid-row: 2; }
+.cell-e { display: none; } /* 5 格但實作 4 格雜誌；e 預留 */
+
+.cell-img {
   width: 100%;
   height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: sepia(0.05) saturate(0.95);
+  transition: transform 600ms ease;
+}
+.cell:not(.cell-empty):hover .cell-img {
+  transform: scale(1.04);
+}
+
+.cell-tone {
+  width: 100%;
+  height: 100%;
+}
+.cell-tone-empty {
+  position: relative;
+}
+.cell-tone-empty::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.25), transparent 40%),
+    radial-gradient(circle at 70% 70%, rgba(106, 74, 52, 0.06), transparent 50%);
+}
+
+.cell-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 12px 14px 12px;
+  background: linear-gradient(to top, rgba(46, 40, 35, 0.62), rgba(46, 40, 35, 0));
+  color: var(--color-paper-canvas);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  background: linear-gradient(
-    135deg,
-    var(--color-paper-deep) 0%,
-    var(--color-accent) 55%,
-    var(--color-accent-deep) 110%
-  );
-  border: 1px solid var(--color-line-subtle);
+  gap: 2px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 240ms, transform 240ms;
 }
-.fallback-icon {
-  width: 40px; height: 40px;
-  stroke: var(--color-paper-canvas); stroke-width: 1.25; fill: none;
-  opacity: 0.7;
+.cell:hover .cell-overlay {
+  opacity: 1;
+  transform: translateY(0);
 }
-.fallback-name {
+.cell-title {
   font-family: var(--font-cn-serif);
   font-weight: 300;
-  font-size: 36px;
-  letter-spacing: 0.12em;
-  color: var(--color-paper-canvas);
-  text-shadow: 0 4px 16px rgba(46, 40, 35, 0.25);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.fallback-text {
+.cell-price {
   font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: rgba(245, 241, 232, 0.85);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  opacity: 0.85;
+}
+.cell-a .cell-title { font-size: 18px; }
+.cell-a .cell-overlay { padding: 16px 18px 16px; }
+
+.collage-empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-family: var(--font-cn-serif);
+  font-weight: 300;
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  color: var(--color-ink-strong);
+  opacity: 0.55;
+  text-shadow: 0 1px 3px rgba(247, 240, 223, 0.6);
 }
 
 /* ── Products section ── */

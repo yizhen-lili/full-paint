@@ -249,8 +249,14 @@ const theme = computed(() => themeQuery.data.value ?? null)
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--color-paper-deep) 0%, var(--color-accent) 55%, var(--color-accent-deep) 110%);
+  background: linear-gradient(
+    135deg,
+    var(--color-paper-surface) 0%,
+    var(--color-paper-deep) 55%,
+    var(--color-accent-soft) 130%
+  );
 }
+.hero-visual-fallback .fallback-name { color: var(--color-ink-strong); text-shadow: none; opacity: 0.85; }
 .fallback-name {
   font-family: var(--font-cn-serif);
   font-weight: 300;
