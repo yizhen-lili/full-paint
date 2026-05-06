@@ -3,33 +3,40 @@
 @import "tailwindcss";
 
 /* ── Yiimui Store Design Tokens (see store/docs/design_system.md §3.4) ────── */
-/* 2026-05 update v3: 清新典雅日系 — 退黃、降飽和；紙本灰白底 + 克制 taupe 點綴 */
+/* 2026-05 update v4: 清新典雅 — 提高對比、加苔綠輔色破單調，營造雜誌節奏 */
 @theme {
-  /* Paper & ink — 紙本灰白（cool down，去黃） */
-  --color-paper-canvas: #F6F2EA;
-  --color-paper-surface: #FBF8F1;
-  --color-paper-deep: #E8DFCD;
+  /* Paper & ink — 接近純白底 + 純白卡片 + 銳利文字（user：再白一點亮一點） */
+  --color-paper-canvas: #FCF9F2;
+  --color-paper-surface: #FFFFFF;
+  --color-paper-deep: #F0E8D6;
 
-  --color-ink-strong: #2A2520;
-  --color-ink-default: #4A4137;
-  --color-ink-muted: #8C7F70;
+  --color-ink-strong: #1F1A15;
+  --color-ink-default: #3F362C;
+  --color-ink-muted: #7E7163;
   --color-ink-disabled: #BBB1A1;
 
   --color-line-subtle: #EBE2D0;
-  --color-line: #D2C5AE;
+  --color-line: #C8B99F;
 
-  /* Accent — Taupe walnut（從焦糖往冷褐走，less 飽和、more 雅） */
-  --color-accent: #97785C;
-  --color-accent-deep: #6E553F;
+  /* Primary accent — Taupe walnut */
+  --color-accent: #8C6E52;
+  --color-accent-deep: #5E4732;
   --color-accent-soft: #B8A084;
   --color-accent-tint: #ECE3D2;
-  --color-accent-wine: #8E3D4D;
+
+  /* Secondary accent — 苔綠（清新感關鍵） */
+  --color-fresh: #6B7F5C;
+  --color-fresh-soft: #97A687;
+  --color-fresh-tint: #DDE5D2;
+
+  /* Pop — 暗酒紅（雜誌封面那種點睛） */
+  --color-accent-wine: #7B2E40;
   --color-accent-wine-soft: #A85D6C;
 
-  /* States — 同樣降飽和 */
-  --color-state-success: #7E8E68;
+  /* States */
+  --color-state-success: #6B7F5C;
   --color-state-warning: #B6924E;
-  --color-state-danger: #8E3D4D;
+  --color-state-danger: #7B2E40;
   --color-state-info: #74819A;
 
   /* Typography */

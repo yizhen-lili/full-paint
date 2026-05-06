@@ -7,12 +7,12 @@ const featuredQuery = useFeaturedSeriesQuery()
 const series = computed(() => featuredQuery.data.value?.items ?? [])
 
 // 4 種漸層，基於 index 循環使用，避免每張卡看起來都一樣
-// 4 種極淡漸層 — 紙本灰白為主、僅末端微微 taupe 點綴；極簡留白為核心
+// 4 種雜誌情緒：苔綠（清新自然）/ 舊玫瑰（典雅溫潤）/ 焦糖（土地）/ 煙青（冷靜）
 const VISUAL_GRADIENTS = [
-  'linear-gradient(135deg, #FBF8F1 0%, #EFE9DA 80%, #DDD0BB 140%)',
-  'linear-gradient(135deg, #F6F2EA 0%, #E8DFCD 70%, #C8B79C 150%)',
-  'linear-gradient(135deg, #FBF8F1 0%, #EBE2D0 70%, #D6C5AB 150%)',
-  'linear-gradient(135deg, #F6F2EA 0%, #E5DBC4 70%, #C0AE92 160%)',
+  'linear-gradient(135deg, #FCFAF4 0%, #DDE5D2 60%, #97A687 130%)',
+  'linear-gradient(135deg, #FCFAF4 0%, #ECDFDA 60%, #C9A8A8 130%)',
+  'linear-gradient(135deg, #FCFAF4 0%, #ECE3D2 60%, #B8A084 130%)',
+  'linear-gradient(135deg, #FCFAF4 0%, #DCE3E2 60%, #98ABA8 130%)',
 ]
 
 function gradientFor(index: number) {
