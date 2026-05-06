@@ -58,9 +58,10 @@ async def upload_custom_photo(
 
 @router.get("/admin/system/firebase-status", tags=["System"])
 async def firebase_status(_=Depends(require_admin)):
-    """檢查 Firebase Storage bucket + CORS 設定。"""
+    """檢查 Firebase Storage bucket + CORS 設定（每次 reload 確保不是 cached）。"""
     from core.firebase import get_bucket
     bucket = get_bucket()
+    bucket.reload()  # 強制從 GCS 拉最新 metadata
     return {
         "bucket": bucket.name,
         "cors": bucket.cors or [],
