@@ -43,6 +43,23 @@ const pickedProducts = computed<ProductBrief[]>(() => {
   return allProducts.value.slice(0, 4)
 })
 
+// Hero 右側 4 cell collage — 有商品就用商品，無則用裝飾 tone
+const heroCells = computed<Array<ProductBrief | null>>(() => {
+  const list = pickedProducts.value
+  return [list[0] ?? null, list[1] ?? null, list[2] ?? null, list[3] ?? null]
+})
+
+// 4 種雜誌 mood 漸層：苔綠 / 舊玫瑰 / 焦糖 / 煙青
+const CELL_TONES = [
+  'linear-gradient(135deg, #FFFFFF 0%, #DDE5D2 70%, #97A687 130%)',
+  'linear-gradient(135deg, #FFFFFF 0%, #ECDFDA 70%, #C9A8A8 130%)',
+  'linear-gradient(135deg, #FFFFFF 0%, #ECE3D2 70%, #B8A084 130%)',
+  'linear-gradient(135deg, #FFFFFF 0%, #DCE3E2 70%, #98ABA8 130%)',
+]
+function toneFor(idx: number) {
+  return CELL_TONES[idx % CELL_TONES.length]
+}
+
 // 排除 picked 已顯示的
 const restProducts = computed<ProductBrief[]>(() => {
   const pickedIds = new Set(pickedProducts.value.map((p) => p.id))
@@ -74,9 +91,9 @@ const restProducts = computed<ProductBrief[]>(() => {
       <span class="current">{{ series.name }}</span>
     </nav>
 
-    <!-- Hero — editorial 雜誌左右簡潔佈局，去掉裝飾框與 watermark -->
+    <!-- Hero header — moodboard 風：左側標題塊 + 右上小色票 -->
     <header class="hero">
-      <div class="hero-info">
+      <div class="hero-text">
         <div class="hero-eyebrow">
           <span class="eyebrow-text">Series</span>
           <span v-if="series.is_featured" class="featured-mark">
@@ -87,6 +104,7 @@ const restProducts = computed<ProductBrief[]>(() => {
         <h1 class="hero-title">{{ series.name }}</h1>
 
         <p v-if="series.description" class="hero-desc">{{ series.description }}</p>
+        <p v-else class="hero-desc hero-desc-empty">— 一個還在悄悄誕生的系列 —</p>
 
         <div class="hero-meta">
           <span class="meta-num">{{ series.products.length }}</span>
@@ -99,9 +117,79 @@ const restProducts = computed<ProductBrief[]>(() => {
           >{{ series.theme_name }}</RouterLink>
         </div>
       </div>
+
+      <!-- 右上 5 色票（呼應 moodboard 風） -->
+      <aside class="hero-palette" aria-label="moodboard 色票">
+        <span class="swatch" style="background: #6E553F"></span>
+        <span class="swatch" style="background: #B08966"></span>
+        <span class="swatch" style="background: #C8B79C"></span>
+        <span class="swatch" style="background: #97A687"></span>
+        <span class="swatch" style="background: #FCF9F2"></span>
+      </aside>
     </header>
 
-    <!-- Pick：橫向 magazine strip（有商品時）；無商品時顯示 elegant empty panel -->
+    <!-- 全寬 magazine mosaic — 4 格不對稱（左 tall · 中上 wide · 中下 wide · 右 tall） -->
+    <section class="mosaic" aria-label="系列雜誌拼貼">
+      <template v-for="(p, idx) in heroCells" :key="idx">
+        <RouterLink
+          v-if="p"
+          :to="`/products/${p.id}`"
+          :class="['mosaic-cell', `cell-${idx}`]"
+        >
+          <img
+            v-if="p.cover_image_url"
+            :src="p.cover_image_url"
+            :alt="p.title"
+            class="mosaic-img"
+            loading="lazy"
+          />
+          <div
+            v-else
+            class="mosaic-tone"
+            :style="{ background: toneFor(idx) }"
+          ></div>
+          <div class="mosaic-overlay">
+            <div class="mosaic-title">{{ p.title }}</div>
+            <div class="mosaic-price">NT$ {{ p.price_min.toLocaleString() }} 起</div>
+          </div>
+        </RouterLink>
+        <div
+          v-else
+          :class="['mosaic-cell', 'cell-empty', `cell-${idx}`]"
+          :style="{ background: toneFor(idx) }"
+        >
+          <div v-if="idx === 0" class="cell-deco cell-deco-main">
+            <div class="deco-eyebrow">Vol.</div>
+            <div class="deco-num">{{ String(series.products.length).padStart(2, '0') }}</div>
+            <div class="deco-rule"></div>
+            <div class="deco-meta">{{ series.theme_name || 'Atelier' }}</div>
+          </div>
+          <div v-else-if="idx === 1" class="cell-deco">
+            <div class="deco-word-pair">
+              <span class="deco-word">M</span><span class="deco-word-soft">ood</span>
+            </div>
+            <div class="deco-caption">本系列氛圍</div>
+          </div>
+          <div v-else-if="idx === 2" class="cell-deco">
+            <div class="deco-word-pair">
+              <span class="deco-word">S</span><span class="deco-word-soft">eries</span>
+            </div>
+            <div class="deco-caption">{{ series.theme_name || 'Atelier' }}</div>
+          </div>
+          <div v-else class="cell-deco cell-deco-tall">
+            <div class="deco-eyebrow">— Coming Soon —</div>
+            <div class="deco-headline">
+              quietly<br /><em>under preparation</em>
+            </div>
+            <RouterLink to="/products" class="deco-link">
+              看其他商品 →
+            </RouterLink>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- Pick：橫向 magazine strip（有商品時）-->
     <section v-if="pickedProducts.length > 0" class="picks">
       <div class="picks-header">
         <span class="picks-eyebrow">Pick of this Series</span>
@@ -110,13 +198,6 @@ const restProducts = computed<ProductBrief[]>(() => {
       <div class="picks-grid">
         <ProductCard v-for="p in pickedProducts" :key="p.id" :product="p" />
       </div>
-    </section>
-
-    <section v-else class="empty-panel">
-      <div class="empty-eyebrow">— Coming Soon —</div>
-      <h2 class="empty-headline">{{ series.name }}<br /><em>quietly under preparation</em></h2>
-      <p class="empty-note">本系列商品正在悄悄誕生，請耐心等候。</p>
-      <RouterLink to="/products" class="empty-link">看其他系列商品 →</RouterLink>
     </section>
 
     <!-- 系列其他商品 -->
@@ -195,13 +276,35 @@ const restProducts = computed<ProductBrief[]>(() => {
 .breadcrumb a:hover { color: var(--color-accent); }
 .breadcrumb .current { color: var(--color-ink-default); }
 
-/* ── Hero (editorial, 1 欄置中靠左; 大量留白) ── */
+/* ── Hero (moodboard 風 — 標題塊 + 右上色票) ── */
 .hero {
-  margin: 0 0 96px;
-  max-width: 720px;
+  margin: 0 0 32px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 48px;
+  align-items: start;
 }
 
-.hero-info { display: flex; flex-direction: column; }
+.hero-text { display: flex; flex-direction: column; max-width: 720px; }
+
+/* 5 色票（呼應 moodboard 右上） */
+.hero-palette {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  background: var(--color-paper-surface);
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-xs);
+  margin-top: 8px;
+}
+.swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.swatch:last-child { border: 1px solid var(--color-line-subtle); }
 
 .hero-eyebrow {
   display: flex;
@@ -305,6 +408,181 @@ const restProducts = computed<ProductBrief[]>(() => {
 }
 .meta-theme:hover { color: var(--color-accent-deep); }
 
+/* ── Mosaic (全寬 magazine 4 格不對稱) ── */
+.mosaic {
+  display: grid;
+  grid-template-columns: 0.85fr 1.4fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 14px;
+  height: 540px;
+  margin-bottom: 96px;
+}
+.mosaic-cell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-line-subtle);
+  background: var(--color-paper-surface);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 400ms ease, box-shadow 300ms;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mosaic-cell:not(.cell-empty):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(31, 26, 21, 0.06);
+}
+.cell-empty { cursor: default; }
+
+/* 4 格 magazine 排版：A tall left / B wide top / C wide bot / D tall right */
+.cell-0 { grid-column: 1; grid-row: 1 / span 2; }
+.cell-1 { grid-column: 2; grid-row: 1; }
+.cell-2 { grid-column: 2; grid-row: 2; }
+.cell-3 { grid-column: 3; grid-row: 1 / span 2; }
+
+.mosaic-img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: sepia(0.04) saturate(0.95);
+  transition: transform 600ms ease;
+}
+.mosaic-cell:not(.cell-empty):hover .mosaic-img {
+  transform: scale(1.04);
+}
+.mosaic-tone { width: 100%; height: 100%; }
+
+.mosaic-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 14px 18px;
+  background: linear-gradient(to top, rgba(31, 26, 21, 0.62), rgba(31, 26, 21, 0));
+  color: var(--color-paper-canvas);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 240ms, transform 240ms;
+}
+.mosaic-cell:hover .mosaic-overlay {
+  opacity: 1;
+  transform: translateY(0);
+}
+.mosaic-title {
+  font-family: var(--font-cn-serif);
+  font-weight: 300;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mosaic-price {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  opacity: 0.85;
+}
+
+/* 空 cell 的 deco typography */
+.cell-deco {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 20px;
+}
+.cell-deco-main { gap: 14px; }
+.cell-deco-tall { gap: 16px; padding: 28px; }
+
+.deco-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--color-fresh);
+}
+.deco-num {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 88px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-strong);
+}
+.deco-rule {
+  width: 32px;
+  height: 1px;
+  background: var(--color-accent);
+}
+.deco-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+.deco-word-pair {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-display);
+  font-weight: 300;
+  color: var(--color-ink-strong);
+}
+.deco-word {
+  font-size: 64px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+.deco-word-soft {
+  font-size: 22px;
+  font-style: italic;
+  color: var(--color-accent);
+  margin-left: 4px;
+}
+.deco-caption {
+  font-family: var(--font-cn-serif);
+  font-weight: 300;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: var(--color-ink-muted);
+}
+.deco-headline {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 26px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-strong);
+}
+.deco-headline em {
+  font-style: italic;
+  color: var(--color-accent);
+  font-size: 0.85em;
+}
+.deco-link {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-accent);
+  padding-bottom: 3px;
+  transition: color 150ms, border-color 150ms;
+}
+.deco-link:hover {
+  color: var(--color-accent-deep);
+  border-color: var(--color-accent-deep);
+}
+
 /* ── Picks ── */
 .picks {
   margin-bottom: 96px;
@@ -335,64 +613,6 @@ const restProducts = computed<ProductBrief[]>(() => {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 28px;
-}
-
-/* ── Empty panel (沒商品時的優雅版面) ── */
-.empty-panel {
-  margin: 0 0 96px;
-  padding: 80px 56px;
-  background: var(--color-paper-surface);
-  border: 1px solid var(--color-line-subtle);
-  text-align: center;
-}
-.empty-eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.34em;
-  text-transform: uppercase;
-  color: var(--color-fresh);
-  margin-bottom: 20px;
-}
-.empty-headline {
-  font-family: var(--font-cn-serif);
-  font-weight: 300;
-  font-size: 36px;
-  line-height: 1.5;
-  letter-spacing: 0.08em;
-  color: var(--color-ink-strong);
-  margin: 0 0 24px;
-}
-.empty-headline em {
-  font-family: var(--font-display);
-  font-style: italic;
-  font-weight: 300;
-  font-size: 22px;
-  letter-spacing: 0.04em;
-  color: var(--color-accent);
-  display: inline-block;
-  margin-top: 8px;
-}
-.empty-note {
-  font-size: 13px;
-  line-height: 1.95;
-  color: var(--color-ink-muted);
-  letter-spacing: 0.04em;
-  margin: 0 0 28px;
-}
-.empty-link {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-  text-decoration: none;
-  border-bottom: 1px solid var(--color-accent);
-  padding-bottom: 4px;
-  transition: color 150ms, border-color 150ms;
-}
-.empty-link:hover {
-  color: var(--color-accent-deep);
-  border-color: var(--color-accent-deep);
 }
 
 /* ── Products section (More in this Series) ── */
@@ -426,23 +646,53 @@ const restProducts = computed<ProductBrief[]>(() => {
 
 @media (max-width: 1279px) {
   .hero-title { font-size: 48px; }
+  .mosaic { height: 460px; }
+  .deco-num { font-size: 72px; }
+  .deco-word { font-size: 56px; }
   .picks-grid,
   .products-grid { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 1023px) {
   .page { padding: 40px 32px 64px; }
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .hero-palette { align-self: flex-start; }
+  .swatch { width: 28px; height: 28px; }
   .hero-title { font-size: 40px; }
-  .empty-panel { padding: 56px 28px; }
-  .empty-headline { font-size: 28px; }
+  .mosaic {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    height: 600px;
+  }
+  .cell-0 { grid-column: 1; grid-row: 1 / span 2; }
+  .cell-1 { grid-column: 2; grid-row: 1; }
+  .cell-2 { grid-column: 2; grid-row: 2; }
+  .cell-3 { grid-column: 1 / span 2; grid-row: 3; }
+  .deco-num { font-size: 64px; }
   .picks-grid,
   .products-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 767px) {
   .page { padding: 32px 24px 48px; }
-  .hero { margin-bottom: 56px; }
+  .hero { margin-bottom: 24px; }
   .hero-title { font-size: 32px; letter-spacing: 0.06em; }
   .hero-desc { font-size: 15px; }
-  .empty-headline { font-size: 24px; }
+  .mosaic {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, 220px);
+    height: auto;
+    margin-bottom: 64px;
+  }
+  .cell-0,
+  .cell-1,
+  .cell-2,
+  .cell-3 {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .deco-num { font-size: 56px; }
   .picks-grid,
   .products-grid { grid-template-columns: 1fr; }
 }
