@@ -146,24 +146,45 @@
 
 | Token | Hex | 用途 |
 |---|---|---|
-| `--color-paper-canvas` | `#F5F1E8` | 整頁底 |
-| `--color-paper-surface` | `#FAF7F0` | 卡片 / 商品卡底 |
-| `--color-paper-deep` | `#ECE3CE` | hover row / disabled / 強調區塊 |
-| `--color-ink-strong` | `#2E2823` | 標題、價格 |
-| `--color-ink-default` | `#4D4338` | 內文 |
-| `--color-ink-muted` | `#7A6F60` | 輔助、placeholder、meta |
-| `--color-ink-disabled` | `#A89E8E` | disabled |
-| `--color-line-subtle` | `#E5DCC3` | 商品卡邊框、極細分隔 |
-| `--color-line` | `#DCD0B6` | section 分隔、表格 row、強分線 |
+| `--color-paper-canvas` | `#F4EFE2` | 整頁底（pale ivory，user 確認） |
+| `--color-paper-surface` | `#FBF7EC` | 卡片 / 商品卡底（比 canvas 亮一階） |
+| `--color-paper-deep` | `#F2E8D5` | band（局部 highlighted，Pearl Linen） |
+| `--color-ink-strong` | `#1F1A15` | 標題、價格 |
+| `--color-ink-default` | `#3F362C` | 內文 |
+| `--color-ink-muted` | `#7E7163` | 輔助、placeholder、meta |
+| `--color-ink-disabled` | `#BBB1A1` | disabled |
+| `--color-line-subtle` | `#EBE2D0` | 商品卡邊框、極細分隔 |
+| `--color-line` | `#C8B99F` | section 分隔、表格 row、強分線 |
 
-### 3.2 主色 — 深栗 Walnut Light
+### 3.2 主色 — Taupe Walnut
+
+> 用於文字、連結、eyebrow、icon、邊線。**不放整片大塊背景。**
 
 | Token | Hex | 用途 |
 |---|---|---|
-| `--color-accent` | `#7B5841` | 主色（連結、eyebrow、CTA outline） |
-| `--color-accent-deep` | `#5A3F2D` | hover 深一階 |
-| `--color-accent-soft` | `#B8956F` | 副栗（No. 編號、輕量強調） |
-| `--color-accent-tint` | `#E8DCC8` | 8% alpha 等價的栗背景 |
+| `--color-accent` | `#8C6E52` | 主色（連結、eyebrow、CTA outline） |
+| `--color-accent-deep` | `#5E4732` | hover 深一階 |
+| `--color-accent-soft` | `#B8A084` | 副 walnut（No. 編號、輕量分線） |
+| `--color-accent-tint` | `#ECE3D2` | tint chip 底、選中態背景 |
+
+### 3.2b 副色 — Fresh 苔綠（清新輔色）
+
+> 用於 series eyebrow、Pick of this Series、success icon、chapter cap。
+
+| Token | Hex | 用途 |
+|---|---|---|
+| `--color-fresh` | `#6B7F5C` | series 標籤、success 主色 |
+| `--color-fresh-soft` | `#97A687` | 苔綠 soft |
+| `--color-fresh-tint` | `#DDE5D2` | success icon 底 |
+
+### 3.2c 點綴 — Wine 酒紅（pop accent）
+
+> 用於 FEATURED chip、state-danger、雜誌封面式 italic em 強調。**極克制使用。**
+
+| Token | Hex | 用途 |
+|---|---|---|
+| `--color-accent-wine` | `#7B2E40` | FEATURED chip border、danger 主色 |
+| `--color-accent-wine-soft` | `#A85D6C` | wine 較淺一階 |
 
 > 與 admin walnut `#7A4E32` 的差別：飽和度從 41% 降到 28%，明度從 34% 提到 36%，整體更柔。
 
@@ -173,39 +194,51 @@
 
 | Token | Hex | 對應狀態 |
 |---|---|---|
-| `--color-state-success` | `#7A8C5A` | paid / completed / 預購可接 |
-| `--color-state-warning` | `#B89149` | pending / 待處理 / 報價中 |
-| `--color-state-danger` | `#A04A3F` | error / 退款 / 已取消 |
-| `--color-state-info` | `#6B7889` | 中性提示 |
+| `--color-state-success` | `#6B7F5C` | paid / completed / 預購可接（= fresh） |
+| `--color-state-warning` | `#B6924E` | pending / 待處理 / 報價中 |
+| `--color-state-danger` | `#7B2E40` | error / 退款 / 已取消（= wine） |
+| `--color-state-info` | `#74819A` | 中性提示 |
 
 ### 3.4 完整 Tailwind 4 Theme
 
 ```css
+/* store/src/style.css @theme block — 與本檔保持同步 */
 @theme {
-  /* Paper & ink */
-  --color-paper-canvas: #F5F1E8;
-  --color-paper-surface: #FAF7F0;
-  --color-paper-deep: #ECE3CE;
+  /* Paper — 三階淺底 */
+  --color-paper-canvas: #F4EFE2;     /* 頁面底 */
+  --color-paper-surface: #FBF7EC;    /* 卡片高光 */
+  --color-paper-deep: #F2E8D5;       /* band — Pearl Linen */
 
-  --color-ink-strong: #2E2823;
-  --color-ink-default: #4D4338;
-  --color-ink-muted: #7A6F60;
-  --color-ink-disabled: #A89E8E;
+  /* Ink */
+  --color-ink-strong: #1F1A15;
+  --color-ink-default: #3F362C;
+  --color-ink-muted: #7E7163;
+  --color-ink-disabled: #BBB1A1;
 
-  --color-line-subtle: #E5DCC3;
-  --color-line: #DCD0B6;
+  /* Line */
+  --color-line-subtle: #EBE2D0;
+  --color-line: #C8B99F;
 
-  /* Accent — Walnut Light */
-  --color-accent: #7B5841;
-  --color-accent-deep: #5A3F2D;
-  --color-accent-soft: #B8956F;
-  --color-accent-tint: #E8DCC8;
+  /* Primary accent — Taupe Walnut */
+  --color-accent: #8C6E52;
+  --color-accent-deep: #5E4732;
+  --color-accent-soft: #B8A084;
+  --color-accent-tint: #ECE3D2;
+
+  /* Fresh — 苔綠 */
+  --color-fresh: #6B7F5C;
+  --color-fresh-soft: #97A687;
+  --color-fresh-tint: #DDE5D2;
+
+  /* Wine — 酒紅 pop */
+  --color-accent-wine: #7B2E40;
+  --color-accent-wine-soft: #A85D6C;
 
   /* States */
-  --color-state-success: #7A8C5A;
-  --color-state-warning: #B89149;
-  --color-state-danger: #A04A3F;
-  --color-state-info: #6B7889;
+  --color-state-success: #6B7F5C;
+  --color-state-warning: #B6924E;
+  --color-state-danger: #7B2E40;
+  --color-state-info: #74819A;
 
   /* Typography */
   --font-display: 'Cormorant Garamond', 'Noto Serif TC', serif;
@@ -219,6 +252,21 @@
   --radius-md: 6px;
 }
 ```
+
+### 3.5 開發者工具
+
+實機看色票時：
+- **`/_palette`** — 完整 design tokens 列表頁
+- **`/_band-picker`** — band 顏色挑選頁（保留候選色備用）
+
+### 3.6 user 確認 / 禁止項
+
+- ✅ 「同色系不單調」原則：用三階 paper 淺底分層，不靠色塊明暗大幅切換
+- ✅ Taupe Walnut 是文字色，不是背景
+- ✅ 章節以 hairline 收口
+- ❌ 純白 surface（撕裂感）
+- ❌ 太深的 sandy / khaki / 大塊深棕 walnut deep / wine 漸層做 section bg（user 反饋太深）
+- ❌ AuthLayout 卡片頂部的 3 色漸層 stripe（已拿掉）
 
 ---
 
