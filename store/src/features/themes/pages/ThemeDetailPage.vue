@@ -90,17 +90,17 @@ const totalProducts = computed(() =>
       <span class="current">{{ theme.name }}</span>
     </nav>
 
-    <!-- Cinematic hero — 左 text / 右 2x2 精選商品 -->
+    <!-- Hero — 左半深色 text panel / 右半 2x2 精選商品（坐在 canvas 上） -->
     <header
-      class="hero hero-with-mosaic"
+      class="hero"
       :class="{ 'hero-with-image': heroImage }"
     >
-      <div v-if="heroImage" class="hero-bg" :style="{ backgroundImage: `url(${heroImage})` }"></div>
-      <div v-else class="hero-bg hero-bg-tone"></div>
-      <div class="hero-veil"></div>
+      <div class="hero-text-side">
+        <div v-if="heroImage" class="text-bg" :style="{ backgroundImage: `url(${heroImage})` }"></div>
+        <div v-else class="text-bg text-bg-tone"></div>
+        <div class="text-veil"></div>
 
-      <div class="hero-inner">
-        <div class="hero-text-side">
+        <div class="text-inner">
           <div class="hero-top">
             <span class="hero-stamp">Theme · No. {{ String(theme.sort_order).padStart(2, '0') }}</span>
             <span class="hero-stamp-rule"></span>
@@ -126,9 +126,10 @@ const totalProducts = computed(() =>
             </RouterLink>
           </div>
         </div>
+      </div>
 
-        <!-- 右側 2x2 精選商品 -->
-        <aside class="hero-mosaic" aria-label="精選商品">
+      <!-- 右側 2x2 精選商品（坐在頁面 canvas 上） -->
+      <aside class="hero-mosaic" aria-label="精選商品">
           <span class="mosaic-cap" aria-hidden="true">— Featured —</span>
           <div class="mosaic-grid">
             <template v-for="(p, idx) in heroCells" :key="idx">
@@ -164,7 +165,6 @@ const totalProducts = computed(() =>
             </template>
           </div>
         </aside>
-      </div>
     </header>
 
     <!-- 該主題下的系列 -->
@@ -256,24 +256,32 @@ const totalProducts = computed(() =>
 .breadcrumb a:hover { color: var(--color-accent); }
 .breadcrumb .current { color: var(--color-ink-default); }
 
-/* ── Cinematic Hero（單欄、滿版、層次飽滿） ── */
+/* ── Hero（左 dark text panel + 右 light mosaic） ── */
 .hero {
-  position: relative;
   margin-bottom: 80px;
-  height: clamp(440px, 60vh, 620px);
+  display: grid;
+  grid-template-columns: 1fr 0.75fr;
+  gap: 24px;
+  align-items: stretch;
+  min-height: clamp(440px, 60vh, 620px);
+}
+
+/* 左側 dark text panel — 只有這塊有深色背景 + veil */
+.hero-text-side {
+  position: relative;
   overflow: hidden;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);
 }
 
-.hero-bg {
+.text-bg {
   position: absolute;
   inset: 0;
   background-size: cover;
   background-position: center;
   filter: sepia(0.06) saturate(0.92);
 }
-.hero-bg-tone {
+.text-bg-tone {
   background:
     radial-gradient(circle at 20% 25%, rgba(255,255,255,0.5), transparent 55%),
     radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 60%),
@@ -282,9 +290,7 @@ const totalProducts = computed(() =>
       var(--color-accent-soft) 70%,
       var(--color-accent) 130%);
 }
-
-/* 紙質紋路 + 暗角 veil 讓字夠清楚 */
-.hero-veil {
+.text-veil {
   position: absolute;
   inset: 0;
   background:
@@ -294,7 +300,7 @@ const totalProducts = computed(() =>
       rgba(31, 26, 21, 0.45) 100%);
   pointer-events: none;
 }
-.hero-with-image .hero-veil {
+.hero-with-image .text-veil {
   background:
     linear-gradient(135deg,
       rgba(31, 26, 21, 0.55) 0%,
@@ -302,26 +308,15 @@ const totalProducts = computed(() =>
       rgba(31, 26, 21, 0.58) 100%);
 }
 
-.hero-inner {
+.text-inner {
   position: relative;
   z-index: 2;
   height: 100%;
-  padding: 56px 64px;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 48px;
-  color: var(--color-paper-canvas);
-}
-.hero-with-mosaic .hero-inner {
-  grid-template-columns: 1fr 0.75fr;
-  align-items: stretch;
-}
-
-.hero-text-side {
+  padding: 56px 56px;
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 24px;
-  min-width: 0;
+  color: var(--color-paper-canvas);
 }
 
 /* Top — 戳印 */
@@ -437,7 +432,7 @@ const totalProducts = computed(() =>
   border-color: rgba(250, 244, 221, 0.95);
 }
 
-/* ── Hero mosaic 2x2（右側精選商品） ── */
+/* ── Hero mosaic 2x2（右側精選商品，坐在 canvas 上） ── */
 .hero-mosaic {
   display: flex;
   flex-direction: column;
@@ -449,8 +444,9 @@ const totalProducts = computed(() =>
   font-size: 10px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: rgba(250, 244, 221, 0.7);
+  color: var(--color-fresh);
   align-self: flex-end;
+  padding-top: 4px;
 }
 .mosaic-grid {
   display: grid;
@@ -463,22 +459,23 @@ const totalProducts = computed(() =>
 .mosaic-cell {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(250, 244, 221, 0.25);
-  background: rgba(31, 26, 21, 0.15);
+  border: 1px solid var(--color-line-subtle);
+  background: var(--color-paper-surface);
   text-decoration: none;
   color: inherit;
-  transition: transform 400ms ease, border-color 200ms;
+  transition: transform 400ms ease, border-color 200ms, box-shadow 300ms;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .mosaic-cell:hover {
-  border-color: rgba(250, 244, 221, 0.7);
+  border-color: var(--color-line);
   transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(31, 26, 21, 0.06);
 }
 .mosaic-empty { cursor: default; }
-.mosaic-empty:hover { transform: none; border-color: rgba(250, 244, 221, 0.25); }
+.mosaic-empty:hover { transform: none; border-color: var(--color-line-subtle); box-shadow: none; }
 
 .mosaic-img {
   width: 100%; height: 100%;
@@ -497,7 +494,7 @@ const totalProducts = computed(() =>
   position: absolute;
   inset: auto 0 0 0;
   padding: 10px 12px 11px;
-  background: linear-gradient(to top, rgba(20, 16, 12, 0.78), rgba(20, 16, 12, 0));
+  background: linear-gradient(to top, rgba(31, 26, 21, 0.72), rgba(31, 26, 21, 0));
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -533,7 +530,8 @@ const totalProducts = computed(() =>
   font-weight: 300;
   font-size: 56px;
   line-height: 1;
-  color: rgba(250, 244, 221, 0.45);
+  color: var(--color-ink-strong);
+  opacity: 0.18;
   user-select: none;
 }
 
@@ -557,31 +555,25 @@ const totalProducts = computed(() =>
 }
 
 @media (max-width: 1279px) {
-  .hero-with-mosaic .hero-inner { grid-template-columns: 1fr 0.7fr; gap: 36px; }
+  .hero { grid-template-columns: 1fr 0.7fr; gap: 20px; }
+  .text-inner { padding: 48px 40px; }
   .series-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 1023px) {
   .page { padding: 40px 32px 64px; }
-  .hero { height: auto; min-height: 480px; }
-  .hero-inner { padding: 40px 36px; }
-  .hero-with-mosaic .hero-inner {
+  .hero {
     grid-template-columns: 1fr;
-    gap: 32px;
+    gap: 20px;
+    min-height: auto;
   }
+  .hero-text-side { min-height: 380px; }
+  .text-inner { padding: 40px 36px; }
   .mosaic-grid { aspect-ratio: 2 / 1; }
 }
 @media (max-width: 767px) {
   .page { padding: 32px 24px 48px; }
-  .hero {
-    height: auto;
-    min-height: 380px;
-    border-radius: 0;
-    margin-left: -24px;
-    margin-right: -24px;
-    border-left: none;
-    border-right: none;
-  }
-  .hero-inner { padding: 32px 24px; gap: 24px; }
+  .text-inner { padding: 32px 24px; gap: 24px; }
+  .hero-text-side { min-height: 320px; }
   .hero-title { letter-spacing: 0.06em; }
   .hero-bottom { flex-direction: column; align-items: flex-start; }
   .mosaic-grid { aspect-ratio: 1; }
