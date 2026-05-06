@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useFeaturedSeriesQuery } from '@/features/browse/queries'
+import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
 const featuredQuery = useFeaturedSeriesQuery()
 const series = computed(() => featuredQuery.data.value?.items ?? [])
@@ -22,13 +23,14 @@ function gradientFor(index: number) {
 
 <template>
   <section v-if="series.length > 0" class="section">
-    <div class="section-header">
-      <div>
-        <div class="section-eyebrow">No. 03 — Featured Series</div>
-        <h2 class="section-title">精選系列</h2>
-      </div>
-      <RouterLink to="/products" class="section-link">所有商品 →</RouterLink>
-    </div>
+    <SectionMasthead
+      no="03"
+      chapter="Featured Series"
+      title="精選系列"
+      caption="editor's pick"
+      link-text="所有商品 →"
+      link-to="/products"
+    />
 
     <div class="grid">
       <RouterLink
@@ -64,42 +66,6 @@ function gradientFor(index: number) {
   margin: 0 auto;
   padding: 96px 56px;
 }
-
-.section-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 56px;
-  border-bottom: 1px solid var(--color-line);
-  padding-bottom: 24px;
-}
-
-.section-eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-  color: var(--color-ink-muted);
-  margin-bottom: 16px;
-}
-
-.section-title {
-  font-family: var(--font-cn-serif);
-  font-weight: 300;
-  font-size: 36px;
-  letter-spacing: 0.06em;
-  color: var(--color-ink-strong);
-  margin: 0;
-}
-
-.section-link {
-  font-size: 11px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-  text-decoration: none;
-}
-.section-link:hover { color: var(--color-accent-deep); }
 
 .grid {
   display: grid;

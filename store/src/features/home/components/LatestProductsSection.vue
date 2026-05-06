@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { Loader2 } from 'lucide-vue-next'
 import { useProductsQuery } from '@/features/products/queries'
 import ProductCard from '@/features/products/components/ProductCard.vue'
+import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import type { ProductBrief } from '@/features/products/api'
 
 const productsQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 4 })
@@ -58,13 +59,14 @@ const PREVIEW_PRODUCTS: ProductBrief[] = [
 
 <template>
   <section class="section">
-    <div class="section-header">
-      <div>
-        <div class="section-eyebrow">No. 01 — Featured</div>
-        <h2 class="section-title">最新上架</h2>
-      </div>
-      <RouterLink to="/products?sort=latest" class="section-link">看全部 →</RouterLink>
-    </div>
+    <SectionMasthead
+      no="01"
+      chapter="Featured"
+      title="最新上架"
+      caption="this season"
+      link-text="看全部 →"
+      link-to="/products?sort=latest"
+    />
 
     <div v-if="productsQuery.isPending.value" class="loading">
       <Loader2 :size="20" />
@@ -107,45 +109,6 @@ const PREVIEW_PRODUCTS: ProductBrief[] = [
   max-width: 1440px;
   margin: 0 auto;
   padding: 96px 56px;
-}
-
-.section-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 56px;
-  border-bottom: 1px solid var(--color-line);
-  padding-bottom: 24px;
-}
-
-.section-eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-  color: var(--color-ink-muted);
-  margin-bottom: 16px;
-}
-
-.section-title {
-  font-family: var(--font-cn-serif);
-  font-weight: 300;
-  font-size: 36px;
-  letter-spacing: 0.06em;
-  color: var(--color-ink-strong);
-  margin: 0;
-}
-
-.section-link {
-  font-size: 11px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-  text-decoration: none;
-  transition: color 150ms;
-}
-.section-link:hover {
-  color: var(--color-accent-deep);
 }
 
 .loading {
@@ -229,6 +192,5 @@ const PREVIEW_PRODUCTS: ProductBrief[] = [
 @media (max-width: 767px) {
   .section { padding: 48px 24px; }
   .grid { grid-template-columns: 1fr; gap: 20px; }
-  .section-header { margin-bottom: 32px; padding-bottom: 16px; }
 }
 </style>

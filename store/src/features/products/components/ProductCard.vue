@@ -65,9 +65,16 @@ function onImgError() {
       </div>
     </div>
     <div class="body">
-      <div v-if="number" class="num">No. {{ number }}</div>
-      <div class="title">{{ product.title }}</div>
-      <div v-if="difficultyLabel" class="meta">{{ difficultyLabel }}</div>
+      <div v-if="number || difficultyLabel" class="head-row">
+        <span v-if="number" class="num">No. {{ number }}</span>
+        <span v-if="number && difficultyLabel" class="hair"></span>
+        <span v-if="difficultyLabel" class="meta">{{ difficultyLabel }}</span>
+      </div>
+      <h3 class="title">{{ product.title }}</h3>
+      <div class="discover" aria-hidden="true">
+        <span class="discover-text">discover</span>
+        <span class="discover-arrow">→</span>
+      </div>
       <div class="price-row">
         <span class="price-label">售價</span>
         <span class="price">{{ priceLabel }}</span>
@@ -186,14 +193,35 @@ function onImgError() {
 
 .body {
   padding: 22px 22px 24px;
+  position: relative;
 }
 
+/* 頭部 No. + 難易度 一行式 hairline 雜誌目次風 */
+.head-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
 .num {
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.18em;
-  color: var(--color-accent-soft);
-  margin-bottom: 10px;
+  letter-spacing: 0.22em;
+  color: var(--color-fresh);
+  font-weight: 500;
+}
+.hair {
+  flex: 0 1 32px;
+  height: 1px;
+  background: var(--color-line-subtle);
+}
+.meta {
+  font-family: var(--font-body);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  margin: 0;
 }
 
 .title {
@@ -203,20 +231,43 @@ function onImgError() {
   letter-spacing: 0.04em;
   color: var(--color-ink-strong);
   line-height: 1.4;
-  margin-bottom: 8px;
+  margin: 0 0 6px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.meta {
-  font-family: var(--font-body);
+/* hover 時雜誌風 italic「discover」反白 */
+.discover {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  height: 14px;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 240ms, transform 240ms;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 300;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+.discover-arrow {
+  font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--color-ink-muted);
-  margin-bottom: 14px;
+  font-style: normal;
+  letter-spacing: 0;
+  transition: transform 240ms;
+}
+.card:not(.card-preview):hover .discover {
+  opacity: 1;
+  transform: translateY(0);
+}
+.card:not(.card-preview):hover .discover-arrow {
+  transform: translateX(4px);
 }
 
 .price-row {

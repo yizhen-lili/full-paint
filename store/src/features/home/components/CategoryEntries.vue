@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
 import { Layers, Palette, Tags } from 'lucide-vue-next'
+import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
 const ENTRIES = [
   {
@@ -29,12 +30,12 @@ const ENTRIES = [
 
 <template>
   <section class="section">
-    <div class="section-header">
-      <div>
-        <div class="section-eyebrow">No. 04 — Browse</div>
-        <h2 class="section-title">挑選方式</h2>
-      </div>
-    </div>
+    <SectionMasthead
+      no="04"
+      chapter="Browse"
+      title="挑選方式"
+      caption="three ways"
+    />
     <div class="grid">
       <RouterLink v-for="e in ENTRIES" :key="e.title" :to="e.to" class="entry">
         <component :is="e.icon" class="entry-icon" />
@@ -53,28 +54,6 @@ const ENTRIES = [
   margin: 0 auto;
   padding: 96px 56px;
 }
-.section-header {
-  margin-bottom: 56px;
-  border-bottom: 1px solid var(--color-line);
-  padding-bottom: 24px;
-}
-.section-eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-  color: var(--color-ink-muted);
-  margin-bottom: 16px;
-}
-.section-title {
-  font-family: var(--font-cn-serif);
-  font-weight: 300;
-  font-size: 36px;
-  letter-spacing: 0.06em;
-  color: var(--color-ink-strong);
-  margin: 0;
-}
-
 .grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

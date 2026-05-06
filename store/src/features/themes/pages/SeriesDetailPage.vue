@@ -170,6 +170,7 @@ const otherSeriesTitle = computed(() =>
           :style="{ background: toneFor(idx) }"
         >
           <div v-if="idx === 0" class="cell-deco cell-deco-main">
+            <span class="deco-watermark" aria-hidden="true">Y</span>
             <div class="deco-eyebrow">Vol.</div>
             <div class="deco-num">{{ String(series.products.length).padStart(2, '0') }}</div>
             <div class="deco-rule"></div>
@@ -499,7 +500,21 @@ const otherSeriesTitle = computed(() =>
   text-align: center;
   padding: 20px;
 }
-.cell-deco-main { gap: 14px; }
+.cell-deco-main { gap: 14px; position: relative; }
+.deco-watermark {
+  position: absolute;
+  bottom: 8px;
+  right: 16px;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 300;
+  font-size: 96px;
+  line-height: 1;
+  color: var(--color-ink-strong);
+  opacity: 0.06;
+  pointer-events: none;
+  user-select: none;
+}
 .cell-deco-tall { gap: 16px; padding: 28px; }
 
 .deco-eyebrow {
