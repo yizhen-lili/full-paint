@@ -12,11 +12,13 @@ import {
   useTagsQuery,
   useFeaturedSeriesQuery,
 } from '@/features/browse/queries'
+import { useCartItemCount } from '@/features/cart/queries'
 
 const themesQuery = useThemesQuery()
 const seriesQuery = useSeriesQuery()
 const tagsQuery = useTagsQuery()
 const featuredSeriesQuery = useFeaturedSeriesQuery()
+const cartCount = useCartItemCount()
 const mobileOpen = ref(false)
 
 const FEATURED_SERIES_LIMIT = 5
@@ -154,7 +156,10 @@ const TAGS_LIMIT = 8
       <div class="site-actions">
         <IconButton to="/search" aria-label="搜尋"><Search /></IconButton>
         <IconButton to="/profile" aria-label="會員"><User /></IconButton>
-        <IconButton to="/cart" aria-label="購物車"><ShoppingBag /></IconButton>
+        <IconButton to="/cart" aria-label="購物車" class="cart-btn">
+          <ShoppingBag />
+          <span v-if="cartCount > 0" class="cart-count">{{ cartCount > 99 ? '99+' : cartCount }}</span>
+        </IconButton>
       </div>
     </div>
 
@@ -181,6 +186,27 @@ const TAGS_LIMIT = 8
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 32px;
+}
+
+.cart-btn { position: relative; }
+.cart-count {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--color-accent-wine);
+  color: var(--color-paper-canvas);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 500;
+  pointer-events: none;
 }
 
 .site-nav.desktop {
