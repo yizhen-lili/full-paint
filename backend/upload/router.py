@@ -84,16 +84,12 @@ async def firebase_cors_fix(_=Depends(require_admin)):
 
     from core.config import settings
 
-    ALLOWED_ORIGINS = [
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "https://yiimui-admin.vercel.app",
-        "https://paint-by-number-store.vercel.app",
-    ]
+    # 用 ['*'] 接受任何 origin — Firebase signed URL PUT 不帶 cookie/credentials，
+    # 攻擊者沒有 signed URL token 就沒辦法 PUT，所以 origin 開放是安全的。
+    # 這也避免 user 在 Vercel preview URL 上被擋住。
     rules = [
         {
-            "origin": ALLOWED_ORIGINS,
+            "origin": ["*"],
             "method": ["PUT", "GET", "HEAD", "OPTIONS", "POST"],
             "responseHeader": ["Content-Type", "Content-MD5", "x-goog-resumable"],
             "maxAgeSeconds": 3600,
