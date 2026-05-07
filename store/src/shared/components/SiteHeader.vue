@@ -172,7 +172,8 @@ const TAGS_LIMIT = 8
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(244, 239, 226, 0.92);
+  /* surface 米白 (最淺層) — 配合三層紙感結構 */
+  background: rgba(251, 247, 236, 0.92);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--color-line-subtle);

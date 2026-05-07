@@ -53,7 +53,9 @@ import { RouterLink } from 'vue-router'
 
 <style scoped>
 .site-footer {
-  border-top: 1px solid var(--color-line-subtle);
+  /* 方案 D — 核桃 footer band（焦糖核桃色，像書脊／皮革條） */
+  background: var(--color-accent);
+  color: var(--color-paper-canvas);
   margin-top: 120px;
   padding: 96px 56px 48px;
 }
@@ -71,7 +73,7 @@ import { RouterLink } from 'vue-router'
   font-weight: 300;
   font-size: 22px;
   letter-spacing: 0.12em;
-  color: var(--color-ink-strong);
+  color: var(--color-paper-canvas);
   display: inline-block;
   margin-bottom: 24px;
 }
@@ -79,7 +81,7 @@ import { RouterLink } from 'vue-router'
 .footer-tagline {
   font-size: 13px;
   line-height: 2;
-  color: var(--color-ink-muted);
+  color: rgba(244, 239, 226, 0.78);
   max-width: 360px;
   letter-spacing: 0.04em;
   margin: 0;
@@ -90,7 +92,7 @@ import { RouterLink } from 'vue-router'
   font-size: 11px;
   letter-spacing: 0.24em;
   text-transform: uppercase;
-  color: var(--color-accent);
+  color: rgba(244, 239, 226, 0.68);
   font-weight: 400;
   margin: 0 0 24px;
 }
@@ -105,25 +107,25 @@ import { RouterLink } from 'vue-router'
 
 .footer-col a {
   font-size: 13px;
-  color: var(--color-ink-default);
+  color: rgba(244, 239, 226, 0.85);
   letter-spacing: 0.04em;
   text-decoration: none;
   transition: color 150ms;
 }
-.footer-col a:hover { color: var(--color-accent); }
+.footer-col a:hover { color: var(--color-paper-canvas); }
 
 .footer-bottom {
   max-width: 1440px;
   margin: 64px auto 0;
   padding-top: 32px;
-  border-top: 1px solid var(--color-line-subtle);
+  border-top: 1px solid rgba(244, 239, 226, 0.22);
   display: flex;
   justify-content: space-between;
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--color-ink-muted);
+  color: rgba(244, 239, 226, 0.65);
 }
 
 .footer-bottom a {
@@ -131,7 +133,7 @@ import { RouterLink } from 'vue-router'
   text-decoration: none;
   transition: color 150ms;
 }
-.footer-bottom a:hover { color: var(--color-accent); }
+.footer-bottom a:hover { color: var(--color-paper-canvas); }
 
 @media (max-width: 1023px) {
   .site-footer { padding: 64px 32px 32px; margin-top: 80px; }

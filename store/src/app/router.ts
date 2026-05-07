@@ -33,6 +33,7 @@ import RefundPolicyPage from '@/features/pages/RefundPolicyPage.vue'
 import NotFoundPage from '@/shared/components/NotFoundPage.vue'
 import PaletteDebugPage from '@/features/dev/pages/PaletteDebugPage.vue'
 import BandPickerPage from '@/features/dev/pages/BandPickerPage.vue'
+import LayoutPickerPage from '@/features/dev/pages/LayoutPickerPage.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -83,6 +84,7 @@ export const router = createRouter({
     // ── Dev palette overview ─────────────────────────────────────────────
     { path: '/_palette', name: 'palette', component: PaletteDebugPage, meta: { layout: 'minimal' } },
     { path: '/_band-picker', name: 'band-picker', component: BandPickerPage, meta: { layout: 'minimal' } },
+    { path: '/_layout-picker', name: 'layout-picker', component: LayoutPickerPage, meta: { layout: 'default' } },
 
     // ── 404 catch-all ────────────────────────────────────────────────────
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundPage, meta: { layout: 'default' } },
