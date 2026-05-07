@@ -615,14 +615,17 @@ function copyOrderNumber() {
         <Card>
           <div class="flex items-center justify-between mb-3">
             <h2 class="font-display text-ink-strong text-[16px] leading-[24px]">收件資訊</h2>
-            <span
-              v-if="order.shipping_locked"
-              class="inline-flex items-center px-2 h-[20px] text-[10px] tracking-[0.18em] uppercase rounded-[var(--radius-xs)] bg-state-success/[0.18] text-state-success"
-            >✓ 已確認</span>
-            <span
-              v-else
-              class="inline-flex items-center px-2 h-[20px] text-[10px] tracking-[0.18em] uppercase rounded-[var(--radius-xs)] bg-state-warning/[0.18] text-state-warning"
-            >⚠ 未確認</span>
+            <!-- badge 只在「還能改」的階段顯示 (paid/processing)；shipped 之後不再相關 -->
+            <template v-if="['paid', 'processing'].includes(order.status)">
+              <span
+                v-if="order.shipping_locked"
+                class="inline-flex items-center px-2 h-[20px] text-[10px] tracking-[0.18em] uppercase rounded-[var(--radius-xs)] bg-state-success/[0.18] text-state-success"
+              >✓ 已確認</span>
+              <span
+                v-else
+                class="inline-flex items-center px-2 h-[20px] text-[10px] tracking-[0.18em] uppercase rounded-[var(--radius-xs)] bg-state-warning/[0.18] text-state-warning"
+              >⚠ 未確認</span>
+            </template>
           </div>
           <p class="text-[13px] text-ink-strong">{{ order.shipping_snapshot.recipient_name }}</p>
           <p class="text-[12px] text-ink-muted">{{ order.shipping_snapshot.phone }}</p>
@@ -658,9 +661,9 @@ function copyOrderNumber() {
             </Button>
           </div>
           <p
-            v-if="order.shipping_locked"
+            v-if="order.shipping_locked && ['paid', 'processing'].includes(order.status)"
             class="mt-3 text-[11px] text-ink-muted"
-          >已鎖定 — 出貨資訊無法再修改（包裹已建單後永久鎖死）</p>
+          >已鎖定 — 出貨資訊無法再修改</p>
         </Card>
 
         <Card>

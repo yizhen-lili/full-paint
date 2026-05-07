@@ -1290,6 +1290,10 @@ async def create_shipment(
     db.add(shipment)
     await db.flush()
 
+    # 出貨即確認 — 確保 shipping_locked=True（雖然前面已檢查過，這裡 idempotent 雙保險）
+    if not order.shipping_locked:
+        order.shipping_locked = True
+
     # Update production progress → shipped, scoped to items matching shipment_type
     if shipment_type == "fulfilled":
         item_filter = OrderItem.fulfilled_qty > 0
