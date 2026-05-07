@@ -670,6 +670,7 @@ function specSummary(spec: Record<string, unknown>): string {
                 :submitting="updateShippingMut.isPending.value"
                 :error-text="modifyShippingErr"
                 :compact="true"
+                :lock-shipping-type="true"
                 @submit="submitModifyShipping"
                 @cancel="showModifyShipping = false"
               />

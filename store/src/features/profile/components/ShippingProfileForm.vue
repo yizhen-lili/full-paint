@@ -12,6 +12,8 @@ const props = defineProps<{
   errorText?: string | null
   /** 結帳頁用 compact (隱藏「設為預設」勾選，因為新增本來就會作為當下選用) */
   compact?: boolean
+  /** 鎖定配送方式 — 修改既有訂單時用（不能改宅配 ↔ 超商，會影響運費 / 需重選門市） */
+  lockShippingType?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -76,10 +78,18 @@ function onSubmit() {
 
 <template>
   <form class="form" @submit.prevent="onSubmit" novalidate>
-    <!-- 配送方式 -->
+    <!-- 配送方式（lockShippingType=true 時顯示為唯讀） -->
     <div class="field">
       <label class="label">配送方式</label>
-      <div class="radio-row">
+      <div v-if="lockShippingType" class="locked-shipping-type">
+        <span class="locked-icon">
+          <MapPin v-if="form.shipping_type === 'home'" :size="14" />
+          <Store v-else :size="14" />
+        </span>
+        <span class="locked-text">{{ SHIPPING_TYPE_LABEL[form.shipping_type] }}</span>
+        <span class="locked-tag">不可更動</span>
+      </div>
+      <div v-else class="radio-row">
         <label
           v-for="t in (['home', 'seven_eleven', 'family_mart'] as ShippingType[])"
           :key="t"
@@ -219,6 +229,40 @@ function onSubmit() {
 }
 
 .radio-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.locked-shipping-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--color-paper-deep);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  color: var(--color-ink-strong);
+  letter-spacing: 0.04em;
+}
+.locked-shipping-type .locked-icon {
+  width: 22px; height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent);
+}
+.locked-shipping-type .locked-icon :deep(svg) {
+  stroke: currentColor; stroke-width: 1.5; fill: none;
+}
+.locked-shipping-type .locked-tag {
+  margin-left: 6px;
+  padding: 1px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  background: var(--color-paper-canvas);
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-xs);
+}
 .radio-card {
   display: flex;
   align-items: center;
