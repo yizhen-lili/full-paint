@@ -139,19 +139,31 @@ function discardAll() {
 
 <template>
   <div class="space-y-5">
-    <!-- 頂部 sticky 工具列 -->
+    <!-- 頂部 sticky 工具列（永遠顯示，沒變更時按鈕 disable） -->
     <div
-      v-if="dirtyKeys.length > 0"
-      class="sticky top-0 z-10 mb-2 px-4 py-3 bg-accent/[0.10] border border-accent/40 rounded-[var(--radius-xs)] flex items-center justify-between"
+      class="sticky top-0 z-10 mb-2 px-4 py-3 rounded-[var(--radius-xs)] flex items-center justify-between border"
+      :class="dirtyKeys.length > 0
+        ? 'bg-accent/[0.10] border-accent/40'
+        : 'bg-paper-surface border-line-hairline'"
     >
-      <div class="text-[13px] text-ink-strong">
-        有 <span class="font-mono font-bold">{{ dirtyKeys.length }}</span> 個欄位未儲存
+      <div class="text-[13px]">
+        <span v-if="dirtyKeys.length > 0" class="text-ink-strong">
+          有 <span class="font-mono font-bold">{{ dirtyKeys.length }}</span> 個欄位未儲存
+        </span>
+        <span v-else class="text-ink-muted">無變更，可在下方欄位輸入後儲存</span>
       </div>
       <div class="flex items-center gap-2">
-        <Button variant="secondary" :disabled="saving" @click="discardAll">
-          放棄變更
-        </Button>
-        <Button variant="primary" :disabled="saving" @click="saveAll">
+        <Button
+          v-if="dirtyKeys.length > 0"
+          variant="secondary"
+          :disabled="saving"
+          @click="discardAll"
+        >放棄變更</Button>
+        <Button
+          variant="primary"
+          :disabled="saving || dirtyKeys.length === 0"
+          @click="saveAll"
+        >
           <Loader2 v-if="saving" :size="14" :stroke-width="1.5" class="animate-spin" />
           <Save v-else :size="14" :stroke-width="1.5" />
           儲存全部變更
