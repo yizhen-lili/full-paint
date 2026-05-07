@@ -114,6 +114,38 @@ async def probe_subtypes(request: Request) -> dict:
     }
 
 
+@router.post("/debug-create-shipment/{order_id}")
+async def debug_create_shipment(
+    order_id: str,
+    request: Request,
+    db=__import__("fastapi").Depends(__import__("core.database", fromlist=["get_db"]).get_db),
+    _admin=__import__("fastapi").Depends(
+        __import__("dependencies.auth", fromlist=["require_admin"]).require_admin
+    ),
+) -> dict:
+    """⚠️ TEMP debug — 把 create_shipment 失敗的完整 traceback 回給 client。
+
+    正式上線前要刪除。Admin only。
+    """
+    import traceback
+    from uuid import UUID
+    from orders import service as orders_service
+
+    try:
+        shipment = await orders_service.create_shipment(
+            db, UUID(order_id), "fulfilled",
+            server_reply_url=f"{str(request.base_url).rstrip('/').replace('http://', 'https://')}/api/v1/logistics/status-callback",
+        )
+        return {"ok": True, "tracking_number": shipment.tracking_number}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error_type": type(e).__name__,
+            "error_msg": str(e),
+            "traceback": traceback.format_exc(),
+        }
+
+
 @router.get("/debug-config")
 async def debug_config(request: Request) -> dict:
     """⚠️ 暫時 diagnostic，正式上線前要刪除。
