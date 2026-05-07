@@ -48,6 +48,14 @@ async def init_schema() -> None:
             # 不執行 migration body 所以這裡要主動補。idempotent.
             print("[init_db] ensuring sequences (order_number_seq) ...", flush=True)
             await conn.execute(text("CREATE SEQUENCE IF NOT EXISTS order_number_seq START 1"))
+
+            # 新增 column：create_all 不會在已存在的 table 加新欄位，
+            # 需要顯式 ALTER TABLE。 IF NOT EXISTS 確保 idempotent。
+            print("[init_db] ensuring incremental columns ...", flush=True)
+            await conn.execute(text(
+                "ALTER TABLE orders "
+                "ADD COLUMN IF NOT EXISTS shipping_locked BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
         print("[init_db] schema created/verified", flush=True)
     finally:
         await engine.dispose()

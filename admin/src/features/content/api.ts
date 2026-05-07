@@ -231,6 +231,14 @@ export const SETTING_LABEL: Record<string, SettingMeta> = {
   bank_account_name: { label: '匯款戶名', type: 'text', group: 'payment' },
   payment_absolute_deadline_hours: { label: '付款絕對期限（小時）', type: 'number', group: 'payment' },
 
+  // 客服聯絡（顯示給客戶用）
+  admin_contact_email: {
+    label: '客服 Email',
+    type: 'text',
+    hint: '客戶在訂單頁需修改地址但不在 pending_payment 階段時，會看到「請寄信至此」',
+    group: 'payment',
+  },
+
   // ECpay 寄件人資訊（建立物流訂單用，必填）
   ecpay_sender_name: {
     label: 'ECpay 寄件人姓名',

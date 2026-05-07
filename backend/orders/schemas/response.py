@@ -125,6 +125,7 @@ class OrderDetailResponse(BaseModel):
     shipping_type: str
     shipping_preference: str | None
     shipping_snapshot: dict
+    shipping_locked: bool = False
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None
@@ -139,6 +140,7 @@ class OrderDetailResponse(BaseModel):
     payment_submissions: list[PaymentSubmissionResponse]
     can_cancel: bool
     can_confirm_received: bool
+    can_modify_shipping: bool = False  # 客戶端用：true 才顯示「修改」按鈕
     created_at: datetime
 
     class Config:
@@ -176,6 +178,7 @@ class AdminOrderDetailResponse(BaseModel):
     shipping_type: str
     shipping_preference: str | None
     shipping_snapshot: dict
+    shipping_locked: bool = False
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None

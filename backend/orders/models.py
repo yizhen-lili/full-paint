@@ -116,6 +116,8 @@ class Order(Base):
         Enum(ShippingPreferenceEnum, name="shippingpreferenceenum"), nullable=True
     )
     shipping_snapshot = Column(JSONB, nullable=False)
+    # 出貨資訊鎖定：admin 確認後才能建物流單；建單後永久鎖死
+    shipping_locked = Column(Boolean, nullable=False, default=False, server_default="false")
     payment_deadline = Column(TIMESTAMP(timezone=True), nullable=True)
     paid_at = Column(TIMESTAMP(timezone=True), nullable=True)
     completed_at = Column(TIMESTAMP(timezone=True), nullable=True)

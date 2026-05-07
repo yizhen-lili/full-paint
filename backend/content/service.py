@@ -51,6 +51,7 @@ _PUBLIC_SETTING_KEYS = {
     "product_info_tips",
     "product_info_notes",
     "quote_reply_days",
+    "admin_contact_email",  # store 端訂單頁顯示「如需修改請寄信至」
 }
 
 

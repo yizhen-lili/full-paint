@@ -706,6 +706,7 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
         "shipping_type": order.shipping_type,
         "shipping_preference": order.shipping_preference,
         "shipping_snapshot": order.shipping_snapshot,
+        "shipping_locked": bool(order.shipping_locked),
         "payment_deadline": order.payment_deadline,
         "paid_at": order.paid_at,
         "completed_at": order.completed_at,
@@ -746,6 +747,11 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
     if not is_admin:
         base["can_cancel"] = order.status == OrderStatusEnum.pending_payment
         base["can_confirm_received"] = order.status == OrderStatusEnum.shipped
+        # 用戶端：只在 pending_payment 階段且未鎖定才能改地址
+        base["can_modify_shipping"] = (
+            order.status == OrderStatusEnum.pending_payment
+            and not order.shipping_locked
+        )
     else:
         user_result = await db.execute(select(User).where(User.id == order.user_id))
         user = user_result.scalar_one_or_none()
@@ -831,6 +837,141 @@ async def confirm_received(db: AsyncSession, user_id: UUID, order_id: UUID) -> O
         reference_type="order",
         reference_id=order_id,
     )
+    await db.commit()
+    await db.refresh(order)
+    return order
+
+
+def _merge_shipping_snapshot(existing: dict, updates: dict) -> dict:
+    """Merge updates into existing shipping_snapshot. None values 忽略，'' 視為清空。"""
+    result = dict(existing) if existing else {}
+    for key, value in updates.items():
+        if value is None:
+            continue
+        result[key] = value
+    return result
+
+
+def _diff_shipping_for_audit(old: dict, new: dict) -> str:
+    """產生人類可讀的 diff 字串（給 admin_notes audit trail）."""
+    fields_zh = {
+        "recipient_name": "收件人",
+        "phone": "電話",
+        "notify_email": "Email",
+        "city": "縣市",
+        "district": "行政區",
+        "address_detail": "地址",
+        "store_id": "門市代碼",
+        "store_name": "門市名稱",
+    }
+    parts = []
+    for key, label in fields_zh.items():
+        old_val = old.get(key) or ""
+        new_val = new.get(key) or ""
+        if old_val != new_val:
+            parts.append(f"{label}「{old_val}」→「{new_val}」")
+    return "; ".join(parts) if parts else "(無實質變更)"
+
+
+async def update_shipping(
+    db: AsyncSession,
+    *,
+    order_id: UUID,
+    user_id: UUID | None,
+    is_admin: bool,
+    updates: dict,
+) -> Order:
+    """修改訂單出貨資訊。
+
+    user (is_admin=False, 帶 user_id)：
+      - 訂單必須屬於該 user
+      - 訂單狀態必須 == pending_payment
+      - shipping_locked 必須 == False
+
+    admin (is_admin=True, user_id 忽略)：
+      - 訂單狀態必須在 pending_payment / paid / processing
+      - shipping_locked 必須 == False（已 lock 不能改）
+      - 改完寫 audit trail 到 admin_notes
+    """
+    query = select(Order).where(Order.id == order_id).with_for_update()
+    if not is_admin:
+        query = query.where(Order.user_id == user_id)
+    result = await db.execute(query)
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+
+    if order.shipping_locked:
+        raise ConflictError("出貨資訊已鎖定，無法修改")
+
+    if is_admin:
+        if order.status not in (
+            OrderStatusEnum.pending_payment,
+            OrderStatusEnum.paid,
+            OrderStatusEnum.processing,
+        ):
+            raise BadRequestError(f"訂單狀態 {order.status} 不允許修改出貨資訊")
+    else:
+        if order.status != OrderStatusEnum.pending_payment:
+            raise BadRequestError(
+                "付款已被管理員確認，無法自行修改地址。請來信 admin 修改。"
+            )
+
+    # 把 updates dict 對映到 shipping_snapshot 的 key（注意 email → notify_email）
+    snapshot_updates: dict = {}
+    for k, v in updates.items():
+        if v is None:
+            continue
+        if k == "email":
+            snapshot_updates["notify_email"] = v
+        else:
+            snapshot_updates[k] = v
+
+    old_snapshot = dict(order.shipping_snapshot or {})
+    new_snapshot = _merge_shipping_snapshot(old_snapshot, snapshot_updates)
+    order.shipping_snapshot = new_snapshot
+
+    if is_admin:
+        # audit trail
+        diff_text = _diff_shipping_for_audit(old_snapshot, new_snapshot)
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+        audit_line = f"[{stamp}] [admin 改地址] {diff_text}"
+        order.admin_notes = (audit_line + "\n" + (order.admin_notes or "")).strip()
+    else:
+        # 客戶自己改 → 通知 admin
+        await create_notification(
+            db,
+            type="customer_modified_shipping",
+            message=f"客戶修改訂單 {order.order_number} 的出貨資訊",
+            reference_type="order",
+            reference_id=order_id,
+            requires_action=True,
+        )
+
+    await db.commit()
+    await db.refresh(order)
+    return order
+
+
+async def lock_shipping(db: AsyncSession, order_id: UUID) -> Order:
+    """admin 確認出貨資訊 → 鎖定。鎖定後 create_shipment 才會放行。"""
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).with_for_update()
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+    if order.shipping_locked:
+        return order  # 已鎖，直接回（idempotent）
+    if order.status not in (
+        OrderStatusEnum.paid,
+        OrderStatusEnum.processing,
+    ):
+        raise BadRequestError("只有已付款或備貨中的訂單才能鎖定出貨資訊")
+    order.shipping_locked = True
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+    audit = f"[{stamp}] 出貨資訊已鎖定"
+    order.admin_notes = (audit + "\n" + (order.admin_notes or "")).strip()
     await db.commit()
     await db.refresh(order)
     return order
@@ -1083,6 +1224,10 @@ async def create_shipment(
         OrderStatusEnum.paid, OrderStatusEnum.processing, OrderStatusEnum.shipped
     ):
         raise BadRequestError("訂單狀態不允許出貨")
+
+    # 出貨資訊鎖定檢查：必須先「確認出貨資訊」
+    if not order.shipping_locked:
+        raise BadRequestError("請先按「確認出貨資訊」鎖定後才能建立物流訂單")
 
     # 重複建單防呆：本訂單同 shipment_type 已有 Shipment → 拒絕
     existing_check = await db.execute(

@@ -22,6 +22,7 @@ from orders.schemas.request import (
     RefundRequest,
     UpdateCartItemRequest,
     UpdateProductionProgressRequest,
+    UpdateShippingRequest,
 )
 from orders.schemas.response import (
     AdminNotesUpdateResponse,
@@ -179,6 +180,30 @@ async def confirm_received(
     )
 
 
+@router.patch(
+    "/orders/{order_id}/shipping",
+    response_model=OrderDetailResponse,
+)
+async def user_update_shipping(
+    order_id: UUID,
+    body: UpdateShippingRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """客戶修改自己訂單的出貨資訊。
+
+    僅在 status=pending_payment 階段允許；後端嚴格鎖死。
+    """
+    await service.update_shipping(
+        db,
+        order_id=order_id,
+        user_id=current_user.id,
+        is_admin=False,
+        updates=body.model_dump(exclude_none=True),
+    )
+    return await service.get_order_detail(db, current_user.id, order_id)
+
+
 @router.post(
     "/orders/{order_id}/cancel", status_code=200, response_model=CancelOrderResponse
 )
@@ -258,6 +283,44 @@ async def admin_update_status(
         cancel_reason_code=order.cancel_reason_code,
         updated_at=datetime.now(UTC),
     )
+
+
+@router.patch(
+    "/admin/orders/{order_id}/shipping",
+    response_model=AdminOrderDetailResponse,
+)
+async def admin_update_shipping(
+    order_id: UUID,
+    body: UpdateShippingRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """admin 修改訂單出貨資訊（status: pending_payment / paid / processing 都可）。
+
+    shipping_locked=true 時拒絕。修改自動寫 audit 進 admin_notes。
+    """
+    await service.update_shipping(
+        db,
+        order_id=order_id,
+        user_id=None,
+        is_admin=True,
+        updates=body.model_dump(exclude_none=True),
+    )
+    return await service.admin_get_order(db, order_id)
+
+
+@router.post(
+    "/admin/orders/{order_id}/lock-shipping",
+    response_model=AdminOrderDetailResponse,
+)
+async def admin_lock_shipping(
+    order_id: UUID,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """admin 確認出貨資訊 → 鎖定。鎖定後才允許建立物流訂單。"""
+    await service.lock_shipping(db, order_id)
+    return await service.admin_get_order(db, order_id)
 
 
 def _resolve_status_callback_url(request: Request) -> str:
