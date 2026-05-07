@@ -7,16 +7,12 @@
       → 接 ECpay 回傳，驗章後 postMessage 給 opener，close 自己
 """
 import asyncio
-from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
-from core.database import get_db
-from dependencies.auth import require_admin
 from logistics import service
 
 router = APIRouter(prefix="/logistics", tags=["logistics"])
@@ -115,34 +111,6 @@ async def probe_subtypes(request: Request) -> dict:
         ),
         "details": results,
     }
-
-
-@router.post("/debug-create-shipment/{order_id}")
-async def debug_create_shipment(
-    order_id: UUID,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(require_admin),
-) -> dict:
-    """⚠️ TEMP debug — 把 create_shipment 失敗的完整 traceback 回給 client。
-    正式上線前要刪除。Admin only。
-    """
-    import traceback as _tb
-    from orders import service as orders_service
-
-    try:
-        shipment = await orders_service.create_shipment(
-            db, order_id, "fulfilled",
-            server_reply_url=_resolve_server_reply_url(request).replace("/cvs-callback", "/status-callback"),
-        )
-        return {"ok": True, "tracking_number": shipment.tracking_number}
-    except Exception as e:
-        return {
-            "ok": False,
-            "error_type": type(e).__name__,
-            "error_msg": str(e),
-            "traceback": _tb.format_exc(),
-        }
 
 
 @router.get("/debug-config")
