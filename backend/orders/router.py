@@ -12,6 +12,7 @@ from orders.schemas.request import (
     AddCartItemRequest,
     AdminNotesRequest,
     AdminUpdateOrderStatusRequest,
+    BatchCreateShipmentRequest,
     CancelOrderRequest,
     CheckoutPreviewRequest,
     CreateOrderRequest,
@@ -26,6 +27,7 @@ from orders.schemas.response import (
     AdminNotesUpdateResponse,
     AdminOrderDetailResponse,
     AdminOrderListResponse,
+    BatchCreateShipmentResponse,
     CancelOrderResponse,
     CartItemMutationResponse,
     CartResponse,
@@ -258,21 +260,55 @@ async def admin_update_status(
     )
 
 
+def _resolve_status_callback_url(request: Request) -> str:
+    """ECpay 物流狀態通知 callback URL（Day 3 webhook 落點）.
+
+    對應 logistics router 的 /api/v1/logistics/status-callback。
+    Railway 反向代理 + 強制 https。
+    """
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://") and "railway.app" in base:
+        base = "https://" + base[len("http://"):]
+    return f"{base}/api/v1/logistics/status-callback"
+
+
 @router.post(
     "/admin/orders/{order_id}/shipments", status_code=201, response_model=CreateShipmentResponse
 )
 async def create_shipment(
     order_id: UUID,
     body: CreateShipmentRequest,
+    request: Request,
     current_user=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    shipment = await service.create_shipment(db, order_id, body.shipment_type)
+    """單筆建單 — 真實呼叫 ECpay。"""
+    shipment = await service.create_shipment(
+        db, order_id, body.shipment_type,
+        server_reply_url=_resolve_status_callback_url(request),
+    )
     return {
         "shipment_id": shipment.id,
         "tracking_number": shipment.tracking_number,
         "ecpay_logistics_id": shipment.ecpay_logistics_id,
     }
+
+
+@router.post(
+    "/admin/shipments/batch-create",
+    response_model=BatchCreateShipmentResponse,
+)
+async def batch_create_shipments(
+    body: BatchCreateShipmentRequest,
+    request: Request,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """批次建單（一次最多 50 筆）— 失敗筆獨立、不影響成功筆。"""
+    return await service.batch_create_shipments(
+        db, body.order_ids, body.shipment_type,
+        server_reply_url=_resolve_status_callback_url(request),
+    )
 
 
 @router.patch(

@@ -1063,7 +1063,16 @@ async def create_shipment(
     db: AsyncSession,
     order_id: UUID,
     shipment_type: str,
+    *,
+    server_reply_url: str = "",
 ) -> Shipment:
+    """建立物流訂單 — Day 2 真實 ECpay 整合（不再是 stub）。
+
+    Args:
+        server_reply_url: ECpay 推狀態通知 URL（Day 3 webhook）。空字串時用 settings 預設。
+    """
+    from logistics import service as logistics_service
+
     result = await db.execute(
         select(Order).where(Order.id == order_id).with_for_update()
     )
@@ -1075,16 +1084,54 @@ async def create_shipment(
     ):
         raise BadRequestError("訂單狀態不允許出貨")
 
-    # ECpay stub
-    ecpay_merchant_id = os.environ.get("ECPAY_MERCHANT_ID", "")
-    if ecpay_merchant_id:
-        # TODO: 呼叫真實 ECpay 物流 API
-        tracking_number = f"REAL-{uuid.uuid4().hex[:12].upper()}"
-        ecpay_logistics_id = f"EC-{uuid.uuid4().hex[:8].upper()}"
-    else:
-        logger.warning("ECPAY_MERCHANT_ID not set — using stub tracking number")
-        tracking_number = f"MOCK-{uuid.uuid4().hex[:12].upper()}"
-        ecpay_logistics_id = f"STUB-{uuid.uuid4().hex[:8].upper()}"
+    # 重複建單防呆：本訂單同 shipment_type 已有 Shipment → 拒絕
+    existing_check = await db.execute(
+        select(Shipment).where(
+            Shipment.order_id == order_id,
+            Shipment.shipment_type == shipment_type,
+        )
+    )
+    if existing_check.scalar_one_or_none():
+        raise ConflictError(
+            f"本訂單{shipment_type}類型已建立物流單，不可重複建單"
+        )
+
+    # 取訂單商品名（concat 用）
+    items_result = await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order_id)
+    )
+    order_items = items_result.scalars().all()
+    goods_titles = [oi.product_title_snapshot for oi in order_items]
+
+    # 呼叫 ECpay 真實建單
+    if not server_reply_url:
+        # 預設 fallback；正式由 router 注入
+        server_reply_url = (
+            "https://paint-web-production.up.railway.app"
+            "/api/v1/logistics/status-callback"
+        )
+
+    try:
+        ecpay_result = await logistics_service.execute_create_shipment(
+            db,
+            order_number=order.order_number,
+            order_created_at=order.created_at,
+            total_amount=float(order.total),
+            goods_titles=goods_titles,
+            shipping_snapshot=order.shipping_snapshot,
+            server_reply_url=server_reply_url,
+        )
+    except (ValueError, ConnectionError) as e:
+        # 業務錯誤（金額超限 / 寄件人未設）或 ECpay 連線失敗
+        raise BadRequestError(str(e)) from e
+
+    if not ecpay_result["ok"]:
+        raise BadRequestError(
+            f"ECpay 建單失敗 (RtnCode={ecpay_result['rtn_code']})：{ecpay_result['rtn_msg']}"
+        )
+
+    tracking_number = ecpay_result["tracking_number"]
+    ecpay_logistics_id = ecpay_result["ecpay_logistics_id"]
 
     now = datetime.now(UTC)
     shipment = Shipment(
@@ -1134,6 +1181,66 @@ async def create_shipment(
     await db.commit()
     await db.refresh(shipment)
     return shipment
+
+
+async def batch_create_shipments(
+    db: AsyncSession,
+    order_ids: list[UUID],
+    shipment_type: str,
+    *,
+    server_reply_url: str = "",
+) -> dict:
+    """批次建單 — 一次最多 50 筆。
+
+    每筆獨立 try/except，失敗不影響其他成功；不用 asyncio.gather 因為會吃 ECpay rate limit。
+    依序呼叫，每筆一個 transaction（create_shipment 內部會 commit）。
+
+    Returns:
+        {total, success, failed, results: [{order_id, ok, tracking_number?, error?}]}
+    """
+    results: list[dict] = []
+    success_count = 0
+    failed_count = 0
+
+    for order_id in order_ids:
+        try:
+            shipment = await create_shipment(
+                db, order_id, shipment_type, server_reply_url=server_reply_url
+            )
+            results.append({
+                "order_id": order_id,
+                "ok": True,
+                "tracking_number": shipment.tracking_number,
+                "ecpay_logistics_id": shipment.ecpay_logistics_id,
+                "error": None,
+            })
+            success_count += 1
+        except (NotFoundError, BadRequestError, ConflictError) as e:
+            results.append({
+                "order_id": order_id,
+                "ok": False,
+                "tracking_number": None,
+                "ecpay_logistics_id": None,
+                "error": str(e),
+            })
+            failed_count += 1
+        except Exception as e:  # 不預期錯誤也不能整批 fail
+            logger.exception(f"[batch-shipment] order={order_id} unexpected error")
+            results.append({
+                "order_id": order_id,
+                "ok": False,
+                "tracking_number": None,
+                "ecpay_logistics_id": None,
+                "error": f"未預期錯誤：{e!s}",
+            })
+            failed_count += 1
+
+    return {
+        "total": len(order_ids),
+        "success": success_count,
+        "failed": failed_count,
+        "results": results,
+    }
 
 
 async def update_production_progress(

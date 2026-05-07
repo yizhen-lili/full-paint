@@ -204,6 +204,22 @@ class CreateShipmentResponse(BaseModel):
         from_attributes = True
 
 
+class BatchShipmentResultItem(BaseModel):
+    """批次建單單筆結果（成功 or 失敗）."""
+    order_id: UUID
+    ok: bool
+    tracking_number: str | None = None
+    ecpay_logistics_id: str | None = None
+    error: str | None = None
+
+
+class BatchCreateShipmentResponse(BaseModel):
+    total: int
+    success: int
+    failed: int
+    results: list[BatchShipmentResultItem]
+
+
 class FlagPaymentSubmissionResponse(BaseModel):
     payment_deadline: datetime
 

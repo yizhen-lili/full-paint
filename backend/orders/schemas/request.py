@@ -74,6 +74,23 @@ class CreateShipmentRequest(BaseModel):
     shipment_type: Literal["fulfilled", "preorder"]
 
 
+class BatchCreateShipmentRequest(BaseModel):
+    """批次建單 request — 一次最多 50 筆訂單。"""
+    order_ids: list[UUID]
+    shipment_type: Literal["fulfilled", "preorder"] = "fulfilled"
+
+    @field_validator("order_ids")
+    @classmethod
+    def validate_order_ids(cls, v: list[UUID]) -> list[UUID]:
+        if not v:
+            raise ValueError("至少需提供 1 筆訂單")
+        if len(v) > 50:
+            raise ValueError("單次批次最多 50 筆訂單")
+        if len(set(v)) != len(v):
+            raise ValueError("訂單 ID 不可重複")
+        return v
+
+
 class UpdateProductionProgressRequest(BaseModel):
     status: Literal["manufacturing", "packaging", "ready_to_ship"]
     notes: str | None = None
