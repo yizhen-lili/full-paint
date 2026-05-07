@@ -3,15 +3,18 @@
 
 const API_BASE = '/api/v1'
 
+// 對應 backend OrderStatusEnum（backend/orders/models.py）
 export type OrderStatus =
   | 'pending_payment'
+  | 'payment_expired'
   | 'paid'
-  | 'in_production'
-  | 'shipping'
-  | 'delivered'
+  | 'processing'
+  | 'shipped'
   | 'completed'
   | 'cancelled'
+  | 'refund_processing'
   | 'refunded'
+  | 'partially_refunded'
 
 export interface OrderListItem {
   id: string
@@ -79,8 +82,8 @@ export interface OrderDetail {
   discount_source: string | null
   shipping_fee: number
   total: number
-  shipping_type: 'home' | 'convenience'
-  shipping_preference: 'merge' | 'split' | null
+  shipping_type: 'home' | 'seven_eleven' | 'family_mart'
+  shipping_preference: 'together' | 'separate' | null
   shipping_snapshot: {
     recipient_name?: string
     phone?: string

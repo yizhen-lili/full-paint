@@ -1275,12 +1275,21 @@ async def update_production_progress(
     if notes is not None:
         progress.notes = notes
 
-    # Email for manufacturing and ready_to_ship
     order_result = await db.execute(select(Order).where(Order.id == order_id))
     order = order_result.scalar_one()
     user_result = await db.execute(select(User).where(User.id == order.user_id))
     user = user_result.scalar_one()
 
+    # 自動推進 order.status: paid → processing
+    # admin 點任何手動生產階段（manufacturing/packaging/ready_to_ship）都代表「已開工」，
+    # Order.status 應從 'paid' 升到 'processing'，user 端才會看到「製作中」狀態。
+    if (
+        order.status == OrderStatusEnum.paid
+        and new_status in ("manufacturing", "packaging", "ready_to_ship")
+    ):
+        order.status = OrderStatusEnum.processing
+
+    # Email for manufacturing and ready_to_ship
     if new_status in ("manufacturing", "ready_to_ship"):
         label = "開始製作" if new_status == "manufacturing" else "準備出貨"
         await _send_email(

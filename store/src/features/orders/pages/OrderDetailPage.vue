@@ -141,18 +141,31 @@ async function submitCancel() {
 }
 
 // 進度 stepper（依 status 點亮）
+// 使用者可見的進度時間軸（4 個主階段）。
+// 對應 backend OrderStatusEnum；多種 status 可能映射到同一個 step。
 const PROGRESS_STEPS = [
-  { key: 'pending_payment', label: '待付款' },
-  { key: 'paid', label: '已付款' },
-  { key: 'in_production', label: '製作中' },
-  { key: 'shipping', label: '出貨中' },
-  { key: 'delivered', label: '已送達' },
-  { key: 'completed', label: '已完成' },
+  { idx: 0, label: '待付款' },
+  { idx: 1, label: '已付款' },
+  { idx: 2, label: '製作中' },
+  { idx: 3, label: '已出貨' },
+  { idx: 4, label: '已完成' },
 ]
+
+// status → step idx（無對應的特殊狀態：cancelled / refunded 等不顯示 stepper）
+const STATUS_TO_STEP_IDX: Record<string, number> = {
+  pending_payment: 0,
+  payment_expired: 0,
+  paid: 1,
+  processing: 2,
+  shipped: 3,
+  completed: 4,
+  // refund_processing / refunded / partially_refunded / cancelled 不在 stepper 範圍
+}
+
 const currentStepIdx = computed(() => {
   if (!order.value) return 0
-  const idx = PROGRESS_STEPS.findIndex((s) => s.key === order.value!.status)
-  return idx === -1 ? 0 : idx
+  const idx = STATUS_TO_STEP_IDX[order.value.status]
+  return idx === undefined ? 0 : idx
 })
 
 function fmtDateTime(iso: string | null): string {
@@ -239,8 +252,11 @@ function specSummary(spec: Record<string, unknown>): string {
         <p v-else class="band-hint band-hint-expired">付款期限已過。</p>
       </section>
 
-      <!-- 進度 stepper -->
-      <section v-if="!['cancelled', 'refunded'].includes(order.status)" class="stepper">
+      <!-- 進度 stepper（只在主流程狀態顯示；取消/退款相關不顯示） -->
+      <section
+        v-if="!['cancelled', 'refunded', 'partially_refunded', 'refund_processing', 'payment_expired'].includes(order.status)"
+        class="stepper"
+      >
         <div class="stepper-cap">
           <span class="stepper-no">No. 01</span>
           <span class="stepper-dot"></span>

@@ -63,24 +63,29 @@ export function useCancelOrderMutation(orderId: MaybeRefOrGetter<string>) {
 }
 
 // 訂單狀態 → 中文 + tab 分類
+// 對應 backend OrderStatusEnum 完整 10 個狀態
 export const STATUS_LABEL: Record<string, string> = {
   pending_payment: '待付款',
+  payment_expired: '逾期未付',
   paid: '已付款',
-  in_production: '製作中',
-  shipping: '出貨中',
-  delivered: '已送達',
+  processing: '製作中',
+  shipped: '已出貨',
   completed: '已完成',
   cancelled: '已取消',
+  refund_processing: '退款處理中',
   refunded: '已退款',
+  partially_refunded: '部分退款',
 }
 
 export const STATUS_TAB: Record<string, 'unpaid' | 'shipping' | 'done'> = {
   pending_payment: 'unpaid',
+  payment_expired: 'unpaid',     // 逾期也算未付（讓用戶看到並能處理）
   paid: 'shipping',
-  in_production: 'shipping',
-  shipping: 'shipping',
-  delivered: 'shipping',
+  processing: 'shipping',
+  shipped: 'shipping',
   completed: 'done',
   cancelled: 'done',
+  refund_processing: 'done',     // 退款處理中歸類已結案區
   refunded: 'done',
+  partially_refunded: 'done',
 }

@@ -59,7 +59,8 @@ export interface CheckoutPreviewResponse {
 }
 
 export type ShippingType = 'home' | 'convenience'
-export type ShippingPreference = 'merge' | 'split'
+// 對應 backend ShippingPreferenceEnum：'together'（合併出貨）/ 'separate'（分開出貨）
+export type ShippingPreference = 'together' | 'separate'
 
 export interface CheckoutPreviewRequest {
   shipping_type: ShippingType

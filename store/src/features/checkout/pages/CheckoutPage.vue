@@ -91,7 +91,7 @@ function clearPromo() {
 }
 
 // 出貨偏好（合併 / 分開）
-const shippingPreference = ref<ShippingPreference>('merge')
+const shippingPreference = ref<ShippingPreference>('together')
 
 // 客戶備註
 const customerNotes = ref('')
@@ -256,13 +256,13 @@ function profileSummary(p: profileApi.ShippingProfile): string {
           </h2>
           <p class="block-desc">訂單包含預購商品，請選擇出貨方式：</p>
           <div class="radio-row">
-            <label class="radio-card" :class="{ 'radio-active': shippingPreference === 'merge' }">
-              <input v-model="shippingPreference" type="radio" value="merge" />
+            <label class="radio-card" :class="{ 'radio-active': shippingPreference === 'together' }">
+              <input v-model="shippingPreference" type="radio" value="together" />
               <span class="radio-title">合併出貨</span>
               <span class="radio-desc">等預購商品到貨後一起寄出</span>
             </label>
-            <label class="radio-card" :class="{ 'radio-active': shippingPreference === 'split' }">
-              <input v-model="shippingPreference" type="radio" value="split" />
+            <label class="radio-card" :class="{ 'radio-active': shippingPreference === 'separate' }">
+              <input v-model="shippingPreference" type="radio" value="separate" />
               <span class="radio-title">分開出貨</span>
               <span class="radio-desc">現貨先寄、預購到貨再寄（額外運費）</span>
             </label>
