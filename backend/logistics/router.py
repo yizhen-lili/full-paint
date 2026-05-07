@@ -198,25 +198,61 @@ async def cvs_map_redirect(
 
 @router.post("/cvs-callback", response_class=HTMLResponse)
 async def cvs_map_callback(request: Request) -> HTMLResponse:
-    """接 ECpay 選店結果，驗章後用 postMessage 把資料傳給 opener window，並 close 自己。
+    """接 ECpay 選店結果，用 postMessage 把資料傳給 opener window，並 close 自己。
 
     來源：https://developers.ecpay.com.tw/8795/ ServerReplyURL 回傳參數規格
 
-    注意：以前用 FastAPI Form(...) 一個個列欄位，但 ECpay 實際送的欄位
-    可能比文件多／少（例如 CVSOutSide 有時不送）；驗章必須對「實際全部欄位」
-    算，少抓一個就 mismatch。改成讀整份 form data 再驗。
+    ⚠️ 實測（2026-05-07）：CVS Map 的 ServerReplyURL 回傳實際 *不附* CheckMacValue 欄位，
+    與 ECpay 文件描述不符。因此驗章策略：
+      - CheckMacValue 缺失 → 接受 callback（log 警告）
+        理由：popup 只能由我們的 cvs-map endpoint 開啟，外人偽造 callback 影響有限；
+        真正寄件動作（Day 2 /8809/）我們會用 store_id 重新跟 ECpay 確認。
+      - CheckMacValue 存在 → 嚴格驗（支援 UTF-8 + Big5 雙編碼 fallback）
     """
-    form = await request.form()
-    all_params: dict[str, str] = {k: str(form.get(k, "")) for k in form.keys()}
-    print(f"[ecpay-callback] received params: {all_params}", flush=True)
+    # 讀 raw bytes 自己 decode（避免 FastAPI 預設 UTF-8 弄亂 Big5 中文）
+    raw_body = await request.body()
 
+    def _parse_form(body: bytes, encoding: str) -> dict[str, str]:
+        from urllib.parse import parse_qsl
+        try:
+            decoded = body.decode(encoding)
+        except UnicodeDecodeError:
+            return {}
+        return dict(parse_qsl(decoded, keep_blank_values=True))
+
+    # 先解 UTF-8（FastAPI 預設）
+    all_params = _parse_form(raw_body, "utf-8")
     received_mac = all_params.get("CheckMacValue", "")
-    # 用「全部欄位 - CheckMacValue 自身」重算，與 received 比對
-    rest = {k: v for k, v in all_params.items() if k != "CheckMacValue"}
-    expected_mac = service.calculate_check_mac_value(rest)
-    valid = bool(received_mac) and received_mac.upper() == expected_mac
-    if not valid:
-        print(f"[ecpay-callback] MAC mismatch: received={received_mac} expected={expected_mac}", flush=True)
+
+    if not received_mac:
+        # ECpay CVS Map 沒送 MAC — 直接接受
+        valid = True
+        chosen_encoding = "utf-8"
+        print(f"[ecpay-callback] no CheckMacValue from ECpay → accepting (CVS Map quirk)", flush=True)
+    else:
+        # 嘗試 UTF-8 + Big5 兩種編碼算 MAC，任一個對得起來即接受
+        chosen_encoding = "utf-8"
+        valid = False
+        expected_mac = service.calculate_check_mac_value(
+            {k: v for k, v in all_params.items() if k != "CheckMacValue"}
+        )
+        if received_mac.upper() == expected_mac:
+            valid = True
+        else:
+            # 試 Big5
+            big5_params = _parse_form(raw_body, "big5")
+            if big5_params:
+                exp_big5 = service.calculate_check_mac_value(
+                    {k: v for k, v in big5_params.items() if k != "CheckMacValue"}
+                )
+                if big5_params.get("CheckMacValue", "").upper() == exp_big5:
+                    all_params = big5_params
+                    chosen_encoding = "big5"
+                    valid = True
+        if not valid:
+            print(f"[ecpay-callback] MAC mismatch: received={received_mac} expected={expected_mac}", flush=True)
+
+    print(f"[ecpay-callback] encoding={chosen_encoding} valid={valid} params={all_params}", flush=True)
 
     # 必要欄位提取（給前端 postMessage）
     MerchantID = all_params.get("MerchantID", "")
