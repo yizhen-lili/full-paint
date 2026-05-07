@@ -3,6 +3,7 @@ import type { MaybeRefOrGetter } from 'vue'
 import { toValue } from 'vue'
 
 import {
+  batchCreateShipments,
   createShipment,
   flagPaymentSubmission,
   getOrder,
@@ -12,6 +13,7 @@ import {
   updateOrderStatus,
   updateProductionProgress,
   type AdminNotesPayload,
+  type BatchCreateShipmentPayload,
   type CreateShipmentPayload,
   type FlagPaymentSubmissionPayload,
   type OrdersListParams,
@@ -105,5 +107,16 @@ export function useUpdateAdminNotesMutation(orderId: string) {
   return useMutation({
     mutationFn: (payload: AdminNotesPayload) => updateAdminNotes(orderId, payload),
     onSuccess: () => invalidateOrder(qc, orderId),
+  })
+}
+
+export function useBatchCreateShipmentsMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: BatchCreateShipmentPayload) => batchCreateShipments(payload),
+    onSuccess: () => {
+      // 任何訂單變動都 invalidate 列表 + 所有 detail
+      qc.invalidateQueries({ queryKey: ORDER_KEYS.all })
+    },
   })
 }

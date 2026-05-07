@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ShoppingBag } from 'lucide-vue-next'
+import { ShoppingBag, Loader2, Truck, Check, X as XIcon } from 'lucide-vue-next'
 
 import PageHeader from '@/shared/components/PageHeader.vue'
 import AppSearchInput from '@/shared/components/AppSearchInput.vue'
 import AppDataTable, { type Column } from '@/shared/components/AppDataTable.vue'
 import AppPagination from '@/shared/components/AppPagination.vue'
 import Select from '@/shared/ui/Select.vue'
+import Button from '@/shared/ui/Button.vue'
+import Dialog from '@/shared/ui/Dialog.vue'
 
-import { useOrdersQuery } from '../queries'
-import type { OrderListItem, OrderStatus, OrderTypeFilter } from '../api'
+import { useOrdersQuery, useBatchCreateShipmentsMutation } from '../queries'
+import type {
+  OrderListItem,
+  OrderStatus,
+  OrderTypeFilter,
+  BatchShipmentResultItem,
+} from '../api'
 
 const router = useRouter()
 const route = useRoute()
@@ -99,6 +106,7 @@ const statusBadge: Record<OrderStatus, { label: string; cls: string }> = {
 }
 
 const columns: Column<OrderListItem>[] = [
+  { key: '__select', label: '', width: '40px' },
   { key: 'order_number', label: '訂單編號', width: '220px' },
   { key: 'customer', label: '客戶' },
   { key: 'status', label: '狀態', width: '110px' },
@@ -135,6 +143,68 @@ function clearFilters() {
 const hasFilter = computed(
   () => !!(search.value || status.value || orderType.value || dateFrom.value || dateTo.value),
 )
+
+// ── 批次建單 ────────────────────────────────────────────────────────────
+// 只允許對 status='paid' 的訂單批次建單；checkbox 也只在那些 row 顯示。
+
+const selectedIds = ref<Set<string>>(new Set())
+const batchMut = useBatchCreateShipmentsMutation()
+const batchConfirmOpen = ref(false)
+const batchResultsOpen = ref(false)
+const batchResults = ref<BatchShipmentResultItem[]>([])
+
+function toggleSelect(id: string) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+const batchableItems = computed(() =>
+  items.value.filter((o) => o.status === 'paid' || o.status === 'processing'),
+)
+
+const allBatchableSelected = computed(
+  () =>
+    batchableItems.value.length > 0 &&
+    batchableItems.value.every((o) => selectedIds.value.has(o.id)),
+)
+
+function toggleSelectAll() {
+  if (allBatchableSelected.value) {
+    clearSelection()
+  } else {
+    selectedIds.value = new Set(batchableItems.value.map((o) => o.id))
+  }
+}
+
+const selectedCount = computed(() => selectedIds.value.size)
+
+// 篩選頁面變動 → 清空選取（避免跨頁誤觸）
+watch([page, status], () => clearSelection())
+
+async function doBatchCreate() {
+  batchConfirmOpen.value = false
+  try {
+    const res = await batchMut.mutateAsync({
+      order_ids: Array.from(selectedIds.value),
+      shipment_type: 'fulfilled',
+    })
+    batchResults.value = res.results
+    batchResultsOpen.value = true
+    clearSelection()
+  } catch (e) {
+    const err = e as { message?: string }
+    alert(err.message || '批次建單失敗')
+  }
+}
+
+const successCount = computed(() => batchResults.value.filter((r) => r.ok).length)
+const failedCount = computed(() => batchResults.value.filter((r) => !r.ok).length)
 </script>
 
 <template>
@@ -183,6 +253,33 @@ const hasFilter = computed(
     載入失敗：{{ (error as { message?: string })?.message ?? '未知錯誤' }}
   </div>
 
+  <!-- Batch toolbar：當有勾選時 sticky 在篩選下方 -->
+  <div
+    v-if="selectedCount > 0"
+    class="mb-3 px-4 py-3 bg-accent/[0.08] border border-accent/40 rounded-[var(--radius-xs)] flex items-center justify-between"
+  >
+    <div class="flex items-center gap-3 text-[13px] text-ink-strong">
+      <Truck :size="16" :stroke-width="1.5" class="text-accent" />
+      <span>已選取 <span class="font-mono">{{ selectedCount }}</span> 筆訂單</span>
+      <button
+        type="button"
+        class="text-[12px] text-ink-muted hover:text-ink-strong transition-colors"
+        @click="clearSelection"
+      >
+        清除選取
+      </button>
+    </div>
+    <Button
+      variant="primary"
+      :disabled="batchMut.isPending.value"
+      @click="batchConfirmOpen = true"
+    >
+      <Loader2 v-if="batchMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+      <Truck v-else :size="14" :stroke-width="1.5" />
+      批次建立物流訂單
+    </Button>
+  </div>
+
   <!-- Table -->
   <AppDataTable
     :columns="columns"
@@ -194,6 +291,28 @@ const hasFilter = computed(
     :empty-icon="ShoppingBag"
     @row-click="(r) => goDetail(r.id)"
   >
+    <template #header-__select>
+      <input
+        type="checkbox"
+        class="cursor-pointer"
+        :checked="allBatchableSelected"
+        :disabled="batchableItems.length === 0"
+        :title="allBatchableSelected ? '取消全選' : `全選本頁可建單訂單（${batchableItems.length}）`"
+        @click.stop="toggleSelectAll"
+      />
+    </template>
+
+    <template #cell-__select="{ row }">
+      <input
+        v-if="row.status === 'paid' || row.status === 'processing'"
+        type="checkbox"
+        class="cursor-pointer"
+        :checked="selectedIds.has(row.id)"
+        @click.stop="toggleSelect(row.id)"
+      />
+      <span v-else class="text-ink-muted text-[11px]">—</span>
+    </template>
+
     <template #cell-order_number="{ row }">
       <span class="font-mono text-[13px] text-ink-strong">{{ row.order_number }}</span>
     </template>
@@ -233,4 +352,87 @@ const hasFilter = computed(
     :page-size="pageSize"
     :total="total"
   />
+
+  <!-- 批次建單確認 dialog -->
+  <Dialog
+    :open="batchConfirmOpen"
+    title="批次建立物流訂單"
+    @close="batchConfirmOpen = false"
+  >
+    <div class="text-[14px] text-ink-default leading-[1.7] space-y-3">
+      <p>將為以下 <span class="font-mono text-ink-strong">{{ selectedCount }}</span> 筆訂單建立 ECpay 物流訂單：</p>
+      <ul class="bg-paper-subtle border border-line-hairline rounded-[var(--radius-xs)] p-3 max-h-[280px] overflow-auto text-[12px] font-mono space-y-1">
+        <li
+          v-for="o in items.filter((i) => selectedIds.has(i.id))"
+          :key="o.id"
+          class="flex justify-between"
+        >
+          <span class="text-ink-strong">{{ o.order_number }}</span>
+          <span class="text-ink-muted">{{ formatMoney(o.total) }}</span>
+        </li>
+      </ul>
+      <p class="text-[12px] text-ink-muted">
+        每筆都會打給 ECpay，若失敗該筆獨立回報，不影響成功筆。建單成功後該訂單狀態會更新為「已出貨」。
+      </p>
+    </div>
+    <template #footer>
+      <div class="flex items-center justify-end gap-2">
+        <Button variant="secondary" @click="batchConfirmOpen = false">取消</Button>
+        <Button
+          variant="primary"
+          :disabled="batchMut.isPending.value"
+          @click="doBatchCreate"
+        >
+          <Loader2 v-if="batchMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+          確認建單
+        </Button>
+      </div>
+    </template>
+  </Dialog>
+
+  <!-- 批次結果 dialog -->
+  <Dialog
+    :open="batchResultsOpen"
+    title="批次建單結果"
+    @close="batchResultsOpen = false"
+  >
+    <div class="space-y-3">
+      <div class="flex items-center gap-4 text-[13px]">
+        <span class="text-ink-strong">總共 <span class="font-mono">{{ batchResults.length }}</span> 筆</span>
+        <span class="text-state-success">
+          <Check :size="13" :stroke-width="1.5" class="inline" />
+          成功 <span class="font-mono">{{ successCount }}</span>
+        </span>
+        <span v-if="failedCount > 0" class="text-state-danger">
+          <XIcon :size="13" :stroke-width="1.5" class="inline" />
+          失敗 <span class="font-mono">{{ failedCount }}</span>
+        </span>
+      </div>
+      <ul class="bg-paper-subtle border border-line-hairline rounded-[var(--radius-xs)] p-3 max-h-[400px] overflow-auto text-[12px] space-y-2">
+        <li
+          v-for="r in batchResults"
+          :key="r.order_id"
+          class="border-b border-line-hairline pb-2 last:border-b-0 last:pb-0"
+        >
+          <div class="flex items-center justify-between">
+            <code class="text-ink-strong text-[11px]">{{ r.order_id }}</code>
+            <span v-if="r.ok" class="text-state-success font-mono text-[11px]">
+              <Check :size="11" :stroke-width="1.5" class="inline" />
+              {{ r.tracking_number || '已建單' }}
+            </span>
+            <span v-else class="text-state-danger text-[11px]">
+              <XIcon :size="11" :stroke-width="1.5" class="inline" />
+              失敗
+            </span>
+          </div>
+          <p v-if="!r.ok && r.error" class="mt-1 text-ink-muted text-[11px] whitespace-pre-line">{{ r.error }}</p>
+        </li>
+      </ul>
+    </div>
+    <template #footer>
+      <div class="flex justify-end">
+        <Button variant="primary" @click="batchResultsOpen = false">關閉</Button>
+      </div>
+    </template>
+  </Dialog>
 </template>

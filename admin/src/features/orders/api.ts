@@ -254,6 +254,36 @@ export function createShipment(id: string, payload: CreateShipmentPayload) {
   )
 }
 
+export interface BatchShipmentResultItem {
+  order_id: string
+  ok: boolean
+  tracking_number: string | null
+  ecpay_logistics_id: string | null
+  error: string | null
+}
+
+export interface BatchCreateShipmentResponse {
+  total: number
+  success: number
+  failed: number
+  results: BatchShipmentResultItem[]
+}
+
+export interface BatchCreateShipmentPayload {
+  order_ids: string[]
+  shipment_type?: ShipmentType
+}
+
+export function batchCreateShipments(payload: BatchCreateShipmentPayload) {
+  return request<BatchCreateShipmentResponse>(
+    '/admin/shipments/batch-create',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
 export function updateProductionProgress(
   orderId: string,
   progressId: string,
