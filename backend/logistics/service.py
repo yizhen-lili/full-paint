@@ -523,19 +523,28 @@ async def execute_create_shipment(
     # 6.5 dry-run 模式：跳過真實 ECpay 呼叫，回 mock 資料
     if settings.ecpay_dry_run:
         import secrets as _secrets
-        mock_logistics_id = f"MOCK{_secrets.token_hex(6).upper()}"  # 16 字元
-        mock_tracking = f"DRY{_secrets.token_hex(5).upper()}"        # 13 字元
+        # 模擬 ECpay 真實格式長度
+        mock_logistics_id = f"MOCK{_secrets.token_hex(6).upper()}"               # 16 字元
+        # CVSPaymentNo 真實是 11-13 字元純數字，mock 用 DRY+10 hex
+        mock_payment_no = f"DRY{_secrets.token_hex(5).upper()}"                  # 13 字元
+        # CVSValidationNo 只 7-Eleven 有、4 字純數字
+        mock_validation_no = (
+            f"{_secrets.randbelow(10000):04d}"                                    # 0000-9999
+            if shipping_type == "seven_eleven" else None
+        )
         logger.warning(
             f"[create-shipment][DRY-RUN] order={order_number} "
+            f"mock_payment_no={mock_payment_no} mock_validation={mock_validation_no} "
             f"would POST to ECpay with params={params}"
         )
         return {
             "ok": True,
             "rtn_code": 300,
             "rtn_msg": "[模擬] 訂單建立成功（未實際送 ECpay）",
-            "tracking_number": mock_tracking,
+            "tracking_number": mock_payment_no,             # CVSPaymentNo 也是 tracking_number
             "ecpay_logistics_id": mock_logistics_id,
-            "validation_no": "0000" if shipping_type == "seven_eleven" else None,
+            "cvs_payment_no": mock_payment_no,
+            "cvs_validation_no": mock_validation_no,
             "mac_verified": True,
             "dry_run": True,
         }
@@ -567,7 +576,8 @@ async def execute_create_shipment(
             "rtn_msg": parsed.get("rtn_msg") or "未知錯誤",
             "tracking_number": "",
             "ecpay_logistics_id": "",
-            "validation_no": None,
+            "cvs_payment_no": None,
+            "cvs_validation_no": None,
             "mac_verified": False,
         }
 
@@ -581,7 +591,8 @@ async def execute_create_shipment(
         )
 
     # CVS: tracking_number 用 CVSPaymentNo；HOME: 用 BookingNote
-    tracking_number = raw.get("CVSPaymentNo") or raw.get("BookingNote") or ""
+    cvs_payment_no = raw.get("CVSPaymentNo") or None
+    tracking_number = cvs_payment_no or raw.get("BookingNote") or ""
 
     return {
         "ok": True,
@@ -589,6 +600,7 @@ async def execute_create_shipment(
         "rtn_msg": parsed["rtn_msg"],
         "tracking_number": tracking_number,
         "ecpay_logistics_id": raw.get("AllPayLogisticsID", ""),
-        "validation_no": raw.get("CVSValidationNo") or None,
+        "cvs_payment_no": cvs_payment_no,
+        "cvs_validation_no": raw.get("CVSValidationNo") or None,
         "mac_verified": mac_verified,
     }

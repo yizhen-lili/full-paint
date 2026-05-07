@@ -56,6 +56,14 @@ async def init_schema() -> None:
                 "ALTER TABLE orders "
                 "ADD COLUMN IF NOT EXISTS shipping_locked BOOLEAN NOT NULL DEFAULT FALSE"
             ))
+            await conn.execute(text(
+                "ALTER TABLE shipments "
+                "ADD COLUMN IF NOT EXISTS cvs_payment_no VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE shipments "
+                "ADD COLUMN IF NOT EXISTS cvs_validation_no VARCHAR"
+            ))
 
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)

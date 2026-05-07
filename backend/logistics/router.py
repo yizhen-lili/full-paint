@@ -78,13 +78,70 @@ async def _probe_one_subtype(
     return {"sub_type": sub_type, "supported": None, "reason": f"未知回應：{snippet}"}
 
 
+async def _probe_home_subtype(
+    client: httpx.AsyncClient,
+    sub_type: str,
+    server_reply_url: str,
+) -> dict:
+    """測 HOME 宅配 SubType（TCAT/POST/ECAN）— 透過 /Express/Create 發試探單。
+
+    送故意不完整的資料：ECpay 會優先檢查「SubType 是否開通」再檢查資料完整性。
+    - 「找不到加密金鑰」/ 「請確認是否有申請開通」 → 沒開通
+    - 任何資料相關錯誤（如「ReceiverZipCode 必填」「金額錯誤」「姓名格式錯誤」）→ 已開通
+    """
+    import secrets as _secrets
+    from datetime import datetime as _dt
+
+    # 故意把姓名送 X (1 字)，會被 ECpay 退「字元不符」— 但簽章必須對
+    test_params = {
+        "MerchantID": settings.ecpay_merchant_id,
+        "MerchantTradeNo": f"PROBE{_secrets.token_hex(2).upper()}",
+        "MerchantTradeDate": _dt.now().strftime("%Y/%m/%d %H:%M:%S"),
+        "LogisticsType": "HOME",
+        "LogisticsSubType": sub_type,
+        "GoodsAmount": "100",
+        "GoodsName": "probe",
+        "SenderName": "測試客戶",
+        "SenderCellPhone": "0912345678",
+        "SenderZipCode": "100",
+        "SenderAddress": "台北市中正區重慶南路一段122號",
+        "ReceiverName": "測試客戶",
+        "ReceiverCellPhone": "0912345678",
+        "ReceiverZipCode": "100",
+        "ReceiverAddress": "台北市中正區重慶南路一段122號",
+        "Temperature": "0001",
+        "Specification": "0001",
+        "ScheduledPickupTime": "4",
+        "ServerReplyURL": server_reply_url,
+        "IsCollection": "N",
+    }
+    test_params["CheckMacValue"] = service.calculate_check_mac_value(test_params)
+
+    try:
+        resp = await client.post(
+            service.create_endpoint_url(),
+            data=test_params,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15.0,
+        )
+        body = resp.text.strip()
+    except Exception as e:
+        return {"sub_type": sub_type, "supported": None, "reason": f"ECpay 連線失敗：{e}"}
+
+    if "找不到加密金鑰" in body or "請確認是否有申請開通" in body:
+        return {"sub_type": sub_type, "supported": False, "reason": "ECpay 回：未開通此物流方式"}
+    # ECpay 建單回 0|錯誤訊息 或 1|...&RtnCode=...
+    # 只要不是「未開通」就視為「已開通」
+    snippet = body.replace("\n", " ").strip()[:200]
+    return {"sub_type": sub_type, "supported": True, "reason": f"已開通（ECpay 回應：{snippet}）"}
+
+
 @router.get("/probe-subtypes")
 async def probe_subtypes(request: Request) -> dict:
     """⚠️ 暫時 diagnostic — 用當前 env 的 MerchantID/HashKey 對 ECpay 試各 SubType，回報哪些已開通。
 
-    對 ECpay map endpoint 各送一筆 fake POST，依回應內容判斷：
-    - 「找不到加密金鑰」→ 未開通
-    - 真實 map redirect HTML → 已開通
+    CVS：用 /Express/map 試
+    HOME：用 /Express/Create 試
 
     僅供 user 確認自己 ECpay 帳號開通了哪些物流方式。正式上線前要刪除此 endpoint。
     """
@@ -92,24 +149,29 @@ async def probe_subtypes(request: Request) -> dict:
         return {"error": "ECPAY_MERCHANT_ID 未設定"}
 
     server_reply_url = _resolve_server_reply_url(request)
-    sub_types = ["UNIMART", "UNIMARTFREEZE", "FAMI", "HILIFE", "UNIMARTC2C", "FAMIC2C", "HILIFEC2C", "OKMARTC2C"]
+    cvs_sub_types = ["UNIMART", "UNIMARTFREEZE", "FAMI", "HILIFE", "UNIMARTC2C", "FAMIC2C", "HILIFEC2C", "OKMARTC2C"]
+    home_sub_types = ["TCAT", "POST", "ECAN"]
 
     async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(
-            *[_probe_one_subtype(client, st, server_reply_url) for st in sub_types]
+        cvs_results = await asyncio.gather(
+            *[_probe_one_subtype(client, st, server_reply_url) for st in cvs_sub_types]
+        )
+        home_results = await asyncio.gather(
+            *[_probe_home_subtype(client, st, server_reply_url) for st in home_sub_types]
         )
 
-    activated = [r["sub_type"] for r in results if r["supported"] is True]
+    all_results = list(cvs_results) + list(home_results)
+    activated = [r["sub_type"] for r in all_results if r["supported"] is True]
     return {
         "merchant_id": settings.ecpay_merchant_id,
         "env": settings.ecpay_env,
         "activated_subtypes": activated,
-        "category_hint": (
-            "B2C" if any(s in activated for s in ["UNIMART", "FAMI", "HILIFE"])
-            else "C2C" if any(s in activated for s in ["UNIMARTC2C", "FAMIC2C", "HILIFEC2C", "OKMARTC2C"])
-            else "未知"
-        ),
-        "details": results,
+        "categories": {
+            "cvs_b2c": [s for s in activated if s in ("UNIMART", "UNIMARTFREEZE", "FAMI", "HILIFE")],
+            "cvs_c2c": [s for s in activated if s in ("UNIMARTC2C", "FAMIC2C", "HILIFEC2C", "OKMARTC2C")],
+            "home": [s for s in activated if s in ("TCAT", "POST", "ECAN")],
+        },
+        "details": all_results,
     }
 
 

@@ -179,6 +179,9 @@ class Shipment(Base):
     )
     tracking_number = Column(String, nullable=True)
     ecpay_logistics_id = Column(String, nullable=True)
+    # CVS C2C 寄件用：用戶到 7-11 ibon / 全家 FamiPort 機台輸入這兩個值才能印貼紙
+    cvs_payment_no = Column(String, nullable=True)       # 寄貨編號（CVSPaymentNo）
+    cvs_validation_no = Column(String, nullable=True)    # 驗證碼（CVSValidationNo，僅 7-Eleven C2C 有）
     shipped_at = Column(TIMESTAMP(timezone=True), nullable=True)
     delivered_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
