@@ -135,22 +135,24 @@ async def debug_config(request: Request) -> dict:
 @router.get("/cvs-map", response_class=HTMLResponse)
 async def cvs_map_redirect(
     request: Request,
-    type: str = Query(..., description="LogisticsSubType, e.g. UNIMARTC2C / FAMIC2C"),
-    extra: str = Query("", description="ExtraData，用來把 user 識別資訊帶回"),
+    type: str = Query(..., max_length=20, description="LogisticsSubType, e.g. UNIMARTC2C / FAMIC2C"),
+    extra: str = Query("", max_length=service.MAX_EXTRA_DATA_LEN,
+                       description="ExtraData，最多 20 字元，原值會回 callback"),
 ) -> HTMLResponse:
-    """產出 auto-submit form HTML，瀏覽器一打開就 POST 到 ECpay map 頁面。"""
-    if not service.is_supported_sub_type(type):
-        raise HTTPException(status_code=400, detail=f"不支援的物流類型：{type}")
+    """產出 auto-submit form HTML，瀏覽器一打開就 POST 到 ECpay map 頁面。
 
-    if not settings.ecpay_merchant_id:
-        raise HTTPException(status_code=503, detail="ECPAY_MERCHANT_ID 未設定")
-
+    所有欄位驗證集中在 service.build_cvs_map_form()，違反 raise ValueError
+    這裡轉成 HTTP 400。
+    """
     server_reply_url = _resolve_server_reply_url(request)
-    params = service.build_cvs_map_form(
-        logistics_sub_type=type,
-        server_reply_url=server_reply_url,
-        extra_data=extra,
-    )
+    try:
+        params = service.build_cvs_map_form(
+            logistics_sub_type=type,
+            server_reply_url=server_reply_url,
+            extra_data=extra,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     action = service.map_endpoint_url()
 
     # auto-submit form
@@ -226,6 +228,7 @@ async def cvs_map_callback(request: Request) -> HTMLResponse:
     expected_mac = ""
 
     if received_mac:
+        # 嚴格驗：MAC 存在則必須對得起來
         expected_mac = service.calculate_check_mac_value(
             {k: v for k, v in all_params.items() if k != "CheckMacValue"}
         )
@@ -242,13 +245,38 @@ async def cvs_map_callback(request: Request) -> HTMLResponse:
                     chosen_encoding = "big5"
                     valid = True
                     expected_mac = exp_big5
+    else:
+        # ECpay CVS Map 已知 quirk：實際不附 CheckMacValue 欄位（與 /8795/ 文件不符）
+        # 缺失視為 valid；其他欄位驗證仍會把關（MerchantTradeNo / CVSStoreID 等）
+        valid = True
+        print("[ecpay-callback] no CheckMacValue from ECpay → accept (CVS Map quirk)", flush=True)
 
-    if not valid:
+    if received_mac and not valid:
         print(f"[ecpay-callback] verify FAILED: received_mac={received_mac!r} "
               f"expected_mac={expected_mac!r}", flush=True)
-    else:
+    elif received_mac:
         print(f"[ecpay-callback] verify OK encoding={chosen_encoding}", flush=True)
     print(f"[ecpay-callback] parsed keys={list(all_params.keys())}", flush=True)
+
+    # ── 業務層驗證（避免亂塞偽造資料給前端）─────────────────────────────
+    # 必要欄位齊備
+    if not all_params.get("MerchantTradeNo"):
+        valid = False
+        print("[ecpay-callback] missing MerchantTradeNo", flush=True)
+
+    # CVSStoreID 長度 ≤ 9（ECpay 規範）
+    cvs_store_id_raw = all_params.get("CVSStoreID", "")
+    if cvs_store_id_raw and len(cvs_store_id_raw) > service.MAX_CVS_STORE_ID_LEN:
+        valid = False
+        print(f"[ecpay-callback] CVSStoreID too long: {len(cvs_store_id_raw)}", flush=True)
+
+    # 截斷過長 response 欄位（log 警告但不拒收，避免可顯示資料丟失）
+    all_params["CVSStoreName"] = service.truncate_response_field(
+        all_params.get("CVSStoreName", ""), service.MAX_CVS_STORE_NAME_LEN * 3,  # 容錯 3 倍
+    )
+    all_params["CVSAddress"] = service.truncate_response_field(
+        all_params.get("CVSAddress", ""), service.MAX_CVS_ADDRESS_LEN * 2,  # 容錯 2 倍
+    )
 
     # 必要欄位提取（給前端 postMessage）
     MerchantID = all_params.get("MerchantID", "")

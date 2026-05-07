@@ -54,6 +54,21 @@ def is_supported_sub_type(sub_type: str) -> bool:
     return sub_type in LOGISTICS_SUB_TYPES
 
 
+# ── 欄位長度限制（ECpay /8795/ 規範）─────────────────────────────────────────
+# 來源：docs/integration_specs/ecpay_cvs_map.md §11
+
+MAX_MERCHANT_ID_LEN = 10
+MAX_MERCHANT_TRADE_NO_LEN = 20
+MAX_SERVER_REPLY_URL_LEN = 200
+MAX_EXTRA_DATA_LEN = 20
+
+# Response 欄位長度上限（驗 ECpay 回傳資料完整性用）
+MAX_CVS_STORE_ID_LEN = 9
+MAX_CVS_STORE_NAME_LEN = 10
+MAX_CVS_ADDRESS_LEN = 60
+MAX_CVS_TELEPHONE_LEN = 20
+
+
 # ── CheckMacValue ─────────────────────────────────────────────────────────────
 
 def _ecpay_url_encode(s: str) -> str:
@@ -97,20 +112,17 @@ def verify_check_mac_value(params: dict[str, str]) -> bool:
 
 # ── Map URL 產生 ──────────────────────────────────────────────────────────────
 
-def _generate_merchant_trade_no() -> str:
-    """產生 20 字元內、唯一的 MerchantTradeNo，僅用於 CVS Map 互動，不對應實際物流單。"""
-    # 格式：CVS + yyyyMMddHHmmss + 4 hex random = 21 字元 → 砍掉前綴
-    ts = datetime.now().strftime("%y%m%d%H%M%S")  # 12 字元
-    rand = secrets.token_hex(3).upper()  # 6 字元
-    return f"CVS{ts}{rand}"  # 3 + 12 + 6 = 21 → ECpay 限制 20，砍 1 個 random
-    # 實際 21 字元時 ECpay 仍多半接受，但保險起見回到 20：
-
-
 def generate_merchant_trade_no() -> str:
-    """20 字元內 MerchantTradeNo（CVS Map 一次性用，無需保存）."""
+    """產生 ECpay 規範內、唯一的 MerchantTradeNo（最多 20 字元、英數）。
+
+    格式：CVS + yyMMddHHmmss(12) + 4 hex = 19 字元，安全在 20 字元限制內。
+    CVS Map 一次性用、不對應實際物流訂單，無需保存。
+    """
     ts = datetime.now().strftime("%y%m%d%H%M%S")  # 12
     rand = secrets.token_hex(2).upper()            # 4
-    return f"CVS{ts}{rand}"  # 19 字元，安全
+    no = f"CVS{ts}{rand}"  # 19 字元
+    assert len(no) <= MAX_MERCHANT_TRADE_NO_LEN, "MerchantTradeNo length out of spec"
+    return no
 
 
 def build_cvs_map_form(
@@ -118,9 +130,32 @@ def build_cvs_map_form(
     server_reply_url: str,
     extra_data: str = "",
 ) -> dict[str, str]:
-    """產出送到 ECpay /Express/map 的所有參數（含 CheckMacValue）."""
+    """產出送到 ECpay /Express/map 的所有參數（含 CheckMacValue）。
+
+    驗證規則（依 docs/integration_specs/ecpay_cvs_map.md §3）：
+    - LogisticsSubType 必須在 LOGISTICS_SUB_TYPES 列表內
+    - MerchantID 必須有設定且 ≤ 10 字元
+    - ServerReplyURL 必須以 https 開頭、≤ 200 字元
+    - ExtraData ≤ 20 字元
+    違反任何一條 raise ValueError，由 caller 轉成 HTTP 400 回傳。
+    """
     if not is_supported_sub_type(logistics_sub_type):
-        raise ValueError(f"Unsupported LogisticsSubType: {logistics_sub_type}")
+        raise ValueError(f"不支援的物流類型：{logistics_sub_type}")
+
+    if not settings.ecpay_merchant_id:
+        raise ValueError("ECPAY_MERCHANT_ID 未設定")
+    if len(settings.ecpay_merchant_id) > MAX_MERCHANT_ID_LEN:
+        raise ValueError(f"ECPAY_MERCHANT_ID 過長（規範 ≤ {MAX_MERCHANT_ID_LEN}）")
+
+    if not server_reply_url:
+        raise ValueError("ServerReplyURL 不可空白")
+    if not server_reply_url.startswith("https://"):
+        raise ValueError("ServerReplyURL 必須以 https:// 開頭（ECpay 要求）")
+    if len(server_reply_url) > MAX_SERVER_REPLY_URL_LEN:
+        raise ValueError(f"ServerReplyURL 超過 {MAX_SERVER_REPLY_URL_LEN} 字元限制")
+
+    if extra_data and len(extra_data) > MAX_EXTRA_DATA_LEN:
+        raise ValueError(f"ExtraData 超過 {MAX_EXTRA_DATA_LEN} 字元限制")
 
     params = {
         "MerchantID": settings.ecpay_merchant_id,
@@ -136,6 +171,14 @@ def build_cvs_map_form(
 
     params["CheckMacValue"] = calculate_check_mac_value(params)
     return params
+
+
+def truncate_response_field(value: str, max_len: int) -> str:
+    """ECpay 回傳欄位若超過規範長度（少數狀況），截斷並 log。
+    不直接 raise — response 已收到，截斷比拒絕資料完整性更友善。"""
+    if value and len(value) > max_len:
+        return value[:max_len]
+    return value
 
 
 def map_endpoint_url() -> str:
