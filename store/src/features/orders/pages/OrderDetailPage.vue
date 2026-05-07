@@ -228,6 +228,22 @@ function fmtDateTime(iso: string | null): string {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+// 物流官網查詢連結 — 依 shipping_type 對應
+import type { Shipment as ShipmentType } from '../api'
+function trackingUrl(s: ShipmentType): string | null {
+  const tn = s.tracking_number
+  if (!tn) return null
+  if (!order.value) return null
+  const t = order.value.shipping_type
+  if (t === 'home') {
+    // HOME 黑貓：t-cat.com.tw / 中華郵政：post.gov.tw
+    // 預設黑貓查詢；郵政可由 admin 改 SubType 對應後自動換
+    return `https://www.t-cat.com.tw/Inquire/Trace.aspx?BillID=${encodeURIComponent(tn)}`
+  }
+  // 超商目前 ECpay 沒對外查詢頁；客戶取貨即取，不需要
+  return null
+}
+
 function shippingSummary(): string {
   if (!order.value) return ''
   const s = order.value.shipping_snapshot
@@ -391,13 +407,21 @@ function specSummary(spec: Record<string, unknown>): string {
               <div v-if="order.shipments.length > 0" class="kv-row">
                 <dt>物流單號</dt>
                 <dd>
-                  <span
+                  <div
                     v-for="s in order.shipments"
                     :key="s.id"
-                    class="track-no"
+                    class="shipment-line"
                   >
-                    {{ s.tracking_number ?? '尚未產生' }}
-                  </span>
+                    <span class="track-no">{{ s.tracking_number ?? '尚未產生' }}</span>
+                    <a
+                      v-if="trackingUrl(s) && s.tracking_number"
+                      :href="trackingUrl(s)!"
+                      target="_blank"
+                      rel="noopener"
+                      class="track-link"
+                    >物流查詢 →</a>
+                    <span v-if="s.last_rtn_msg" class="track-status">{{ s.last_rtn_msg }}</span>
+                  </div>
                 </dd>
               </div>
             </dl>
@@ -1083,6 +1107,28 @@ function specSummary(spec: Record<string, unknown>): string {
   padding: 2px 8px;
   border-radius: var(--radius-xs);
   margin-right: 8px;
+}
+.shipment-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.track-link {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color 150ms;
+}
+.track-link:hover { color: var(--color-accent-deep); }
+.track-status {
+  font-size: 12px;
+  color: var(--color-ink-muted);
+  letter-spacing: 0.04em;
 }
 
 .notes-body {

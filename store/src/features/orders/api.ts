@@ -58,6 +58,12 @@ export interface Shipment {
   shipment_type: string
   status: string
   tracking_number: string | null
+  ecpay_logistics_id?: string | null
+  cvs_payment_no?: string | null
+  cvs_validation_no?: string | null
+  last_rtn_code?: number | null
+  last_rtn_msg?: string | null
+  last_status_at?: string | null
   shipped_at: string | null
   delivered_at: string | null
 }

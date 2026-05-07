@@ -116,7 +116,16 @@ export interface OrderItem {
   production_progress: ProductionProgress | null
 }
 
-export interface Shipment {
+export interface ShipmentExtras {
+  ecpay_logistics_id?: string | null
+  cvs_payment_no?: string | null
+  cvs_validation_no?: string | null
+  last_rtn_code?: number | null
+  last_rtn_msg?: string | null
+  last_status_at?: string | null
+}
+
+export interface Shipment extends ShipmentExtras {
   id: string
   shipment_type: ShipmentType
   status: ShipmentStatus
@@ -305,6 +314,12 @@ export function adminUpdateShipping(orderId: string, payload: UpdateShippingPayl
 
 export function adminLockShipping(orderId: string) {
   return request<OrderDetail>(`/admin/orders/${orderId}/lock-shipping`, {
+    method: 'POST',
+  })
+}
+
+export function adminRefreshShipmentStatus(orderId: string) {
+  return request<OrderDetail>(`/admin/orders/${orderId}/refresh-shipment-status`, {
     method: 'POST',
   })
 }

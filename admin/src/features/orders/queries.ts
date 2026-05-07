@@ -4,6 +4,7 @@ import { toValue } from 'vue'
 
 import {
   adminLockShipping,
+  adminRefreshShipmentStatus,
   adminUpdateShipping,
   batchCreateShipments,
   createShipment,
@@ -125,6 +126,14 @@ export function useLockShippingMutation(orderId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => adminLockShipping(orderId),
+    onSuccess: () => invalidateOrder(qc, orderId),
+  })
+}
+
+export function useRefreshShipmentStatusMutation(orderId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => adminRefreshShipmentStatus(orderId),
     onSuccess: () => invalidateOrder(qc, orderId),
   })
 }

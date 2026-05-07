@@ -33,6 +33,7 @@ import {
   useUpdateAdminNotesMutation,
   useUpdateShippingMutation,
   useLockShippingMutation,
+  useRefreshShipmentStatusMutation,
 } from '../queries'
 import type {
   OrderDetail,
@@ -187,6 +188,15 @@ const shippingEditOpen = ref(false)
 const shippingEditErr = ref<string | null>(null)
 const updateShippingMut = useUpdateShippingMutation(orderId.value)
 const lockShippingMut = useLockShippingMutation(orderId.value)
+const refreshShipmentMut = useRefreshShipmentStatusMutation(orderId.value)
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // ignore
+  }
+}
 const shippingForm = ref({
   recipient_name: '',
   phone: '',
@@ -497,7 +507,19 @@ function copyOrderNumber() {
 
         <!-- Shipments -->
         <Card>
-          <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-4">出貨</h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-display text-ink-strong text-[18px] leading-[26px]">出貨</h2>
+            <Button
+              v-if="order.shipments.length > 0"
+              variant="secondary"
+              :disabled="refreshShipmentMut.isPending.value"
+              @click="refreshShipmentMut.mutate()"
+            >
+              <Loader2 v-if="refreshShipmentMut.isPending.value" :size="13" :stroke-width="1.5" class="animate-spin" />
+              <RotateCcw v-else :size="13" :stroke-width="1.5" />
+              重新查詢狀態
+            </Button>
+          </div>
           <div v-if="order.shipments.length === 0" class="text-[13px] text-ink-muted">
             尚未建立任何出貨批次
           </div>
@@ -519,8 +541,49 @@ function copyOrderNumber() {
                   <span v-if="s.delivered_at" class="ml-3">送達 {{ fmtDateTime(s.delivered_at) }}</span>
                 </div>
               </div>
-              <div v-if="s.tracking_number" class="mt-2 font-mono text-[12px] text-ink-strong">
-                追蹤號 {{ s.tracking_number }}
+
+              <!-- CVS：寄貨編號 + 驗證碼（給 ibon / FamiPort 機台輸入用） -->
+              <div v-if="s.cvs_payment_no" class="mt-3 pt-3 border-t border-line-hairline space-y-1.5">
+                <div class="text-[11px] tracking-[0.18em] uppercase text-ink-muted">寄貨編號（拿這串到 7-11 ibon / 全家 FamiPort 輸入）</div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-[15px] text-ink-strong">{{ s.cvs_payment_no }}</span>
+                  <button
+                    type="button"
+                    class="text-[11px] text-ink-muted hover:text-ink-strong transition-colors"
+                    @click="copyText(s.cvs_payment_no!)"
+                  >複製</button>
+                </div>
+                <template v-if="s.cvs_validation_no">
+                  <div class="text-[11px] tracking-[0.18em] uppercase text-ink-muted mt-2">驗證碼（7-11 才有）</div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono text-[15px] text-ink-strong">{{ s.cvs_validation_no }}</span>
+                    <button
+                      type="button"
+                      class="text-[11px] text-ink-muted hover:text-ink-strong transition-colors"
+                      @click="copyText(s.cvs_validation_no!)"
+                    >複製</button>
+                  </div>
+                </template>
+              </div>
+
+              <!-- HOME：託運單號 + 黑貓 / 郵政查詢連結 -->
+              <div v-else-if="s.tracking_number" class="mt-2 flex items-center gap-3 flex-wrap">
+                <div class="font-mono text-[12px] text-ink-strong">託運單號 {{ s.tracking_number }}</div>
+                <a
+                  v-if="order.shipping_type === 'home'"
+                  :href="`https://www.t-cat.com.tw/Inquire/Trace.aspx?BillID=${encodeURIComponent(s.tracking_number)}`"
+                  target="_blank"
+                  rel="noopener"
+                  class="text-[11px] tracking-[0.12em] uppercase text-accent hover:text-accent-deep transition-colors"
+                >黑貓物流查詢 →</a>
+              </div>
+
+              <!-- 最新 ECpay 狀態 -->
+              <div v-if="s.last_rtn_msg" class="mt-2 pt-2 border-t border-line-hairline text-[12px] text-ink-muted">
+                <span class="tracking-[0.04em]">最新狀態：</span>
+                <span class="text-ink-default">{{ s.last_rtn_msg }}</span>
+                <span v-if="s.last_rtn_code" class="ml-2 font-mono text-[11px]">({{ s.last_rtn_code }})</span>
+                <span v-if="s.last_status_at" class="ml-2 text-[11px]">{{ fmtDateTime(s.last_status_at) }}</span>
               </div>
             </div>
           </div>
