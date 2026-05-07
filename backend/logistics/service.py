@@ -408,8 +408,8 @@ async def get_sender_info(db: AsyncSession) -> dict[str, str]:
 
     缺欄位 → raise ValueError（admin 必須先到後台設）。
     """
-    # 避免 circular import
-    from orders.models import SystemSetting
+    # SystemSetting 模型實際定義在 color.models（歷史包袱，跨模組共用該表）
+    from color.models import SystemSetting
 
     info: dict[str, str] = {}
     for field, key in SENDER_KEYS.items():
