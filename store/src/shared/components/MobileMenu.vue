@@ -35,6 +35,11 @@ watch(
           <RouterLink to="/products" class="panel-link">商品</RouterLink>
           <RouterLink to="/themes" class="panel-link">主題</RouterLink>
           <RouterLink to="/custom" class="panel-link">客製</RouterLink>
+          <div class="panel-sublinks">
+            <RouterLink to="/custom/apply" class="panel-sublink">申請表單</RouterLink>
+            <RouterLink to="/custom/cases" class="panel-sublink">案例分享</RouterLink>
+            <RouterLink to="/custom/about" class="panel-sublink">關於客製化服務</RouterLink>
+          </div>
           <RouterLink to="/size-guide" class="panel-link">尺寸指南</RouterLink>
         </nav>
 
@@ -132,6 +137,23 @@ watch(
   background: var(--color-paper-deep);
   color: var(--color-accent);
 }
+
+.panel-sublinks {
+  display: flex; flex-direction: column;
+  padding: 0 24px 8px 40px;
+  border-left: 1px solid var(--color-line-subtle);
+  margin-left: 24px;
+}
+.panel-sublink {
+  font-family: var(--font-cn-serif);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-default);
+  text-decoration: none;
+  padding: 8px 0;
+  transition: color 150ms;
+}
+.panel-sublink:hover { color: var(--color-accent-deep); }
 
 .panel-divider {
   height: 1px;

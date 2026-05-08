@@ -8,6 +8,12 @@ import {
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import { useCustomRequestListQuery } from '../queries'
 import { STATUS_LABEL } from '../api'
+import CustomApplyForm from '../components/CustomApplyForm.vue'
+
+function scrollToApply(e: MouseEvent) {
+  e.preventDefault()
+  document.getElementById('apply-section')?.scrollIntoView({ behavior: 'smooth' })
+}
 
 // 已登入：顯示自己的進行中申請（不包含已完成）
 const myListQuery = useCustomRequestListQuery(() => ({ page: 1, page_size: 5 }))
@@ -86,16 +92,31 @@ const inflightRequests = computed(() =>
           <span class="hub-cta">瀏覽案例 <ArrowRight :size="14" /></span>
         </RouterLink>
 
-        <RouterLink to="/custom/apply" class="hub-card hub-card-apply">
+        <a href="#apply-section" class="hub-card hub-card-apply" @click="scrollToApply">
           <div class="hub-card-header">
             <span class="hub-no">03</span>
             <Sparkles :size="22" :stroke-width="1.4" class="hub-icon" />
           </div>
           <h3>開始申請</h3>
           <p>上傳照片、選擇偏好，1–3 個工作天內收到專屬報價。</p>
-          <span class="hub-cta">前往表單 <ArrowRight :size="14" /></span>
-        </RouterLink>
+          <span class="hub-cta">下方填寫 <ArrowRight :size="14" /></span>
+        </a>
       </div>
+    </section>
+
+    <!-- ── 申請表單區（直接在 hub 底部讓使用者 scroll 填寫） ──────── -->
+    <section class="apply-section" id="apply-section">
+      <SectionMasthead
+        no="03"
+        chapter="Apply"
+        title="開始申請"
+        caption="Bring your photo to canvas"
+      />
+      <p class="apply-intro">
+        上傳一張您喜歡的照片、留下基本偏好，<br />
+        我們將在 1–3 個工作天內回覆專屬報價。
+      </p>
+      <CustomApplyForm />
     </section>
 
     <!-- ── 4-step quick overview ────────────────────────────────────── -->
@@ -231,6 +252,17 @@ const inflightRequests = computed(() =>
   border-bottom: 1px solid currentColor; padding-bottom: 4px;
   align-self: flex-start;
   transition: color 200ms;
+}
+
+/* apply section */
+.apply-section {
+  margin-bottom: 80px;
+  scroll-margin-top: 80px;
+}
+.apply-section :deep(.apply-form-root) { max-width: 720px; margin: 32px 0 0; }
+.apply-intro {
+  font-size: 15px; line-height: 1.85; color: var(--color-ink-muted);
+  margin: 12px 0 0; max-width: 640px;
 }
 
 /* quick flow */

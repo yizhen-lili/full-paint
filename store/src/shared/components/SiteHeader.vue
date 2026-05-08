@@ -147,7 +147,28 @@ const TAGS_LIMIT = 8
           </div>
         </MegaMenu>
 
-        <RouterLink to="/custom" class="nav-link">客製</RouterLink>
+        <MegaMenu label="客製" to="/custom">
+          <div class="mega-custom">
+            <RouterLink to="/custom/apply" class="mega-custom-card">
+              <span class="mega-custom-no">01</span>
+              <span class="mega-custom-title">申請表單</span>
+              <span class="mega-custom-desc">上傳照片開始客製，1–3 個工作天回覆報價</span>
+            </RouterLink>
+            <RouterLink to="/custom/cases" class="mega-custom-card">
+              <span class="mega-custom-no">02</span>
+              <span class="mega-custom-title">案例分享</span>
+              <span class="mega-custom-desc">過去客戶完成的客製作品，可諮詢類似規格</span>
+            </RouterLink>
+            <RouterLink to="/custom/about" class="mega-custom-card">
+              <span class="mega-custom-no">03</span>
+              <span class="mega-custom-title">關於客製化服務</span>
+              <span class="mega-custom-desc">服務介紹、流程、定價邏輯、常見問題</span>
+            </RouterLink>
+          </div>
+          <div class="mega-footer">
+            <RouterLink to="/custom" class="mega-cta">客製化首頁 →</RouterLink>
+          </div>
+        </MegaMenu>
         <RouterLink to="/size-guide" class="nav-link">尺寸指南</RouterLink>
       </nav>
 
@@ -270,6 +291,38 @@ const TAGS_LIMIT = 8
   grid-template-columns: repeat(3, 1fr);
   gap: 32px;
   min-width: 540px;
+}
+
+.mega-custom {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  min-width: 560px;
+}
+.mega-custom-card {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid var(--color-line-subtle);
+  border-radius: 4px;
+  text-decoration: none; color: inherit;
+  transition: border-color 200ms, background 200ms;
+}
+.mega-custom-card:hover {
+  border-color: var(--color-accent);
+  background: var(--color-paper-surface);
+}
+.mega-custom-no {
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.22em; color: var(--color-fresh);
+}
+.mega-custom-title {
+  font-family: var(--font-cn-serif); font-size: 16px;
+  color: var(--color-ink-strong);
+  margin-top: 2px;
+}
+.mega-custom-desc {
+  font-size: 12px; color: var(--color-ink-muted);
+  line-height: 1.6;
 }
 
 .mega-footer {
