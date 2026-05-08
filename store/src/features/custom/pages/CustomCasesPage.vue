@@ -179,7 +179,7 @@ function consultCase(c: CustomCase) {
 .filter-chip:hover { border-color: var(--color-accent); color: var(--color-accent-deep); }
 .filter-chip.active {
   background: var(--color-accent-deep); border-color: var(--color-accent-deep);
-  color: #FCF7E5;
+  color: var(--color-paper-canvas);
 }
 
 .state {
@@ -204,12 +204,12 @@ function consultCase(c: CustomCase) {
 .case-card {
   position: relative; cursor: pointer;
   border: 1px solid var(--color-line); border-radius: var(--radius-sm);
-  overflow: hidden; background: #FFF;
+  overflow: hidden; background: var(--color-paper-surface);
   transition: border-color 200ms, transform 200ms;
 }
 .case-card:hover { border-color: var(--color-accent); transform: translateY(-2px); }
 .case-card:hover .case-cta { opacity: 1; transform: translateY(0); }
-.case-img { aspect-ratio: 4 / 3; overflow: hidden; background: var(--color-paper-surface, #FCF7E5); }
+.case-img { aspect-ratio: 4 / 3; overflow: hidden; background: var(--color-paper-surface); }
 .case-img img { width: 100%; height: 100%; object-fit: cover; }
 .case-meta { padding: 14px 16px 12px; border-top: 1px solid var(--color-line); }
 .case-meta h3 { font-family: var(--font-cn-serif); font-weight: 400; font-size: 15px; color: var(--color-ink-strong); margin: 0 0 4px; }
@@ -218,7 +218,7 @@ function consultCase(c: CustomCase) {
   position: absolute; bottom: 12px; right: 14px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em;
   color: var(--color-accent-deep);
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   padding: 4px 10px; border-radius: 999px;
   opacity: 0; transform: translateY(4px);
   transition: opacity 200ms, transform 200ms;

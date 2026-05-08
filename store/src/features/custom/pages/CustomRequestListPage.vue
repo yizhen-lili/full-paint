@@ -136,7 +136,7 @@ function statusTone(status: RequestStatus): string {
 }
 .filter-chip.active {
   background: var(--color-accent-deep); border-color: var(--color-accent-deep);
-  color: #FCF7E5;
+  color: var(--color-paper-canvas);
 }
 .state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -161,7 +161,7 @@ function statusTone(status: RequestStatus): string {
   text-decoration: none; color: var(--color-ink-strong);
   transition: background 150ms;
 }
-.row a:hover { background: var(--color-paper-surface, #FCF7E5); }
+.row a:hover { background: var(--color-paper-surface); }
 .row-id {
   font-family: var(--font-cn-serif); font-size: 16px;
   color: var(--color-ink-strong); margin-bottom: 6px;
@@ -177,23 +177,23 @@ function statusTone(status: RequestStatus): string {
   border: 1px solid transparent;
 }
 .tone-action {
-  background: var(--color-accent-deep); color: #FCF7E5;
+  background: var(--color-accent-deep); color: var(--color-paper-canvas);
   animation: pulse 1.6s ease-in-out infinite;
 }
 .tone-ok {
-  background: rgba(122, 156, 110, 0.15);
-  color: #5A7A4F; border-color: rgba(122, 156, 110, 0.3);
+  background: var(--color-fresh-tint);
+  color: var(--color-fresh); border-color: var(--color-fresh-soft);
 }
 .tone-danger {
-  background: rgba(184, 91, 88, 0.1);
-  color: #B85B58; border-color: rgba(184, 91, 88, 0.25);
+  background: var(--color-accent-wine-soft);
+  color: var(--color-accent-wine); border-color: var(--color-accent-wine-soft);
 }
 .tone-progress {
-  background: rgba(212, 165, 116, 0.18);
-  color: #8B6232; border-color: rgba(212, 165, 116, 0.35);
+  background: var(--color-accent-tint);
+  color: var(--color-accent-deep); border-color: var(--color-accent-soft);
 }
 .tone-neutral {
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   color: var(--color-ink-muted); border-color: var(--color-line);
 }
 @keyframes pulse {

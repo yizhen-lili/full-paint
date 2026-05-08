@@ -72,7 +72,7 @@ function onConsult() {
 .modal {
   position: relative; width: 100%; max-width: 720px;
   max-height: 90vh; overflow: hidden;
-  background: var(--color-paper-base, #F7F1E3);
+  background: var(--color-paper-canvas);
   border-radius: var(--radius-md);
   display: flex; flex-direction: column;
 }
@@ -85,7 +85,7 @@ function onConsult() {
   color: var(--color-ink-strong);
   box-shadow: 0 2px 8px rgba(43, 36, 27, 0.12);
 }
-.modal-close:hover { background: #FFF; }
+.modal-close:hover { background: var(--color-paper-surface); }
 
 .modal-body {
   display: grid; grid-template-columns: 1fr 1fr;
@@ -97,7 +97,7 @@ function onConsult() {
 
 .case-figure {
   margin: 0; aspect-ratio: 4 / 3;
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   overflow: hidden;
 }
 .case-figure img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -131,7 +131,7 @@ function onConsult() {
 .modal-footer {
   padding: 16px 24px;
   border-top: 1px solid var(--color-line);
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   display: flex; gap: 12px; justify-content: flex-end;
 }
 .cta, .cta-ghost {
@@ -141,7 +141,7 @@ function onConsult() {
   font-family: var(--font-cn-serif); font-size: 14px; letter-spacing: 0.06em;
 }
 .cta {
-  background: var(--color-accent-deep); color: #FCF7E5; border: 0;
+  background: var(--color-accent-deep); color: var(--color-paper-canvas); border: 0;
 }
 .cta:hover { background: var(--color-accent); }
 .cta-ghost {

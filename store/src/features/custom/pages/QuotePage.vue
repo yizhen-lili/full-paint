@@ -462,7 +462,7 @@ function canExtend() {
   font-family: var(--font-cn-serif); font-weight: 300;
   font-size: 22px; margin: 0;
 }
-.state.error .error-icon { color: #B85B58; }
+.state.error .error-icon { color: var(--color-accent-wine); }
 .error-hint { font-size: 13px; margin: 0; }
 .cta {
   font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.18em;
@@ -510,7 +510,7 @@ function canExtend() {
 }
 
 .countdown {
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);
   padding: 24px; margin-bottom: 32px;
@@ -537,7 +537,7 @@ function canExtend() {
   letter-spacing: 0.16em; margin-top: 2px;
 }
 .cd-sep {
-  font-size: 28px; color: var(--color-line-strong, #BFAD8C);
+  font-size: 28px; color: var(--color-line);
 }
 .extend-btn {
   margin-top: 8px; padding: 8px 14px; cursor: pointer;
@@ -566,7 +566,7 @@ function canExtend() {
 .preview-frame {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);
-  overflow: hidden; background: #FFF;
+  overflow: hidden; background: var(--color-paper-surface);
 }
 .preview-frame img { width: 100%; display: block; }
 .preview-hint {
@@ -589,7 +589,7 @@ function canExtend() {
 .spec dd.multiline { white-space: pre-line; }
 
 .price {
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);
   padding: 24px;
@@ -612,7 +612,7 @@ function canExtend() {
 }
 .msgs {
   list-style: none; padding: 16px; margin: 0;
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   border-radius: var(--radius-sm); border: 1px solid var(--color-line);
   display: flex; flex-direction: column; gap: 10px;
   max-height: 240px; overflow-y: auto;
@@ -626,10 +626,10 @@ function canExtend() {
   font-size: 13px;
 }
 .msg-mine .msg-bubble {
-  background: var(--color-accent-deep); color: #FCF7E5;
+  background: var(--color-accent-deep); color: var(--color-paper-canvas);
 }
 .msg-them .msg-bubble {
-  background: #FFF; color: var(--color-ink-strong);
+  background: var(--color-paper-surface); color: var(--color-ink-strong);
   border: 1px solid var(--color-line);
 }
 .msg-bubble p { margin: 0; line-height: 1.6; white-space: pre-line; }
@@ -649,7 +649,7 @@ function canExtend() {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
 }
 .btn-primary {
-  background: var(--color-accent-deep); color: #FCF7E5; border: 0;
+  background: var(--color-accent-deep); color: var(--color-paper-canvas); border: 0;
 }
 .btn-primary:hover:not(:disabled) { background: var(--color-accent); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -661,10 +661,10 @@ function canExtend() {
   border-color: var(--color-accent); color: var(--color-accent-deep);
 }
 .btn-tertiary {
-  background: transparent; color: #B85B58; border: 1px solid rgba(184, 91, 88, 0.3);
+  background: transparent; color: var(--color-accent-wine); border: 1px solid var(--color-accent-wine-soft);
 }
 .btn-tertiary:hover:not(:disabled) {
-  border-color: #B85B58; background: rgba(184, 91, 88, 0.06);
+  border-color: var(--color-accent-wine); background: var(--color-accent-wine-soft);
 }
 
 /* modal */
@@ -676,7 +676,7 @@ function canExtend() {
 }
 .modal {
   width: 100%; max-width: 480px;
-  background: var(--color-paper-base, #F7F1E3);
+  background: var(--color-paper-canvas);
   border-radius: var(--radius-md);
   display: flex; flex-direction: column;
   max-height: 90vh; overflow: hidden;
@@ -695,7 +695,7 @@ function canExtend() {
   color: var(--color-ink-muted);
 }
 .modal-hd button:hover {
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   color: var(--color-ink-strong);
 }
 .modal-body {
@@ -708,7 +708,7 @@ function canExtend() {
 .modal-ft {
   display: flex; gap: 12px; padding: 16px 24px;
   border-top: 1px solid var(--color-line);
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
 }
 .modal-ft .btn-primary, .modal-ft .btn-secondary, .modal-ft .btn-tertiary {
   flex: 1; padding: 12px;
@@ -724,11 +724,11 @@ function canExtend() {
 .profile:hover { border-color: var(--color-accent); }
 .profile.active {
   border-color: var(--color-accent-deep);
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
 }
 .profile-icon {
   flex-shrink: 0; width: 32px; height: 32px;
-  border-radius: 50%; background: var(--color-paper-surface, #FCF7E5);
+  border-radius: 50%; background: var(--color-paper-surface);
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--color-accent-deep);
 }
@@ -741,7 +741,7 @@ function canExtend() {
 .default-tag {
   font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em;
   padding: 1px 6px; background: var(--color-accent);
-  color: #FCF7E5; border-radius: 2px;
+  color: var(--color-paper-canvas); border-radius: 2px;
 }
 .profile-detail {
   font-size: 12px; color: var(--color-ink-default);
@@ -773,14 +773,14 @@ function canExtend() {
   width: 100%; padding: 10px 12px; resize: vertical; min-height: 72px;
   font: inherit; font-size: 14px;
   border: 1px solid var(--color-line); border-radius: var(--radius-xs);
-  background: #FFF; color: var(--color-ink-default);
+  background: var(--color-paper-surface); color: var(--color-ink-default);
 }
 .modal-body textarea:focus { outline: none; border-color: var(--color-accent); }
 
 .empty p { font-size: 14px; margin: 0 0 12px; }
 
 .error {
-  font-size: 13px; color: #B85B58;
+  font-size: 13px; color: var(--color-accent-wine);
   padding: 8px 16px; margin: 0;
 }
 

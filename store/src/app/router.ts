@@ -37,6 +37,7 @@ import NotFoundPage from '@/shared/components/NotFoundPage.vue'
 import PaletteDebugPage from '@/features/dev/pages/PaletteDebugPage.vue'
 import BandPickerPage from '@/features/dev/pages/BandPickerPage.vue'
 import LayoutPickerPage from '@/features/dev/pages/LayoutPickerPage.vue'
+import HubPickerPage from '@/features/dev/pages/HubPickerPage.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -91,6 +92,7 @@ export const router = createRouter({
     { path: '/_palette', name: 'palette', component: PaletteDebugPage, meta: { layout: 'minimal' } },
     { path: '/_band-picker', name: 'band-picker', component: BandPickerPage, meta: { layout: 'minimal' } },
     { path: '/_layout-picker', name: 'layout-picker', component: LayoutPickerPage, meta: { layout: 'default' } },
+    { path: '/_hub-picker', name: 'hub-picker', component: HubPickerPage, meta: { layout: 'default' } },
 
     // ── 404 catch-all ────────────────────────────────────────────────────
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundPage, meta: { layout: 'default' } },

@@ -235,7 +235,7 @@ const FAQS: Faq[] = [
 .block-note {
   font-size: 13px; color: var(--color-ink-muted); font-style: italic;
   padding: 12px 16px; border-left: 2px solid var(--color-accent);
-  background: var(--color-paper-surface, #FCF7E5); margin-top: 24px;
+  background: var(--color-paper-surface); margin-top: 24px;
 }
 
 /* 適合 / 不適合 grid */
@@ -248,11 +248,11 @@ const FAQS: Faq[] = [
   padding: 24px;
   border: 1px solid var(--color-line); border-radius: var(--radius-sm);
 }
-.suit-good { border-left: 3px solid #5A7A4F; }
-.suit-warn { border-left: 3px solid #B85B58; }
+.suit-good { border-left: 3px solid var(--color-fresh); }
+.suit-warn { border-left: 3px solid var(--color-accent-wine); }
 .suit > svg:first-child { margin-bottom: 12px; }
-.suit-good > svg:first-child { color: #5A7A4F; }
-.suit-warn > svg:first-child { color: #B85B58; }
+.suit-good > svg:first-child { color: var(--color-fresh); }
+.suit-warn > svg:first-child { color: var(--color-accent-wine); }
 .suit h3 { font-family: var(--font-cn-serif); font-weight: 400; font-size: 17px; margin: 0 0 12px; color: var(--color-ink-strong); }
 .suit ul { padding: 0 0 0 18px; margin: 0; }
 .suit li { font-size: 14px; line-height: 1.8; color: var(--color-ink-default); }
@@ -267,7 +267,7 @@ const FAQS: Faq[] = [
 .flow-icon {
   flex-shrink: 0; width: 40px; height: 40px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   border: 1px solid var(--color-line); border-radius: 50%;
   color: var(--color-accent-deep);
 }
@@ -282,11 +282,11 @@ const FAQS: Faq[] = [
   display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 20px; margin-top: 24px;
 }
-.trans-item { padding: 20px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-paper-surface, #FCF7E5); }
+.trans-item { padding: 20px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-paper-surface); }
 .trans-icon {
   width: 32px; height: 32px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: #FFF; border: 1px solid var(--color-line); border-radius: 50%;
+  background: var(--color-paper-surface); border: 1px solid var(--color-line); border-radius: 50%;
   color: var(--color-accent-deep); margin-bottom: 12px;
 }
 .trans-item h3 { font-family: var(--font-cn-serif); font-weight: 400; font-size: 15px; margin: 0 0 8px; color: var(--color-ink-strong); }
@@ -311,7 +311,7 @@ const FAQS: Faq[] = [
 /* CTA bottom */
 .cta-section {
   margin-top: 64px; padding: 56px 24px;
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   border: 1px solid var(--color-line); border-radius: var(--radius-md);
   text-align: center;
 }
@@ -324,7 +324,7 @@ const FAQS: Faq[] = [
   font-family: var(--font-cn-serif); font-size: 14px; letter-spacing: 0.06em;
   text-decoration: none;
 }
-.btn-primary { background: var(--color-accent-deep); color: #FCF7E5; border: 0; }
+.btn-primary { background: var(--color-accent-deep); color: var(--color-paper-canvas); border: 0; }
 .btn-primary:hover { background: var(--color-accent); }
 .btn-secondary { background: transparent; color: var(--color-ink-default); border: 1px solid var(--color-line); }
 .btn-secondary:hover { border-color: var(--color-accent); color: var(--color-accent-deep); }

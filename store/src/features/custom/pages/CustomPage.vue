@@ -170,7 +170,7 @@ const inflightRequests = computed(() =>
 }
 .inflight-item a {
   display: block; padding: 20px;
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   border: 1px solid var(--color-line); border-radius: var(--radius-sm);
   text-decoration: none; color: var(--color-ink-strong);
   transition: border-color 150ms;
@@ -192,7 +192,7 @@ const inflightRequests = computed(() =>
 
 .hub-card {
   display: flex; flex-direction: column; padding: 32px 28px;
-  background: #FFF;
+  background: var(--color-paper-surface);
   border: 1px solid var(--color-line); border-radius: var(--radius-md);
   text-decoration: none; color: var(--color-ink-strong);
   transition: border-color 200ms, transform 200ms, box-shadow 200ms;
@@ -244,7 +244,7 @@ const inflightRequests = computed(() =>
 .step-icon {
   width: 36px; height: 36px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--color-paper-surface, #FCF7E5);
+  background: var(--color-paper-surface);
   border: 1px solid var(--color-line);
   border-radius: 50%; margin-bottom: 14px;
   color: var(--color-accent-deep);
