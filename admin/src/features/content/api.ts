@@ -208,6 +208,64 @@ export function deleteCustomCase(id: string) {
   return request<void>(`/admin/custom-cases/${id}`, { method: 'DELETE' })
 }
 
+// ── Case image upload (Firebase signed URL → 公開 case_images/) ───────
+
+interface PublicSignedUrl {
+  upload_url: string
+  public_url: string
+  expires_at: string
+}
+
+export async function uploadCaseImage(file: File): Promise<string> {
+  const contentType: 'image/png' | 'image/jpeg' =
+    file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+  const signed = await request<PublicSignedUrl>('/upload/case-image', {
+    method: 'POST',
+    body: JSON.stringify({
+      filename: file.name,
+      content_type: contentType,
+      size: file.size,
+    }),
+  })
+  let putRes: Response
+  try {
+    putRes = await fetch(signed.upload_url, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: file,
+    })
+  } catch (e) {
+    throw new Error(
+      'PUT Firebase 失敗（多半是 CORS）— 請 admin 用「系統 → Firebase CORS 修正」按鈕設定。' +
+        ` 原始錯誤：${(e as Error).message}`,
+    )
+  }
+  if (!putRes.ok && !signed.upload_url.startsWith('https://stub.firebase')) {
+    throw new Error(`Firebase 拒絕上傳：HTTP ${putRes.status}`)
+  }
+  return signed.public_url
+}
+
+// ── 從 production_job 帶入規格 + 封面圖（重用既有 endpoint） ──────────
+
+export interface AvailableJob {
+  id: string
+  image_id: string | null
+  detail: string
+  difficulty: string
+  canvas_w_cm: number
+  canvas_h_cm: number
+  num_colors_used: number
+  price_formula_base: number
+  preview_url: string | null  // 15-min signed for thumbnail
+  cover_url: string | null    // 永久 download URL，寫入 case.image_url
+}
+
+export function listAvailableJobsForCase() {
+  // 不傳 product_id → 列出所有 approved + 有 cover 的 job 候選
+  return request<{ items: AvailableJob[] }>('/admin/production/jobs/available-for-variant')
+}
+
 // ── Labels ────────────────────────────────────────────────────────────
 
 export const DIFFICULTY_LABEL: Record<Difficulty, string> = {
