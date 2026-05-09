@@ -29,6 +29,10 @@ const activeIdx = ref(0)
 // 案例切換時重置主圖到第一張
 watch(() => props.caseData?.id, () => { activeIdx.value = 0 })
 
+const brokenUrls = ref<Set<string>>(new Set())
+function markBroken(url: string) { brokenUrls.value.add(url) }
+function isBroken(url: string) { return brokenUrls.value.has(url) }
+
 function onConsult() {
   if (props.caseData) emit('consult', props.caseData)
 }
@@ -47,10 +51,15 @@ function onConsult() {
             <div class="figure-col">
               <figure class="case-figure">
                 <img
-                  v-if="imageUrls.length > 0"
+                  v-if="imageUrls.length > 0 && !isBroken(imageUrls[activeIdx])"
                   :src="imageUrls[activeIdx]"
                   :alt="caseData.title"
+                  @error="markBroken(imageUrls[activeIdx])"
                 />
+                <div v-else-if="imageUrls.length > 0" class="img-broken">
+                  <span>圖片載入失敗</span>
+                  <code>{{ imageUrls[activeIdx] }}</code>
+                </div>
               </figure>
               <ul v-if="imageUrls.length > 1" class="thumb-strip">
                 <li
@@ -158,6 +167,20 @@ function onConsult() {
 }
 .thumb { background: var(--color-paper-surface); }
 .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+.img-broken {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 16px;
+  background: var(--color-paper-surface);
+  color: var(--color-accent-wine);
+  font-size: 13px;
+}
+.img-broken code {
+  font-size: 10px; color: var(--color-ink-muted);
+  word-break: break-all; text-align: center;
+  font-family: var(--font-mono);
+}
 .thumb:hover { border-color: var(--color-line); }
 .thumb.active { border-color: var(--color-accent-deep); }
 

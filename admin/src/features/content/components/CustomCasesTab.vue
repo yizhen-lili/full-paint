@@ -59,6 +59,15 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const isUploading = ref(false)
 const uploadError = ref<string | null>(null)
 
+// 紀錄哪些 URL 載失敗（key = url）— 失敗時前端顯示診斷資訊
+const brokenImageUrls = ref<Set<string>>(new Set())
+function markBroken(url: string) {
+  brokenImageUrls.value.add(url)
+}
+function isBroken(url: string): boolean {
+  return brokenImageUrls.value.has(url)
+}
+
 // 從 production_job 帶入 dialog
 const jobPickerOpen = ref(false)
 const jobsQuery = useQuery({
@@ -267,11 +276,19 @@ const categoryById = computed(() => {
   >
     <template #cell-image="{ row }">
       <img
-        v-if="row.image_url"
+        v-if="row.image_url && !isBroken(row.image_url)"
         :src="row.image_url"
         alt=""
         class="w-12 h-12 object-contain rounded-[var(--radius-xs)] border border-line-hairline bg-paper-surface"
+        @error="markBroken(row.image_url)"
       />
+      <div
+        v-else-if="row.image_url"
+        class="w-12 h-12 inline-flex items-center justify-center rounded-[var(--radius-xs)] border border-state-danger/40 bg-[var(--color-state-danger)]/[0.08] text-state-danger text-[10px]"
+        :title="row.image_url"
+      >
+        ⚠
+      </div>
     </template>
     <template #cell-title="{ row }">
       <span class="font-medium text-ink-strong">{{ row.title }}</span>
@@ -357,7 +374,23 @@ const categoryById = computed(() => {
             class="relative aspect-[4/3] rounded-[var(--radius-xs)] overflow-hidden border"
             :class="idx === 0 ? 'border-accent-deep ring-1 ring-accent-deep/30' : 'border-line-hairline'"
           >
-            <img :src="img.image_url" :alt="`圖 ${idx + 1}`" class="w-full h-full object-contain bg-paper-surface" />
+            <img
+              v-if="!isBroken(img.image_url)"
+              :src="img.image_url"
+              :alt="`圖 ${idx + 1}`"
+              class="w-full h-full object-contain bg-paper-surface"
+              @error="markBroken(img.image_url)"
+            />
+            <div
+              v-else
+              class="w-full h-full bg-[var(--color-state-danger)]/[0.06] flex flex-col items-center justify-center gap-1 p-2"
+            >
+              <span class="text-[10px] text-state-danger font-medium">⚠ 載入失敗</span>
+              <code
+                class="text-[8px] text-ink-muted text-center break-all leading-tight"
+                :title="img.image_url"
+              >{{ img.image_url.length > 50 ? img.image_url.slice(0, 50) + '…' : img.image_url }}</code>
+            </div>
             <!-- 封面標記 -->
             <span
               v-if="idx === 0"
