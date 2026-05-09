@@ -104,6 +104,8 @@ class PaymentSubmissionResponse(BaseModel):
 class OrderItemResponse(BaseModel):
     id: UUID
     product_variant_id: UUID | None
+    custom_request_id: UUID | None = None
+    production_job_id: UUID | None = None
     product_title_snapshot: str
     variant_spec_snapshot: dict
     unit_price: float

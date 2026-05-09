@@ -961,6 +961,8 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
         item_dicts.append({
             "id": item.id,
             "product_variant_id": item.product_variant_id,
+            "custom_request_id": item.custom_request_id,
+            "production_job_id": item.production_job_id,
             "product_title_snapshot": item.product_title_snapshot,
             "variant_spec_snapshot": item.variant_spec_snapshot,
             "unit_price": float(item.unit_price),
