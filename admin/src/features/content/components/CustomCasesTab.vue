@@ -58,7 +58,8 @@ const fCanvasH = ref('')
 const fDifficulty = ref<string>('')
 const fIsPublished = ref(false)
 
-// 圖片上傳狀態（用 <label> 包 input，不需 ref + JS click 觸發）
+// 圖片上傳狀態（沿用 ProductImagesTab 模式：<input ref> + button @click="fileInput?.click()"）
+const fileInput = ref<HTMLInputElement | null>(null)
 const isUploading = ref(false)
 const uploadError = ref<string | null>(null)
 
@@ -85,8 +86,7 @@ const jobs = computed<AvailableJob[]>(() =>
 const selectedJobId = ref<string | null>(null)
 
 async function onFileChange(e: Event) {
-  const input = e.target as HTMLInputElement
-  const files = input.files
+  const files = (e.target as HTMLInputElement).files
   if (!files || files.length === 0) return
 
   uploadError.value = null
@@ -113,7 +113,7 @@ async function onFileChange(e: Event) {
   } finally {
     isUploading.value = false
     // 重置 input value 讓 user 可以連續上傳同一個檔案（否則第二次同檔案不觸發 change）
-    input.value = ''
+    if (fileInput.value) fileInput.value.value = ''
   }
 }
 
@@ -470,30 +470,31 @@ const categoryById = computed(() => {
           <Loader2 :size="14" class="animate-spin" /> 上傳中…
         </div>
 
-        <!-- 加圖按鈕列：用 <label> 包 input 為原生 file chooser 觸發方式（在 -->
-        <!-- Teleport-ed Dialog 內 button + JS .click() 有時不可靠，label 是 -->
-        <!-- 瀏覽器原生 click→input 連動，沒有 user-gesture 規則問題） -->
+        <!-- input 拉出來頂層放，與 ProductImagesTab.vue 同模式 -->
+        <input
+          ref="fileInput"
+          type="file"
+          accept="image/jpeg,image/png"
+          multiple
+          class="hidden"
+          @change="onFileChange"
+        />
+
+        <!-- 加圖按鈕列：button @click 直接呼叫 fileInput.click()，跟新增商品同模式 -->
         <div class="flex items-center gap-2 flex-wrap">
-          <label
-            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors cursor-pointer relative"
-            :class="isUploading ? 'pointer-events-none opacity-50' : ''"
-          >
-            <Upload :size="13" :stroke-width="1.5" />
-            上傳新圖（可多選）
-            <!-- sr-only 模式：input 仍在 layout 內、可被 label click 觸發；
-                 display:none 在某些瀏覽器會讓 label click 無效 -->
-            <input
-              type="file"
-              accept="image/jpeg,image/png"
-              multiple
-              class="absolute w-px h-px opacity-0 overflow-hidden"
-              style="clip: rect(0 0 0 0); pointer-events: none;"
-              @change="onFileChange"
-            />
-          </label>
           <button
             type="button"
-            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors"
+            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors disabled:opacity-50"
+            :disabled="isUploading"
+            @click="fileInput?.click()"
+          >
+            <Loader2 v-if="isUploading" :size="13" :stroke-width="1.5" class="animate-spin" />
+            <Upload v-else :size="13" :stroke-width="1.5" />
+            上傳新圖（可多選）
+          </button>
+          <button
+            type="button"
+            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors disabled:opacity-50"
             :disabled="isUploading"
             @click="openJobPicker"
           >
