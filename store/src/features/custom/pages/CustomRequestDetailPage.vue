@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import {
-  ArrowLeft, Camera, Clock, ImageIcon, Loader2, Pencil, Send, Upload, X,
+  ArrowLeft, Camera, Loader2, Pencil, Send, Upload,
 } from 'lucide-vue-next'
 import {
   customQueryKeys,
   useCustomRequestDetailQuery,
+  useCustomPhotoSignedUrlQuery,
   usePostCustomMessageMutation,
   useUpdateCustomPhotoMutation,
 } from '../queries'
@@ -20,8 +21,10 @@ import {
   DIFFICULTY_LABEL,
   updateCustomRequestFields,
   type Difficulty,
-  type CustomRequestDetail,
 } from '../api'
+
+import RequestProgressStepper from '../components/RequestProgressStepper.vue'
+import MessageTimeline from '../components/MessageTimeline.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,15 +37,16 @@ const postMsgMut = usePostCustomMessageMutation()
 const updatePhotoMut = useUpdateCustomPhotoMutation()
 
 const detail = computed(() => detailQuery.data.value)
+const hasPhoto = computed(() => !!detail.value?.photo_url)
+const photoSignedUrlQuery = useCustomPhotoSignedUrlQuery(requestId, hasPhoto)
+const photoSrc = computed(() => photoSignedUrlQuery.data.value?.url ?? '')
 
-// SSE 即時訂閱
+// SSE
 const { connected } = useCustomRequestSse(requestId, {
   onMessage: () => scrollToBottom(),
-  onStatusChanged: () => { /* auto-invalidate handled in composable */ },
-  onQuoteSent: () => { /* auto-invalidate */ },
 })
 
-// ── 訊息對話 ──────────────────────────────────────────────────────────────
+// ── 對話 ──────────────────────────────────────────────────────────────────────
 const draftMessage = ref('')
 const sendError = ref<string | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
@@ -50,6 +54,8 @@ const messagesEl = ref<HTMLElement | null>(null)
 async function scrollToBottom() {
   await nextTick()
   if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight
+  // 也讓整頁滑到底（雜誌長頁的「最新」即在最下）
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })
 }
 watch(() => detail.value?.messages?.length, () => scrollToBottom())
 
@@ -65,7 +71,7 @@ async function sendMessage() {
   }
 }
 
-// ── quote_pending 修改規格（規格 store_orders.md L100-122）─────────────────
+// ── 規格編輯（quote_pending 才能）────────────────────────────────────────────
 const editing = ref(false)
 const editError = ref<string | null>(null)
 const editSaving = ref(false)
@@ -135,7 +141,7 @@ async function saveEdit() {
   }
 }
 
-// ── 重新上傳照片（quote_pending 才能）─────────────────────────────────────
+// ── 重新上傳照片 ──────────────────────────────────────────────────────────────
 const photoInput = ref<HTMLInputElement | null>(null)
 const photoUploading = ref(false)
 const photoError = ref<string | null>(null)
@@ -168,12 +174,12 @@ async function onPhotoChange(e: Event) {
   }
 }
 
-// ── 過期重新申請 — 預填上次資料到 sessionStorage 後跳 /custom ─────────────
+// ── 重新申請（過期 / 拒絕後）─────────────────────────────────────────────────
 function reapplyFromExpired() {
   if (!detail.value) return
   draft.save({
     request_type: 'custom_photo',
-    photo_url: null,  // 不複用舊 photo_path（私密路徑可能已失效）
+    photo_url: null,
     ref_product_id: null,
     canvas_w_cm: detail.value.canvas_w_cm,
     canvas_h_cm: detail.value.canvas_h_cm,
@@ -185,434 +191,801 @@ function reapplyFromExpired() {
   router.push({ path: '/custom/apply', query: { from: 'expired' } })
 }
 
-// ── 顯示輔助 ──────────────────────────────────────────────────────────────
+// ── 顯示輔助 ──────────────────────────────────────────────────────────────────
 function fmtDateTime(iso: string) {
   return new Date(iso).toLocaleString('zh-TW', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
   })
 }
 
-const statusBanner = computed<{ tone: string; text: string } | null>(() => {
-  const d = detail.value
-  if (!d) return null
-  switch (d.status) {
-    case 'quote_pending':
-      return { tone: 'pending', text: '已收到您的申請。我們將在 1–3 個工作天內回覆報價。' }
-    case 'negotiating':
-      return { tone: 'progress', text: '我們正在依您的需求製作測試稿。' }
-    case 'quote_sent':
-      return { tone: 'action', text: '報價已送達！請於有效期限內確認（從 Email 開啟報價連結）。' }
-    case 'quote_confirmed':
-      return { tone: 'ok', text: '已成立訂單。請完成付款。' }
-    case 'quote_rejected':
-      return { tone: 'danger', text: '您已拒絕此報價，本申請已關閉。' }
-    case 'quote_expired':
-      return { tone: 'danger', text: '報價已逾期。如仍想下單，請重新申請。' }
-    case 'draft_revision':
-      return { tone: 'progress', text: '我們收到您的修改要求，正在重新製作。' }
-  }
-  return null
-})
-
 const isEditable = computed(() => detail.value?.status === 'quote_pending')
 
-const expiresAt = computed(() => {
-  const d = detail.value
-  if (d?.status !== 'quote_sent') return null
-  return d.quote_expires_at ? new Date(d.quote_expires_at) : null
-})
 const expiresIn = computed(() => {
-  const ea = expiresAt.value
-  if (!ea) return null
-  const ms = ea.getTime() - Date.now()
+  const d = detail.value
+  if (!d || d.status !== 'quote_sent' || !d.quote_expires_at) return null
+  const ms = new Date(d.quote_expires_at).getTime() - Date.now()
   if (ms <= 0) return '已逾期'
   const h = Math.floor(ms / 3_600_000)
   const m = Math.floor((ms % 3_600_000) / 60_000)
   return h > 0 ? `${h} 小時 ${m} 分後到期` : `${m} 分鐘後到期`
 })
 
-onBeforeUnmount(() => {
-  // 清除 photo input ref
+// ── Banner 設計（依 status）──────────────────────────────────────────────────
+type BannerKind = 'revision' | 'quoted' | 'confirmed' | 'archived' | null
+
+const banner = computed<{
+  kind: BannerKind
+  title: string
+  body?: string
+  ctaLabel?: string
+  ctaTo?: () => void
+} | null>(() => {
+  const d = detail.value
+  if (!d) return null
+
+  switch (d.status) {
+    case 'draft_revision':
+      return {
+        kind: 'revision',
+        title: `已要求修改（${d.revision_count}/3）`,
+        body: '我們收到您的修改要求，正在重新製作。',
+      }
+    case 'quote_sent':
+      return {
+        kind: 'quoted',
+        title: '報價已送達',
+        body: expiresIn.value
+          ? `請於 ${expiresIn.value}前完成確認。`
+          : '請於有效期限內完成確認。',
+        ctaLabel: '前往報價頁',
+        ctaTo: () => goToQuote(),
+      }
+    case 'quote_confirmed':
+      return d.order_id ? {
+        kind: 'confirmed',
+        title: '已成立訂單',
+        body: '請完成付款以進入製作流程。',
+        ctaLabel: '前往訂單付款',
+        ctaTo: () => router.push({ name: 'order-detail', params: { id: d.order_id! } }),
+      } : null
+    case 'quote_rejected':
+      return {
+        kind: 'archived',
+        title: '此申請已關閉（您拒絕了報價）',
+        body: '如仍想下單，可重新申請。',
+        ctaLabel: '重新申請',
+        ctaTo: () => router.push('/custom/apply'),
+      }
+    case 'quote_expired':
+      return {
+        kind: 'archived',
+        title: '報價已逾期',
+        body: '逾 24 小時未確認，本申請已封存。',
+        ctaLabel: '重新申請（預填上次資料）',
+        ctaTo: () => reapplyFromExpired(),
+      }
+    default:
+      return null
+  }
 })
+
+function goToQuote() {
+  // 報價 token 存在於 backend，前端目前只能透過 email 連結進入；
+  // 此 CTA 留空待 #15 quote-token 路由支援由 detail 拿 token。
+  // 暫時 fallback：滾到「報價事件卡」位置。
+  const el = document.querySelector('.quote-event')
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+const composerVisible = computed(() =>
+  ['quote_pending', 'negotiating', 'quote_sent', 'draft_revision'].includes(
+    detail.value?.status ?? '',
+  ),
+)
 </script>
 
 <template>
   <main class="page">
     <RouterLink to="/custom/requests" class="back-link">
-      <ArrowLeft :size="14" /> 返回申請列表
+      <ArrowLeft :size="14" />
+      返回申請列表
     </RouterLink>
 
     <div v-if="detailQuery.isPending.value" class="state">
-      <Loader2 :size="20" class="spin" /> 載入中…
+      <Loader2 :size="20" class="spin" />
+      載入中…
     </div>
     <div v-else-if="detailQuery.isError.value" class="state error">
       <p>{{ (detailQuery.error.value as Error)?.message ?? '載入失敗' }}</p>
-      <button @click="router.push('/custom/requests')">回到列表</button>
+      <button class="btn-ghost" @click="router.push('/custom/requests')">回到列表</button>
     </div>
 
     <template v-else-if="detail">
+      <!-- ── Page Header ────────────────────────────────────────────── -->
       <header class="hd">
         <div class="hd-meta">
-          <span class="hd-no">{{ REQUEST_TYPE_LABEL[detail.request_type] }}</span>
-          <span class="hd-dot"></span>
-          <span class="hd-date">{{ fmtDateTime(detail.created_at) }}</span>
-          <span v-if="connected" class="hd-live" title="即時連線中">●</span>
+          <span class="hd-no">No. {{ detail.id.slice(0, 8).toUpperCase() }}</span>
+          <span class="hd-dot" />
+          <span class="hd-type">{{ REQUEST_TYPE_LABEL[detail.request_type] }}</span>
+          <span class="hd-line" />
+          <span
+            class="sse-dot"
+            :class="connected ? 'is-on' : 'is-off'"
+            :title="connected ? '即時連線中' : '連線中斷，重整頁面'"
+          >
+            <span class="sse-pulse" />
+            {{ connected ? '即時連線' : '已離線' }}
+          </span>
         </div>
         <h1 class="hd-title">客製申請</h1>
-        <div class="status" :class="`tone-${statusBanner?.tone ?? 'neutral'}`">
-          {{ STATUS_LABEL[detail.status] }}
-        </div>
+        <p class="hd-sub">
+          提交於 {{ fmtDateTime(detail.created_at) }}　·　目前狀態：
+          <strong>{{ STATUS_LABEL[detail.status] }}</strong>
+        </p>
       </header>
 
-      <!-- 狀態 banner -->
-      <div v-if="statusBanner" class="banner" :class="`banner-${statusBanner.tone}`">
-        <p>{{ statusBanner.text }}</p>
-        <p v-if="expiresIn" class="banner-sub">
-          <Clock :size="12" /> {{ expiresIn }}
-        </p>
-        <RouterLink v-if="detail.status === 'quote_confirmed' && detail.order_id"
-          :to="{ name: 'order-detail', params: { id: detail.order_id } }"
-          class="banner-cta"
-        >
-          前往訂單付款 →
-        </RouterLink>
+      <!-- ── 進度條 ──────────────────────────────────────────────────── -->
+      <RequestProgressStepper :status="detail.status" class="stepper" />
+
+      <!-- ── 狀態 Banner ─────────────────────────────────────────────── -->
+      <aside v-if="banner" class="banner" :class="`banner-${banner.kind}`">
+        <div class="banner-text">
+          <h3 class="banner-title">{{ banner.title }}</h3>
+          <p v-if="banner.body" class="banner-body">{{ banner.body }}</p>
+        </div>
         <button
-          v-if="detail.status === 'quote_expired'"
+          v-if="banner.ctaLabel && banner.ctaTo"
+          type="button"
           class="banner-cta"
-          @click="reapplyFromExpired"
+          @click="banner.ctaTo"
         >
-          重新申請（預填上次資料） →
+          {{ banner.ctaLabel }} →
         </button>
-        <RouterLink
-          v-else-if="detail.status === 'quote_rejected'"
-          to="/custom/apply"
-          class="banner-cta"
-        >
-          重新申請 →
-        </RouterLink>
-      </div>
+      </aside>
 
-      <!-- 照片預覽 + 重新上傳（quote_pending 才顯示重上傳按鈕）-->
-      <section v-if="detail.photo_url" class="photo-block">
-        <h2>申請照片</h2>
-        <div class="photo-frame">
-          <img :src="detail.photo_url.startsWith('http') ? detail.photo_url : ''" alt="申請照片" />
-          <p v-if="!detail.photo_url.startsWith('http')" class="photo-private-hint">
-            照片已私密儲存（只有您和管理員看得到）
-          </p>
-        </div>
-        <div v-if="isEditable" class="photo-actions">
-          <input
-            ref="photoInput"
-            type="file"
-            accept="image/jpeg,image/png"
-            class="hidden"
-            @change="onPhotoChange"
-          />
-          <button
-            type="button"
-            class="btn-ghost"
-            :disabled="photoUploading"
-            @click="triggerPhotoUpload"
-          >
-            <Loader2 v-if="photoUploading" :size="14" class="spin" />
-            <Upload v-else :size="14" />
-            重新上傳照片
-          </button>
-          <p v-if="photoError" class="error">{{ photoError }}</p>
-        </div>
-      </section>
+      <!-- ── 申請快照（照片 + 規格）─────────────────────────────────── -->
+      <section class="snapshot">
+        <h2 class="sec-title">
+          <span class="sec-no">01</span>
+          <span>申請快照</span>
+        </h2>
 
-      <!-- 申請規格（含 quote_pending 修改 UI）-->
-      <section class="spec">
-        <div class="spec-hd">
-          <h2>申請規格</h2>
-          <button v-if="isEditable && !editing" class="btn-ghost-sm" @click="openEdit">
-            <Pencil :size="12" /> 修改
-          </button>
-        </div>
-
-        <!-- 唯讀視圖 -->
-        <dl v-if="!editing">
-          <div v-if="detail.canvas_w_cm">
-            <dt>畫布尺寸</dt>
-            <dd>{{ detail.canvas_w_cm }}×{{ detail.canvas_h_cm }} cm</dd>
-          </div>
-          <div v-else>
-            <dt>畫布尺寸</dt>
-            <dd class="muted">未指定（讓管理員建議）</dd>
-          </div>
-          <div>
-            <dt>難度</dt>
-            <dd v-if="detail.difficulty">{{ DIFFICULTY_LABEL[detail.difficulty as Difficulty] || detail.difficulty }}</dd>
-            <dd v-else class="muted">讓管理員建議</dd>
-          </div>
-          <div v-if="detail.customer_notes">
-            <dt>備註</dt>
-            <dd class="multiline">{{ detail.customer_notes }}</dd>
-          </div>
-          <div v-if="detail.quoted_price">
-            <dt>報價金額</dt>
-            <dd class="price">NT$ {{ detail.quoted_price.toLocaleString() }}</dd>
-          </div>
-        </dl>
-
-        <!-- 編輯視圖 -->
-        <form v-else class="edit-form" @submit.prevent="saveEdit">
-          <label class="field-row">
-            <span class="field-label">畫布尺寸（cm）</span>
-            <span class="field-input-row">
-              <input type="number" v-model.number="editForm.canvas_w_cm" min="20" max="120" />
-              <span class="cross">×</span>
-              <input type="number" v-model.number="editForm.canvas_h_cm" min="20" max="120" />
-            </span>
-          </label>
-          <label class="field-row">
-            <span class="field-label">難度</span>
-            <select v-model="editForm.difficulty" class="select">
-              <option v-for="d in DIFFICULTY_OPTIONS" :key="d.value" :value="d.value">
-                {{ d.label }}
-              </option>
-            </select>
-          </label>
-          <label class="field-row">
-            <span class="field-label">備註</span>
-            <textarea v-model="editForm.customer_notes" rows="3" class="textarea"></textarea>
-          </label>
-          <p v-if="editError" class="error">{{ editError }}</p>
-          <div class="edit-actions">
-            <button type="button" class="btn-ghost" @click="cancelEdit">取消</button>
-            <button type="submit" class="btn-primary-sm" :disabled="editSaving">
-              <Loader2 v-if="editSaving" :size="14" class="spin" />
-              儲存修改
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <!-- 訊息對話 -->
-      <section class="thread">
-        <h2>對話紀錄</h2>
-        <ul ref="messagesEl" class="msgs">
-          <li v-if="!detail.messages?.length" class="msgs-empty">目前沒有訊息。</li>
-          <li
-            v-for="m in detail.messages"
-            :key="m.id"
-            class="msg"
-            :class="m.sender_type === 'customer' ? 'msg-mine' : 'msg-them'"
-          >
-            <div class="msg-bubble">
-              <p class="msg-text">{{ m.message }}</p>
-              <a v-if="m.image_url" :href="m.image_url" target="_blank" class="msg-img-link">
-                <ImageIcon :size="12" /> 附件圖
-              </a>
-              <span class="msg-time">{{ fmtDateTime(m.created_at) }}</span>
+        <div class="snapshot-grid">
+          <!-- 照片 -->
+          <figure v-if="detail.photo_url" class="photo-card">
+            <div class="photo-frame">
+              <Loader2 v-if="photoSignedUrlQuery.isLoading.value" :size="20" class="spin photo-loading" />
+              <img v-else-if="photoSrc" :src="photoSrc" :alt="`申請照片 ${detail.id.slice(0,8)}`" />
+              <p v-else class="photo-private-hint">
+                照片無法顯示<br>
+                <small>（私密儲存）</small>
+              </p>
             </div>
-          </li>
-        </ul>
+            <figcaption class="photo-cap">
+              <Camera :size="11" :stroke-width="1.5" />
+              客戶照片　·　私密
+            </figcaption>
+            <div v-if="isEditable" class="photo-actions">
+              <input
+                ref="photoInput"
+                type="file"
+                accept="image/jpeg,image/png"
+                class="hidden-input"
+                @change="onPhotoChange"
+              />
+              <button
+                type="button"
+                class="btn-ghost-sm"
+                :disabled="photoUploading"
+                @click="triggerPhotoUpload"
+              >
+                <Loader2 v-if="photoUploading" :size="12" class="spin" />
+                <Upload v-else :size="12" :stroke-width="1.5" />
+                重新上傳
+              </button>
+              <p v-if="photoError" class="error">{{ photoError }}</p>
+            </div>
+          </figure>
 
-        <form
-          v-if="['quote_pending', 'negotiating', 'quote_sent', 'draft_revision'].includes(detail.status)"
-          class="composer"
-          @submit.prevent="sendMessage"
-        >
+          <!-- 規格 -->
+          <article class="spec-card">
+            <header class="spec-head">
+              <h3>規格</h3>
+              <button v-if="isEditable && !editing" class="btn-ghost-sm" @click="openEdit">
+                <Pencil :size="11" :stroke-width="1.5" />
+                修改
+              </button>
+            </header>
+
+            <dl v-if="!editing" class="spec-dl">
+              <div class="spec-row">
+                <dt>畫布尺寸</dt>
+                <dd v-if="detail.canvas_w_cm">
+                  {{ detail.canvas_w_cm }} × {{ detail.canvas_h_cm }} cm
+                </dd>
+                <dd v-else class="muted">未指定（讓管理員建議）</dd>
+              </div>
+              <div class="spec-row">
+                <dt>難易度</dt>
+                <dd v-if="detail.difficulty">
+                  {{ DIFFICULTY_LABEL[detail.difficulty as Difficulty] }}
+                </dd>
+                <dd v-else class="muted">讓管理員建議</dd>
+              </div>
+              <div v-if="detail.customer_notes" class="spec-row">
+                <dt>備註</dt>
+                <dd class="multiline">{{ detail.customer_notes }}</dd>
+              </div>
+              <div v-if="detail.quoted_price" class="spec-row spec-price">
+                <dt>報價金額</dt>
+                <dd>NT$ {{ detail.quoted_price.toLocaleString() }}</dd>
+              </div>
+            </dl>
+
+            <form v-else class="edit-form" @submit.prevent="saveEdit">
+              <label class="field">
+                <span class="field-lb">畫布尺寸（cm）</span>
+                <span class="field-row">
+                  <input v-model.number="editForm.canvas_w_cm" type="number" min="20" max="120" class="num" />
+                  <span class="cross">×</span>
+                  <input v-model.number="editForm.canvas_h_cm" type="number" min="20" max="120" class="num" />
+                </span>
+              </label>
+              <label class="field">
+                <span class="field-lb">難易度</span>
+                <select v-model="editForm.difficulty" class="select">
+                  <option v-for="d in DIFFICULTY_OPTIONS" :key="d.value" :value="d.value">
+                    {{ d.label }}
+                  </option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field-lb">備註</span>
+                <textarea v-model="editForm.customer_notes" rows="3" class="textarea" />
+              </label>
+              <p v-if="editError" class="error">{{ editError }}</p>
+              <div class="edit-actions">
+                <button type="button" class="btn-ghost-sm" @click="cancelEdit">取消</button>
+                <button type="submit" class="btn-primary-sm" :disabled="editSaving">
+                  <Loader2 v-if="editSaving" :size="12" class="spin" />
+                  儲存修改
+                </button>
+              </div>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <!-- ── 對話 Timeline ───────────────────────────────────────────── -->
+      <section class="thread">
+        <h2 class="sec-title">
+          <span class="sec-no">02</span>
+          <span>對話紀錄</span>
+        </h2>
+        <div ref="messagesEl" class="msg-scroll">
+          <MessageTimeline
+            :messages="detail.messages"
+            :quoted-price="detail.quoted_price"
+            :quote-sent-at="detail.quoted_at"
+            :quote-expires-at="detail.quote_expires_at"
+            @go-to-quote="goToQuote"
+          />
+        </div>
+
+        <form v-if="composerVisible" class="composer" @submit.prevent="sendMessage">
           <textarea
             v-model="draftMessage"
             rows="2"
-            placeholder="補充說明或回覆訊息…"
+            placeholder="補充說明或回覆訊息（Ctrl/⌘+Enter 送出）"
             @keydown.ctrl.enter="sendMessage"
             @keydown.meta.enter="sendMessage"
-          ></textarea>
-          <button type="submit" :disabled="!draftMessage.trim() || postMsgMut.isPending.value">
+          />
+          <button
+            type="submit"
+            class="composer-send"
+            :disabled="!draftMessage.trim() || postMsgMut.isPending.value"
+          >
             <Loader2 v-if="postMsgMut.isPending.value" :size="14" class="spin" />
             <Send v-else :size="14" :stroke-width="1.5" />
             傳送
           </button>
         </form>
+        <p v-else class="closed-hint">此申請已關閉，無法繼續發訊息。</p>
         <p v-if="sendError" class="error">{{ sendError }}</p>
-        <p v-else-if="!['quote_pending', 'negotiating', 'quote_sent', 'draft_revision'].includes(detail.status)" class="closed-hint">
-          此申請已關閉，無法繼續發訊息。
-        </p>
       </section>
     </template>
   </main>
 </template>
 
 <style scoped>
-.page { max-width: 880px; margin: 0 auto; padding: 32px 24px 96px; }
+.page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 24px 96px;
+}
+
 .back-link {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em;
-  color: var(--color-ink-muted); text-decoration: none; margin-bottom: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  text-decoration: none;
+  margin-bottom: 32px;
 }
 .back-link:hover { color: var(--color-accent-deep); }
 
 .state {
-  display: flex; align-items: center; justify-content: center;
-  gap: 12px; padding: 80px 16px; color: var(--color-ink-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 80px 16px;
+  color: var(--color-ink-muted);
 }
 .state.error { flex-direction: column; }
-.state.error button {
-  margin-top: 12px; padding: 8px 16px; cursor: pointer;
-  border: 1px solid var(--color-line); background: transparent;
-  border-radius: var(--radius-xs); color: var(--color-ink-default);
+
+.spin { animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.hd {
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--color-line);
+}
+.hd-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.hd-no {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--color-fresh);
+  font-weight: 500;
+}
+.hd-dot {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--color-accent);
+}
+.hd-type {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 300;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+.hd-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--color-line), transparent 80%);
+  min-width: 32px;
 }
 
-.hd { margin-bottom: 24px; }
-.hd-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.hd-no { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.22em; color: var(--color-fresh); }
-.hd-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--color-accent); }
-.hd-date { font-family: var(--font-mono); font-size: 11px; color: var(--color-ink-muted); }
-.hd-live { margin-left: auto; color: var(--color-fresh); font-size: 10px; animation: pulse 1.5s ease-in-out infinite; }
-.hd-title { font-family: var(--font-cn-serif); font-weight: 300; font-size: 32px; letter-spacing: 0.04em; color: var(--color-ink-strong); margin: 0 0 12px; }
-.status { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; letter-spacing: 0.06em; border: 1px solid transparent; }
-.tone-action { background: var(--color-accent-deep); color: var(--color-paper-canvas); }
-.tone-ok { background: var(--color-fresh-tint); color: var(--color-fresh); border-color: var(--color-fresh-soft); }
-.tone-danger { background: var(--color-accent-wine-soft); color: var(--color-accent-wine); border-color: var(--color-accent-wine-soft); }
-.tone-progress { background: var(--color-accent-tint); color: var(--color-accent-deep); border-color: var(--color-accent-soft); }
-.tone-pending, .tone-neutral { background: var(--color-paper-surface); color: var(--color-ink-muted); border-color: var(--color-line); }
+.sse-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+.sse-dot.is-on {
+  color: var(--color-fresh);
+  border-color: var(--color-fresh-soft);
+  background: var(--color-fresh-tint);
+}
+.sse-dot.is-off {
+  color: var(--color-ink-muted);
+  border-color: var(--color-line);
+  background: var(--color-paper-surface);
+}
+.sse-pulse {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.sse-dot.is-on .sse-pulse {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.6); opacity: 0.4; }
+}
 
-.banner {
-  margin: 24px 0 32px; padding: 18px 22px;
-  border-radius: var(--radius-sm);
-  border: 1px solid; display: flex; flex-direction: column; gap: 8px;
-}
-.banner p { margin: 0; font-size: 14px; line-height: 1.7; }
-.banner-sub { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--color-ink-muted); }
-.banner-cta {
-  align-self: flex-start;
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 10px 18px; margin-top: 4px; cursor: pointer;
-  border: 0; border-radius: var(--radius-xs);
-  background: var(--color-accent-deep); color: var(--color-paper-canvas);
-  font-family: var(--font-cn-serif); font-size: 13px; letter-spacing: 0.06em;
-  text-decoration: none;
-}
-.banner-cta:hover { background: var(--color-accent); }
-.banner-action { background: var(--color-accent-tint); border-color: var(--color-accent-soft); color: var(--color-accent-deep); }
-.banner-progress { background: var(--color-accent-tint); border-color: var(--color-accent-soft); }
-.banner-ok { background: var(--color-fresh-tint); border-color: var(--color-fresh-soft); color: var(--color-fresh); }
-.banner-danger { background: var(--color-accent-wine-soft); border-color: var(--color-accent-wine-soft); color: var(--color-accent-wine); }
-.banner-pending { background: var(--color-paper-surface); border-color: var(--color-line); }
-
-.photo-block, .spec, .thread {
-  border-top: 1px solid var(--color-line);
-  padding-top: 32px; margin-top: 32px;
-}
-.photo-block h2, .spec h2, .thread h2 {
-  font-family: var(--font-cn-serif); font-weight: 300;
-  font-size: 19px; letter-spacing: 0.04em; margin: 0 0 16px;
+.hd-title {
+  font-family: var(--font-cn-serif);
+  font-weight: 300;
+  font-size: 32px;
+  letter-spacing: 0.06em;
   color: var(--color-ink-strong);
+  margin: 0 0 8px;
 }
-.spec-hd { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.spec-hd h2 { margin: 0; }
-
-.photo-frame {
-  max-width: 480px; aspect-ratio: 4 / 3;
-  border: 1px solid var(--color-line); border-radius: var(--radius-sm);
-  overflow: hidden; background: var(--color-paper-surface);
-  display: flex; align-items: center; justify-content: center;
+.hd-sub {
+  font-size: 13px;
+  color: var(--color-ink-muted);
+  margin: 0;
+  letter-spacing: 0.04em;
 }
-.photo-frame img { width: 100%; height: 100%; object-fit: cover; }
-.photo-private-hint {
-  font-size: 13px; color: var(--color-ink-muted); padding: 0 24px; text-align: center;
-}
-.photo-actions { margin-top: 12px; }
-
-.spec dl { display: grid; grid-template-columns: 1fr 2fr; gap: 12px 24px; margin: 0; }
-.spec dl > div { display: contents; }
-.spec dt {
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em;
-  color: var(--color-ink-muted); padding-top: 2px;
-}
-.spec dd { font-size: 14px; color: var(--color-ink-strong); margin: 0; }
-.spec dd.multiline { white-space: pre-line; }
-.spec dd.muted { color: var(--color-ink-muted); font-style: italic; }
-.spec dd.price { font-family: var(--font-cn-serif); font-size: 18px; color: var(--color-accent-deep); }
-
-.edit-form { display: flex; flex-direction: column; gap: 16px; }
-.field-row { display: flex; flex-direction: column; gap: 8px; }
-.field-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; color: var(--color-ink-muted); }
-.field-input-row { display: flex; align-items: center; gap: 8px; }
-.field-input-row input {
-  width: 80px; padding: 8px 10px;
-  border: 1px solid var(--color-line); border-radius: var(--radius-xs);
-  font-family: var(--font-mono); font-size: 14px;
-  text-align: center;
-}
-.cross { color: var(--color-ink-muted); }
-.select, .textarea {
-  padding: 8px 10px; font: inherit; font-size: 14px;
-  border: 1px solid var(--color-line); border-radius: var(--radius-xs);
-  background: var(--color-paper-surface); color: var(--color-ink-default);
-}
-.select { max-width: 240px; }
-.textarea { resize: vertical; }
-
-.edit-actions { display: flex; gap: 12px; justify-content: flex-end; }
-
-.msgs {
-  list-style: none; padding: 16px 4px; margin: 0 0 16px;
-  max-height: 400px; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 12px;
-  background: var(--color-paper-surface);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-line);
-}
-.msgs-empty { padding: 32px; text-align: center; color: var(--color-ink-muted); font-size: 13px; }
-.msg { display: flex; }
-.msg-mine { justify-content: flex-end; }
-.msg-them { justify-content: flex-start; }
-.msg-bubble { max-width: 78%; padding: 10px 14px; border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px; }
-.msg-mine .msg-bubble { background: var(--color-accent-deep); color: var(--color-paper-canvas); }
-.msg-them .msg-bubble { background: var(--color-paper-surface); color: var(--color-ink-strong); border: 1px solid var(--color-line); }
-.msg-text { margin: 0; font-size: 14px; line-height: 1.6; white-space: pre-line; word-break: break-word; }
-.msg-img-link { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: inherit; opacity: 0.85; text-decoration: underline; }
-.msg-time { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; opacity: 0.65; }
-
-.composer { display: flex; gap: 8px; align-items: flex-end; }
-.composer textarea {
-  flex: 1; padding: 10px 12px; resize: none;
-  font: inherit; font-size: 14px;
-  border: 1px solid var(--color-line); border-radius: var(--radius-xs);
-  background: var(--color-paper-surface);
+.hd-sub strong {
+  font-weight: 500;
   color: var(--color-ink-default);
 }
-.composer textarea:focus { outline: none; border-color: var(--color-accent); background: var(--color-paper-surface); }
-.composer button {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 10px 16px; border: 0; cursor: pointer;
-  background: var(--color-accent-deep); color: var(--color-paper-canvas);
-  border-radius: var(--radius-xs); font: inherit; font-size: 13px;
-}
-.composer button:disabled { opacity: 0.5; cursor: not-allowed; }
-.composer button:hover:not(:disabled) { background: var(--color-accent); }
 
-.btn-ghost, .btn-ghost-sm {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 14px; cursor: pointer;
-  background: transparent; color: var(--color-ink-default);
-  border: 1px solid var(--color-line); border-radius: var(--radius-xs);
-  font-family: inherit; font-size: 13px;
+/* ── Stepper ─────────────────────────────────────────────────────── */
+.stepper { margin-bottom: 32px; }
+
+/* ── Banner ──────────────────────────────────────────────────────── */
+.banner {
+  margin: 0 0 36px;
+  padding: 22px 24px;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
 }
-.btn-ghost-sm { padding: 4px 10px; font-size: 12px; }
-.btn-ghost:hover, .btn-ghost-sm:hover { border-color: var(--color-accent); color: var(--color-accent-deep); }
-.btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+.banner-text { flex: 1; min-width: 220px; }
+.banner-title {
+  font-family: var(--font-cn-serif);
+  font-weight: 400;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  margin: 0 0 6px;
+}
+.banner-body {
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0;
+  color: var(--color-ink-default);
+}
+.banner-cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 11px 22px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--color-ink-strong);
+  color: var(--color-paper-canvas);
+  font-family: var(--font-cn-serif);
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 150ms;
+}
+.banner-cta:hover { background: var(--color-accent-deep); }
+
+.banner-revision {
+  background: var(--color-paper-surface);
+  border-color: var(--color-state-warning);
+}
+.banner-revision .banner-title { color: var(--color-state-warning); }
+
+.banner-quoted {
+  background: var(--color-fresh-tint);
+  border-color: var(--color-fresh);
+}
+.banner-quoted .banner-title { color: var(--color-fresh); }
+
+.banner-confirmed {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+}
+.banner-confirmed .banner-title { color: var(--color-accent-deep); }
+
+.banner-archived {
+  background: var(--color-paper-deep);
+  border-color: var(--color-line);
+  color: var(--color-ink-muted);
+}
+.banner-archived .banner-title { color: var(--color-ink-default); }
+.banner-archived .banner-cta { background: var(--color-accent-deep); }
+
+/* ── Section title ───────────────────────────────────────────────── */
+.sec-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 20px;
+  font-family: var(--font-cn-serif);
+  font-weight: 300;
+  font-size: 19px;
+  letter-spacing: 0.06em;
+  color: var(--color-ink-strong);
+}
+.sec-no {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--color-fresh);
+}
+
+/* ── Snapshot ────────────────────────────────────────────────────── */
+.snapshot {
+  border-top: 1px solid var(--color-line);
+  padding-top: 32px;
+  margin-bottom: 48px;
+}
+
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.photo-card {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.photo-frame {
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--color-paper-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: sepia(0.07) saturate(0.92);
+}
+.photo-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.photo-loading { color: var(--color-ink-muted); }
+.photo-private-hint {
+  font-size: 12px;
+  color: var(--color-ink-muted);
+  text-align: center;
+  margin: 0;
+  padding: 16px;
+  letter-spacing: 0.04em;
+}
+.photo-private-hint small {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+}
+.photo-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+.photo-actions { margin-top: 4px; }
+.hidden-input { display: none; }
+
+.spec-card {
+  background: var(--color-paper-surface);
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-sm);
+  padding: 24px;
+}
+.spec-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-line-subtle);
+}
+.spec-head h3 {
+  font-family: var(--font-cn-serif);
+  font-weight: 300;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  color: var(--color-ink-strong);
+  margin: 0;
+}
+.spec-dl { margin: 0; display: flex; flex-direction: column; gap: 14px; }
+.spec-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 12px;
+  align-items: baseline;
+}
+.spec-row dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  margin: 0;
+}
+.spec-row dd {
+  font-size: 14px;
+  color: var(--color-ink-default);
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+.spec-row dd.muted { color: var(--color-ink-muted); }
+.spec-row dd.multiline { white-space: pre-wrap; line-height: 1.7; }
+.spec-price dd {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  color: var(--color-ink-strong);
+}
+
+/* edit form */
+.edit-form { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-lb {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+.field-row { display: inline-flex; align-items: center; gap: 10px; }
+.num, .select, .textarea {
+  border: 1px solid var(--color-line-subtle);
+  background: var(--color-paper-canvas);
+  border-radius: var(--radius-xs);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-ink-default);
+}
+.num { width: 96px; }
+.select { width: 100%; }
+.textarea { width: 100%; resize: vertical; }
+.num:focus, .select:focus, .textarea:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.cross { color: var(--color-ink-muted); }
+.edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.btn-ghost-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-line);
+  background: transparent;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: var(--font-cn-serif);
+  font-size: 12px;
+  color: var(--color-ink-default);
+  letter-spacing: 0.04em;
+}
+.btn-ghost-sm:hover { border-color: var(--color-accent); color: var(--color-accent-deep); }
+.btn-ghost-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .btn-primary-sm {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 10px 18px; cursor: pointer;
-  background: var(--color-accent-deep); color: var(--color-paper-canvas);
-  border: 0; border-radius: var(--radius-xs);
-  font-family: var(--font-cn-serif); font-size: 13px; letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 0;
+  background: var(--color-ink-strong);
+  color: var(--color-paper-canvas);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: var(--font-cn-serif);
+  font-size: 12px;
+  letter-spacing: 0.04em;
 }
-.btn-primary-sm:hover:not(:disabled) { background: var(--color-accent); }
+.btn-primary-sm:hover { background: var(--color-accent-deep); }
 .btn-primary-sm:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.error { font-size: 13px; color: var(--color-accent-wine); margin: 8px 0 0; }
-.closed-hint { text-align: center; font-size: 13px; color: var(--color-ink-muted); margin: 0; }
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border: 1px solid var(--color-ink-strong);
+  background: transparent;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: var(--font-cn-serif);
+  font-size: 13px;
+  color: var(--color-ink-strong);
+  letter-spacing: 0.04em;
+  margin-top: 12px;
+}
 
-.hidden { display: none; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+/* ── Thread ──────────────────────────────────────────────────────── */
+.thread {
+  border-top: 1px solid var(--color-line);
+  padding-top: 32px;
+}
+.msg-scroll {
+  max-height: 560px;
+  overflow-y: auto;
+  padding: 4px 4px 8px;
+  margin-bottom: 16px;
+}
+.msg-scroll::-webkit-scrollbar { width: 6px; }
+.msg-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-line-subtle);
+  border-radius: 3px;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+  background: var(--color-paper-surface);
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+}
+.composer textarea {
+  border: 0;
+  background: transparent;
+  resize: vertical;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-ink-default);
+  min-height: 56px;
+  padding: 4px;
+}
+.composer textarea:focus { outline: none; }
+
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border: 0;
+  background: var(--color-ink-strong);
+  color: var(--color-paper-canvas);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: var(--font-cn-serif);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.composer-send:hover { background: var(--color-accent-deep); }
+.composer-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.closed-hint {
+  text-align: center;
+  padding: 18px 12px;
+  background: var(--color-paper-deep);
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  color: var(--color-ink-muted);
+  margin: 0;
+}
+
+.error {
+  color: var(--color-state-danger);
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+@media (max-width: 767px) {
+  .hd-title { font-size: 26px; }
+  .snapshot-grid { grid-template-columns: 1fr; gap: 24px; }
+  .photo-card { max-width: 320px; }
+}
 </style>
