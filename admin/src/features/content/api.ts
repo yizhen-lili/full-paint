@@ -79,9 +79,15 @@ export interface CaseCategory {
   created_at: string
 }
 
-export interface CustomCase {
+export interface CaseImageItem {
   id: string
   image_url: string
+  sort_order: number
+}
+
+export interface CustomCase {
+  id: string
+  image_url: string  // 主圖（= images[0].image_url，前端 list 縮圖讀此欄位）
   title: string
   description: string | null
   category_id: string | null
@@ -90,6 +96,20 @@ export interface CustomCase {
   difficulty: Difficulty | null
   is_published: boolean
   created_at: string
+  images?: CaseImageItem[]
+}
+
+/** 寫入 payload：images 為陣列（順序即 sort_order，service 會重新編號） */
+export interface CustomCaseWritePayload {
+  image_url?: string | null
+  title: string
+  description: string | null
+  category_id: string | null
+  canvas_w_cm: number | null
+  canvas_h_cm: number | null
+  difficulty: Difficulty | null
+  is_published: boolean
+  images?: { image_url: string }[]
 }
 
 // ── Endpoints ─────────────────────────────────────────────────────────
@@ -189,13 +209,13 @@ export function listCustomCases(params: { page?: number; page_size?: number } = 
     `/admin/custom-cases?${q.toString()}`,
   )
 }
-export function createCustomCase(payload: Omit<CustomCase, 'id' | 'created_at'>) {
+export function createCustomCase(payload: CustomCaseWritePayload) {
   return request<CustomCase>('/admin/custom-cases', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
-export function updateCustomCase(id: string, payload: Omit<CustomCase, 'id' | 'created_at'>) {
+export function updateCustomCase(id: string, payload: CustomCaseWritePayload) {
   return request<CustomCase>(`/admin/custom-cases/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),

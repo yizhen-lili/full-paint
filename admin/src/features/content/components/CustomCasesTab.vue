@@ -45,7 +45,7 @@ const editing = ref<CustomCase | null>(null)
 const apiError = ref<string | null>(null)
 
 // form fields
-const fImageUrl = ref('')
+const fImages = ref<{ image_url: string }[]>([])  // 多圖按順序
 const fTitle = ref('')
 const fDescription = ref('')
 const fCategoryId = ref<string>('')
@@ -77,20 +77,25 @@ function triggerFile() {
 }
 
 async function onFileChange(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  if (file.size > 20 * 1024 * 1024) {
-    uploadError.value = '檔案超過 20MB'
-    return
-  }
-  if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
-    uploadError.value = '只接受 JPEG / PNG'
-    return
-  }
+  const files = (e.target as HTMLInputElement).files
+  if (!files || files.length === 0) return
+
   uploadError.value = null
   isUploading.value = true
   try {
-    fImageUrl.value = await uploadCaseImage(file)
+    // 支援一次選多張，按順序 append 到 fImages 後面
+    for (const file of Array.from(files)) {
+      if (file.size > 20 * 1024 * 1024) {
+        uploadError.value = `${file.name} 超過 20MB，已跳過`
+        continue
+      }
+      if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
+        uploadError.value = `${file.name} 非 JPEG/PNG，已跳過`
+        continue
+      }
+      const url = await uploadCaseImage(file)
+      fImages.value.push({ image_url: url })
+    }
   } catch (err) {
     uploadError.value = (err as { message?: string }).message || '上傳失敗'
   } finally {
@@ -99,9 +104,15 @@ async function onFileChange(e: Event) {
   }
 }
 
-function clearImage() {
-  fImageUrl.value = ''
-  uploadError.value = null
+function removeImage(idx: number) {
+  fImages.value.splice(idx, 1)
+}
+
+function moveImage(idx: number, dir: -1 | 1) {
+  const target = idx + dir
+  if (target < 0 || target >= fImages.value.length) return
+  const arr = fImages.value
+  ;[arr[idx], arr[target]] = [arr[target], arr[idx]]
 }
 
 function openJobPicker() {
@@ -112,11 +123,11 @@ function openJobPicker() {
 function pickJob() {
   const job = jobs.value.find((j) => j.id === selectedJobId.value)
   if (!job) return
-  // 自動帶入：cover URL + canvas + difficulty
-  if (job.cover_url) fImageUrl.value = job.cover_url
-  fCanvasW.value = String(job.canvas_w_cm)
-  fCanvasH.value = String(job.canvas_h_cm)
-  fDifficulty.value = job.difficulty
+  // 把 job cover 加進 images（不取代既有）；同時自動帶入規格欄位
+  if (job.cover_url) fImages.value.push({ image_url: job.cover_url })
+  if (!fCanvasW.value) fCanvasW.value = String(job.canvas_w_cm)
+  if (!fCanvasH.value) fCanvasH.value = String(job.canvas_h_cm)
+  if (!fDifficulty.value) fDifficulty.value = job.difficulty
   jobPickerOpen.value = false
 }
 
@@ -125,7 +136,18 @@ watch(
   () => {
     if (dialogOpen.value) {
       const e = editing.value
-      fImageUrl.value = e?.image_url ?? ''
+      // 編輯模式：用 backend 回的 images 陣列；建立模式：空
+      // 後端有 backfill，舊案例不會出現「沒 images 但有 image_url」的狀況
+      if (e?.images && e.images.length > 0) {
+        fImages.value = e.images
+          .slice()
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map((i) => ({ image_url: i.image_url }))
+      } else if (e?.image_url) {
+        fImages.value = [{ image_url: e.image_url }]
+      } else {
+        fImages.value = []
+      }
       fTitle.value = e?.title ?? ''
       fDescription.value = e?.description ?? ''
       fCategoryId.value = e?.category_id ?? ''
@@ -134,6 +156,7 @@ watch(
       fDifficulty.value = e?.difficulty ?? ''
       fIsPublished.value = e?.is_published ?? false
       apiError.value = null
+      uploadError.value = null
     }
   },
 )
@@ -163,12 +186,15 @@ function openEdit(c: CustomCase) {
 
 async function submit() {
   apiError.value = null
-  if (!fImageUrl.value || !fTitle.value) {
-    apiError.value = '圖片 URL 與標題為必填'
+  if (fImages.value.length === 0) {
+    apiError.value = '至少需要一張圖片'
+    return
+  }
+  if (!fTitle.value.trim()) {
+    apiError.value = '標題為必填'
     return
   }
   const payload = {
-    image_url: fImageUrl.value,
     title: fTitle.value,
     description: fDescription.value || null,
     category_id: fCategoryId.value || null,
@@ -176,6 +202,7 @@ async function submit() {
     canvas_h_cm: fCanvasH.value ? Number(fCanvasH.value) : null,
     difficulty: (fDifficulty.value || null) as Difficulty | null,
     is_published: fIsPublished.value,
+    images: fImages.value,  // 順序即 sort_order
   }
   try {
     if (editing.value) {
@@ -309,79 +336,107 @@ const categoryById = computed(() => {
       >{{ apiError }}</p>
 
       <div>
-        <Label>成品圖</Label>
+        <div class="flex items-center justify-between mb-2">
+          <Label>成品圖（拖曳順序，第一張為封面）</Label>
+          <span class="text-[11px] text-ink-muted">{{ fImages.length }} 張</span>
+        </div>
         <input
           ref="fileInput"
           type="file"
           accept="image/jpeg,image/png"
+          multiple
           class="hidden"
           @change="onFileChange"
         />
-        <!-- empty state -->
+
+        <!-- 圖片網格 -->
+        <ul v-if="fImages.length > 0" class="grid grid-cols-3 gap-2 mb-2">
+          <li
+            v-for="(img, idx) in fImages"
+            :key="`${idx}-${img.image_url}`"
+            class="relative aspect-[4/3] rounded-[var(--radius-xs)] overflow-hidden border"
+            :class="idx === 0 ? 'border-accent-deep ring-1 ring-accent-deep/30' : 'border-line-hairline'"
+          >
+            <img :src="img.image_url" :alt="`圖 ${idx + 1}`" class="w-full h-full object-cover" />
+            <!-- 封面標記 -->
+            <span
+              v-if="idx === 0"
+              class="absolute top-1.5 left-1.5 text-[9px] tracking-[0.18em] uppercase bg-accent-deep text-paper-canvas px-1.5 py-0.5 rounded"
+            >Cover</span>
+            <!-- 順序編號 -->
+            <span
+              v-else
+              class="absolute top-1.5 left-1.5 text-[10px] font-mono bg-white/80 text-ink-strong px-1.5 py-0.5 rounded"
+            >{{ idx + 1 }}</span>
+            <!-- 動作 buttons（hover 才顯示）-->
+            <div class="absolute inset-0 bg-ink-strong/0 hover:bg-ink-strong/40 transition-colors group">
+              <div class="absolute bottom-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  class="h-6 w-6 inline-flex items-center justify-center rounded bg-white/95 text-ink-strong"
+                  :disabled="idx === 0"
+                  :class="idx === 0 ? 'opacity-30 cursor-not-allowed' : ''"
+                  title="往前"
+                  @click="moveImage(idx, -1)"
+                >‹</button>
+                <button
+                  type="button"
+                  class="h-6 w-6 inline-flex items-center justify-center rounded bg-white/95 text-ink-strong"
+                  :disabled="idx === fImages.length - 1"
+                  :class="idx === fImages.length - 1 ? 'opacity-30 cursor-not-allowed' : ''"
+                  title="往後"
+                  @click="moveImage(idx, 1)"
+                >›</button>
+                <button
+                  type="button"
+                  class="h-6 w-6 inline-flex items-center justify-center rounded bg-white/95 text-state-danger"
+                  title="刪除"
+                  @click="removeImage(idx)"
+                >
+                  <X :size="12" />
+                </button>
+              </div>
+            </div>
+          </li>
+        </ul>
+
+        <!-- 空狀態 -->
         <div
-          v-if="!fImageUrl && !isUploading"
-          class="w-full aspect-[4/3] flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-[var(--radius-sm)] bg-paper-surface text-ink-muted border-line-strong"
+          v-else-if="!isUploading"
+          class="w-full aspect-[4/3] flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-[var(--radius-sm)] bg-paper-surface text-ink-muted border-line-hairline mb-2"
         >
-          <Camera :size="28" :stroke-width="1.25" class="text-aux-rice-mid" />
-          <p class="text-[13px]">JPEG / PNG，≤ 20MB</p>
-          <div class="flex items-center gap-2 flex-wrap justify-center">
-            <button
-              type="button"
-              class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line-strong text-[13px] text-ink-default hover:bg-paper-subtle transition-colors"
-              @click="triggerFile"
-            >
-              <Upload :size="14" :stroke-width="1.5" />
-              上傳新圖
-            </button>
-            <button
-              type="button"
-              class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line-strong text-[13px] text-ink-default hover:bg-paper-subtle transition-colors"
-              @click="openJobPicker"
-            >
-              <Wand2 :size="14" :stroke-width="1.5" />
-              從製作任務帶入（含規格）
-            </button>
-          </div>
+          <Camera :size="24" :stroke-width="1.25" class="text-ink-muted" />
+          <p class="text-[12px]">尚未加入任何圖片</p>
         </div>
+
         <!-- uploading -->
         <div
-          v-else-if="isUploading"
-          class="w-full aspect-[4/3] flex items-center justify-center gap-2 border border-line-hairline rounded-[var(--radius-sm)] bg-paper-subtle"
+          v-if="isUploading"
+          class="flex items-center justify-center gap-2 py-3 mb-2 text-[12px] text-ink-muted"
         >
-          <Loader2 :size="18" :stroke-width="1.5" class="animate-spin text-ink-muted" />
-          <span class="text-[13px] text-ink-muted">上傳中…</span>
+          <Loader2 :size="14" class="animate-spin" /> 上傳中…
         </div>
-        <!-- preview -->
-        <div
-          v-else
-          class="relative w-full aspect-[4/3] rounded-[var(--radius-sm)] overflow-hidden border border-line-hairline"
-        >
-          <img :src="fImageUrl" alt="案例圖" class="w-full h-full object-cover" />
+
+        <!-- 加圖按鈕列 -->
+        <div class="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            class="absolute top-2 right-2 h-7 w-7 inline-flex items-center justify-center rounded-full bg-white/90 text-ink-strong shadow-sm hover:bg-white"
-            @click="clearImage"
+            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors"
+            :disabled="isUploading"
+            @click="triggerFile"
           >
-            <X :size="14" />
+            <Upload :size="13" :stroke-width="1.5" />
+            上傳新圖（可多選）
           </button>
-          <div class="absolute bottom-2 right-2 flex gap-1.5">
-            <button
-              type="button"
-              class="h-8 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] bg-white/95 border border-line text-[12px] text-ink-strong"
-              @click="triggerFile"
-            >
-              <Upload :size="12" :stroke-width="1.5" />
-              重新上傳
-            </button>
-            <button
-              type="button"
-              class="h-8 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] bg-white/95 border border-line text-[12px] text-ink-strong"
-              @click="openJobPicker"
-            >
-              <Wand2 :size="12" :stroke-width="1.5" />
-              從 job 帶入
-            </button>
-          </div>
+          <button
+            type="button"
+            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors"
+            :disabled="isUploading"
+            @click="openJobPicker"
+          >
+            <Wand2 :size="13" :stroke-width="1.5" />
+            從製作任務帶入（含規格）
+          </button>
         </div>
         <p v-if="uploadError" class="text-[12px] text-state-danger mt-1">{{ uploadError }}</p>
       </div>

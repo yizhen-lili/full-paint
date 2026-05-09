@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
 import { X, ArrowRight } from 'lucide-vue-next'
 import { DIFFICULTY_LABEL, type CustomCase, type Difficulty } from '../api'
 
@@ -10,6 +11,23 @@ const emit = defineEmits<{
   close: []
   consult: [caseData: CustomCase]
 }>()
+
+// 圖片陣列：優先用 images[]，沒有則 fallback 為單張 image_url
+const imageUrls = computed<string[]>(() => {
+  const c = props.caseData
+  if (!c) return []
+  if (c.images && c.images.length > 0) {
+    return c.images
+      .slice()
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((i) => i.image_url)
+  }
+  return c.image_url ? [c.image_url] : []
+})
+
+const activeIdx = ref(0)
+// 案例切換時重置主圖到第一張
+watch(() => props.caseData?.id, () => { activeIdx.value = 0 })
 
 function onConsult() {
   if (props.caseData) emit('consult', props.caseData)
@@ -26,9 +44,26 @@ function onConsult() {
           </button>
 
           <div class="modal-body">
-            <figure class="case-figure">
-              <img :src="caseData.image_url" :alt="caseData.title" />
-            </figure>
+            <div class="figure-col">
+              <figure class="case-figure">
+                <img
+                  v-if="imageUrls.length > 0"
+                  :src="imageUrls[activeIdx]"
+                  :alt="caseData.title"
+                />
+              </figure>
+              <ul v-if="imageUrls.length > 1" class="thumb-strip">
+                <li
+                  v-for="(url, idx) in imageUrls"
+                  :key="`${idx}-${url}`"
+                  class="thumb"
+                  :class="{ active: idx === activeIdx }"
+                  @click="activeIdx = idx"
+                >
+                  <img :src="url" :alt="`圖 ${idx + 1}`" />
+                </li>
+              </ul>
+            </div>
             <div class="case-content">
               <div class="kicker">
                 <span class="kicker-no">CASE</span>
@@ -95,12 +130,35 @@ function onConsult() {
   .modal-body { grid-template-columns: 1fr; }
 }
 
+.figure-col { display: flex; flex-direction: column; }
+
 .case-figure {
   margin: 0; aspect-ratio: 4 / 3;
   background: var(--color-paper-surface);
   overflow: hidden;
 }
 .case-figure img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.thumb-strip {
+  list-style: none; padding: 8px;
+  margin: 0;
+  display: flex; gap: 6px;
+  overflow-x: auto;
+  background: var(--color-paper-deep);
+  border-top: 1px solid var(--color-line);
+}
+.thumb {
+  flex: 0 0 56px;
+  width: 56px; height: 42px;
+  border-radius: 2px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 150ms;
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb:hover { border-color: var(--color-line); }
+.thumb.active { border-color: var(--color-accent-deep); }
 
 .case-content { padding: 32px 36px; }
 .kicker {

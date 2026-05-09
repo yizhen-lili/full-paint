@@ -359,9 +359,15 @@ export async function listPhotoPrices(): Promise<{ items: PhotoPriceRow[] }> {
 // ── Cases (inspiration gallery)──────────────────────────────────────────────
 // Source: backend/content/router.py L103 — public_list_cases
 
-export interface CustomCase {
+export interface CaseImageItem {
   id: string
   image_url: string
+  sort_order: number
+}
+
+export interface CustomCase {
+  id: string
+  image_url: string  // 主圖（封面）— 同 images[0].image_url
   title: string
   description: string | null
   category_id: string | null
@@ -370,6 +376,7 @@ export interface CustomCase {
   difficulty: Difficulty | null
   is_published: boolean
   created_at: string
+  images?: CaseImageItem[]
 }
 
 export interface CustomCaseListResponse {
