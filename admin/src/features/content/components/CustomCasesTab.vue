@@ -58,8 +58,7 @@ const fCanvasH = ref('')
 const fDifficulty = ref<string>('')
 const fIsPublished = ref(false)
 
-// 圖片上傳狀態
-const fileInput = ref<HTMLInputElement | null>(null)
+// 圖片上傳狀態（用 <label> 包 input，不需 ref + JS click 觸發）
 const isUploading = ref(false)
 const uploadError = ref<string | null>(null)
 
@@ -85,12 +84,9 @@ const jobs = computed<AvailableJob[]>(() =>
 )
 const selectedJobId = ref<string | null>(null)
 
-function triggerFile() {
-  fileInput.value?.click()
-}
-
 async function onFileChange(e: Event) {
-  const files = (e.target as HTMLInputElement).files
+  const input = e.target as HTMLInputElement
+  const files = input.files
   if (!files || files.length === 0) return
 
   uploadError.value = null
@@ -116,7 +112,8 @@ async function onFileChange(e: Event) {
     uploadError.value = (err as { message?: string }).message || '上傳失敗'
   } finally {
     isUploading.value = false
-    if (fileInput.value) fileInput.value.value = ''
+    // 重置 input value 讓 user 可以連續上傳同一個檔案（否則第二次同檔案不觸發 change）
+    input.value = ''
   }
 }
 
@@ -389,15 +386,6 @@ const categoryById = computed(() => {
           <Label>成品圖（拖曳順序，第一張為封面）</Label>
           <span class="text-[11px] text-ink-muted">{{ fImages.length }} 張</span>
         </div>
-        <input
-          ref="fileInput"
-          type="file"
-          accept="image/jpeg,image/png"
-          multiple
-          class="hidden"
-          @change="onFileChange"
-        />
-
         <!-- 圖片網格 -->
         <ul v-if="fImages.length > 0" class="grid grid-cols-3 gap-2 mb-2">
           <li
@@ -482,17 +470,24 @@ const categoryById = computed(() => {
           <Loader2 :size="14" class="animate-spin" /> 上傳中…
         </div>
 
-        <!-- 加圖按鈕列 -->
+        <!-- 加圖按鈕列：用 <label> 包 input 為原生 file chooser 觸發方式（在 -->
+        <!-- Teleport-ed Dialog 內 button + JS .click() 有時不可靠，label 是 -->
+        <!-- 瀏覽器原生 click→input 連動，沒有 user-gesture 規則問題） -->
         <div class="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors"
-            :disabled="isUploading"
-            @click="triggerFile"
+          <label
+            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors cursor-pointer"
+            :class="isUploading ? 'pointer-events-none opacity-50' : ''"
           >
             <Upload :size="13" :stroke-width="1.5" />
             上傳新圖（可多選）
-          </button>
+            <input
+              type="file"
+              accept="image/jpeg,image/png"
+              multiple
+              class="hidden"
+              @change="onFileChange"
+            />
+          </label>
           <button
             type="button"
             class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors"
