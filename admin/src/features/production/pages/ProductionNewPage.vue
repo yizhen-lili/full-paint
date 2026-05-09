@@ -37,7 +37,11 @@ import {
   type Mode,
   type SamPoint,
 } from '../api'
-import { fetchPhotoSignedUrl, useCustomRequestsQuery } from '@/features/custom_requests/queries'
+import {
+  fetchPhotoSignedUrl,
+  useCustomRequestsQuery,
+  useCustomRequestQuery,
+} from '@/features/custom_requests/queries'
 
 const route = useRoute()
 const router = useRouter()
@@ -147,13 +151,17 @@ const customCandidates = computed(() => {
 })
 
 const selectedCustomRequestId = ref<string | null>(null)
-const selectedCustomRequest = computed(() =>
-  customCandidates.value.find((c) => c.id === selectedCustomRequestId.value),
+
+// 載入完整 detail（含 canvas_w_cm / difficulty / customer_notes）；
+// list summary 沒這些欄位，預覽卡只能靠 detail。
+const selectedCustomRequestQuery = useCustomRequestQuery(
+  () => selectedCustomRequestId.value ?? undefined,
 )
+const selectedCustomRequest = computed(() => selectedCustomRequestQuery.data.value)
 
 // 從 ?customRequestId=xxx 帶入：客製訂單詳情頁的「前往製作」按鈕跳過來時，
-// 自動切到客製來源並預選對應申請。客戶填的尺寸/難度會顯示在預覽卡片上，
-// admin 可參考後手動設 combo（一張原圖可同時跑多組規格）
+// 自動切到客製來源並預選對應申請。客戶填的尺寸/難度自動預填 combo[0]，
+// admin 可參考後再加組合（一張原圖可同時跑多組規格）。
 const incomingCustomRequestId = (typeof route.query.customRequestId === 'string')
   ? route.query.customRequestId
   : null
@@ -218,6 +226,24 @@ const combos = ref<ComboRow[]>([
     weight_ratio: 0.65,
   },
 ])
+
+// detail 載入完成 → 自動把客戶填的 canvas + difficulty 帶入 combos[0]
+// 只在第一次帶入時做，避免 admin 編輯後又被覆蓋。
+const hasPrefilledFromCustomRequest = ref(false)
+watch(
+  () => selectedCustomRequest.value,
+  (d) => {
+    if (!d || hasPrefilledFromCustomRequest.value) return
+    if (d.canvas_w_cm && d.canvas_h_cm) {
+      combos.value[0].canvas_size = `${d.canvas_w_cm}x${d.canvas_h_cm}`
+    }
+    if (d.difficulty) {
+      combos.value[0].difficulty = d.difficulty as Difficulty
+    }
+    hasPrefilledFromCustomRequest.value = true
+  },
+  { immediate: true },
+)
 
 const modeOptions: { value: Mode; label: string }[] = [
   { value: 'standard', label: '標準' },
@@ -423,7 +449,13 @@ async function submit() {
         <div v-else class="space-y-3">
           <Select v-model="selectedCustomRequestId" :options="customOptions" />
           <div
-            v-if="selectedCustomRequest"
+            v-if="selectedCustomRequestQuery.isLoading.value"
+            class="py-8 flex justify-center text-ink-muted"
+          >
+            <Loader2 :size="20" :stroke-width="1.5" class="animate-spin" />
+          </div>
+          <div
+            v-else-if="selectedCustomRequest"
             class="p-3 border border-line-hairline rounded-[var(--radius-xs)] bg-paper-subtle text-[13px] space-y-3"
           >
             <div>
@@ -434,28 +466,65 @@ async function submit() {
               </p>
             </div>
 
-            <!-- 客製照片預覽 -->
-            <div
-              class="aspect-[4/3] rounded-[var(--radius-xs)] border border-line-hairline overflow-hidden bg-paper-canvas flex items-center justify-center"
-            >
-              <Loader2
-                v-if="customPhotoLoading"
-                :size="24" :stroke-width="1.5"
-                class="animate-spin text-ink-muted"
-              />
-              <img
-                v-else-if="customPhotoUrl"
-                :src="customPhotoUrl"
-                alt="客戶上傳照片"
-                class="w-full h-full object-contain"
-              />
-              <div v-else-if="customPhotoMissing" class="text-center px-4 text-ink-muted">
-                <ImageIcon :size="24" :stroke-width="1.25" class="mx-auto mb-1" />
-                <p class="text-[12px]">客戶尚未上傳照片</p>
+            <!-- 客戶填的規格 — 已自動預填到下方批次組合 -->
+            <div class="border-t border-line-hairline pt-3 grid grid-cols-2 gap-x-3 gap-y-1.5">
+              <div>
+                <span class="text-ink-muted text-[11px] tracking-[0.16em] uppercase">畫布尺寸</span>
+                <p
+                  v-if="selectedCustomRequest.canvas_w_cm"
+                  class="text-ink-strong text-[13px] font-mono"
+                >
+                  {{ selectedCustomRequest.canvas_w_cm }} × {{ selectedCustomRequest.canvas_h_cm }} cm
+                </p>
+                <p v-else class="text-ink-muted text-[12px] italic">客戶請我們建議</p>
               </div>
-              <div v-else class="text-center px-4 text-ink-muted">
-                <ImageIcon :size="24" :stroke-width="1.25" class="mx-auto mb-1" />
-                <p class="text-[12px]">照片無法顯示</p>
+              <div>
+                <span class="text-ink-muted text-[11px] tracking-[0.16em] uppercase">難易度</span>
+                <p
+                  v-if="selectedCustomRequest.difficulty"
+                  class="text-ink-strong text-[13px]"
+                >
+                  {{ DIFFICULTY_LABEL[selectedCustomRequest.difficulty as Difficulty] }}
+                </p>
+                <p v-else class="text-ink-muted text-[12px] italic">客戶請我們建議</p>
+              </div>
+              <div
+                v-if="selectedCustomRequest.customer_notes"
+                class="col-span-2"
+              >
+                <span class="text-ink-muted text-[11px] tracking-[0.16em] uppercase">客戶備註</span>
+                <p class="text-ink-default text-[13px] whitespace-pre-wrap leading-[1.6]">
+                  {{ selectedCustomRequest.customer_notes }}
+                </p>
+              </div>
+            </div>
+
+            <!-- 客製照片預覽 -->
+            <div class="border-t border-line-hairline pt-3">
+              <span class="text-ink-muted text-[11px] tracking-[0.16em] uppercase">客戶照片</span>
+              <div
+                class="mt-1.5 aspect-[4/3] rounded-[var(--radius-xs)] border border-line-hairline overflow-hidden bg-paper-canvas flex items-center justify-center"
+              >
+                <Loader2
+                  v-if="customPhotoLoading"
+                  :size="24" :stroke-width="1.5"
+                  class="animate-spin text-ink-muted"
+                />
+                <img
+                  v-else-if="customPhotoUrl"
+                  :src="customPhotoUrl"
+                  alt="客戶上傳照片"
+                  class="w-full h-full object-contain"
+                />
+                <div v-else-if="customPhotoMissing" class="text-center px-4 text-ink-muted">
+                  <ImageIcon :size="24" :stroke-width="1.25" class="mx-auto mb-1" />
+                  <p class="text-[12px]">客戶尚未上傳照片</p>
+                </div>
+                <div v-else class="text-center px-4 text-ink-muted">
+                  <AlertTriangle :size="22" :stroke-width="1.25" class="mx-auto mb-1 text-state-warning" />
+                  <p class="text-[12px]">照片載入失敗</p>
+                  <p class="text-[10px] mt-1 font-mono tracking-[0.08em]">請重整頁面重試</p>
+                </div>
               </div>
             </div>
           </div>
