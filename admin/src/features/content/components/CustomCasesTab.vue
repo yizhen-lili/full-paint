@@ -475,16 +475,19 @@ const categoryById = computed(() => {
         <!-- 瀏覽器原生 click→input 連動，沒有 user-gesture 規則問題） -->
         <div class="flex items-center gap-2 flex-wrap">
           <label
-            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors cursor-pointer"
+            class="h-9 px-3 inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] border border-line text-[12px] text-ink-default hover:bg-paper-subtle transition-colors cursor-pointer relative"
             :class="isUploading ? 'pointer-events-none opacity-50' : ''"
           >
             <Upload :size="13" :stroke-width="1.5" />
             上傳新圖（可多選）
+            <!-- sr-only 模式：input 仍在 layout 內、可被 label click 觸發；
+                 display:none 在某些瀏覽器會讓 label click 無效 -->
             <input
               type="file"
               accept="image/jpeg,image/png"
               multiple
-              class="hidden"
+              class="absolute w-px h-px opacity-0 overflow-hidden"
+              style="clip: rect(0 0 0 0); pointer-events: none;"
               @change="onFileChange"
             />
           </label>
