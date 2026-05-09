@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 import Dialog from '@/shared/ui/Dialog.vue'
 import Button from '@/shared/ui/Button.vue'
 import Input from '@/shared/ui/Input.vue'
 import Textarea from '@/shared/ui/Textarea.vue'
 import Select from '@/shared/ui/Select.vue'
-import { Loader2, Eye, ChevronLeft, ImageOff, AlertTriangle } from 'lucide-vue-next'
+import { Loader2, Eye, ChevronLeft, ImageOff, AlertTriangle, Check } from 'lucide-vue-next'
 
 import {
   useCustomPhotoPricesQuery,
   useCustomPhotoSurchargesQuery,
 } from '../queries'
 import type { CustomRequestDetail, Detail, Difficulty, QuotePayload } from '../api'
+import { listJobs, getJobSignedUrl, type JobListItem } from '@/features/production/api'
 
 const props = defineProps<{
   open: boolean
@@ -25,8 +27,10 @@ const emit = defineEmits<{
 }>()
 
 const detail = ref<Detail>('standard')
-// 試算用 — 客戶若選「讓管理員建議」(canvas/difficulty=null)，admin 在這裡敲定試算規格。
-// 不會寫回 custom_request；只供 basePrice 對 prices 表 lookup。
+// admin 必選一個 completed job 作為報價基準；selectedJob 的 canvas / difficulty / detail
+// 自動帶到下方試算欄位（client 可後再覆蓋）。報價提交會帶 production_job_id 到後端，
+// 客戶看到的預覽圖、最終規格 = 該 job。
+const selectedJobId = ref<string | null>(null)
 const priceCanvasW = ref<number | null>(null)
 const priceCanvasH = ref<number | null>(null)
 const priceDifficulty = ref<Difficulty>('intermediate')
@@ -42,6 +46,43 @@ const previewImageLoading = ref(false)
 
 const { data: prices, isLoading: pricesLoading } = useCustomPhotoPricesQuery()
 const { data: surcharges, isLoading: surLoading } = useCustomPhotoSurchargesQuery()
+
+// 拉這個 custom_request 的 production_jobs（只列 completed 給選）
+const jobsQuery = useQuery({
+  queryKey: computed(() => ['custom-jobs', props.request.id]),
+  queryFn: () =>
+    listJobs({ custom_request_id: props.request.id, page_size: 50 }),
+  enabled: computed(() => props.open),
+  staleTime: 10_000,
+})
+const completedJobs = computed<JobListItem[]>(() =>
+  (jobsQuery.data.value?.items ?? []).filter((j) => j.status === 'completed'),
+)
+const selectedJob = computed(() =>
+  completedJobs.value.find((j) => j.id === selectedJobId.value),
+)
+
+// 批次 fetch jobs 的 filled signed URL（每張縮圖 15 分鐘有效；同一個 job 不重複拿）
+const jobThumbnails = ref<Map<string, string>>(new Map())
+watch(
+  completedJobs,
+  async (jobs) => {
+    const tasks = jobs
+      .filter((j) => !jobThumbnails.value.has(j.id))
+      .map(async (j) => {
+        try {
+          const r = await getJobSignedUrl(j.id, 'filled')
+          if (r.url) jobThumbnails.value.set(j.id, r.url)
+        } catch (_e) {
+          // 忽略單張失敗（顯示 fallback icon）
+        }
+      })
+    await Promise.all(tasks)
+    // 觸發 reactivity（Map 不是 reactive proxy，用 trigger 重設）
+    jobThumbnails.value = new Map(jobThumbnails.value)
+  },
+  { immediate: true },
+)
 
 // 從 prices 表推所有可選的 canvas 尺寸（去重）
 const availableCanvasSizes = computed(() => {
@@ -81,7 +122,8 @@ watch(
   (v) => {
     if (v) {
       detail.value = (props.request.detail as Detail) || 'standard'
-      // 預設帶客戶填的；客戶 null 則用合理 default
+      selectedJobId.value = null  // 等 completedJobs 載入後 watcher 會自動選最佳
+      // 預設帶客戶填的；客戶 null 則用合理 default（之後選 job 會覆蓋）
       priceCanvasW.value = props.request.canvas_w_cm ?? 30
       priceCanvasH.value = props.request.canvas_h_cm ?? 40
       priceDifficulty.value = (props.request.difficulty as Difficulty) ?? 'intermediate'
@@ -92,6 +134,28 @@ watch(
       step.value = 1
       previewImageError.value = false
     }
+  },
+)
+
+// jobs 載入完後，預設選一個：優先 approved 中最新一筆，否則最新一筆 completed
+watch(
+  completedJobs,
+  (jobs) => {
+    if (selectedJobId.value || jobs.length === 0) return
+    const approved = jobs.find((j) => j.approved)
+    selectedJobId.value = approved?.id ?? jobs[0].id
+  },
+)
+
+// 選了 job → 用 job 的規格覆蓋試算欄位
+watch(
+  selectedJob,
+  (job) => {
+    if (!job) return
+    if (job.canvas_w_cm) priceCanvasW.value = Number(job.canvas_w_cm)
+    if (job.canvas_h_cm) priceCanvasH.value = Number(job.canvas_h_cm)
+    if (job.difficulty) priceDifficulty.value = job.difficulty as Difficulty
+    if (job.detail) detail.value = job.detail as Detail
   },
 )
 
@@ -115,12 +179,14 @@ const customerSpecsHint = computed(() => {
   return `客戶填：畫布 ${cv}、難易度 ${df}`
 })
 
-const usingCustomerSpec = computed(() => {
-  const r = props.request
+// 試算規格是否還是「所選 job 帶過來的」(true) 還是 admin 又手動改了 (false)
+const usingJobSpec = computed(() => {
+  const j = selectedJob.value
+  if (!j) return false
   return (
-    r.canvas_w_cm === priceCanvasW.value
-    && r.canvas_h_cm === priceCanvasH.value
-    && r.difficulty === priceDifficulty.value
+    Number(j.canvas_w_cm) === priceCanvasW.value
+    && Number(j.canvas_h_cm) === priceCanvasH.value
+    && j.difficulty === priceDifficulty.value
   )
 })
 
@@ -166,6 +232,9 @@ function fmtMoney(n: number | null): string {
 
 function validate(): boolean {
   const errs: Record<string, string> = {}
+  if (!selectedJobId.value) {
+    errs.job = '請選擇一個製作版本作為報價基準'
+  }
   if (finalPrice.value == null || finalPrice.value <= 0) {
     errs.price = '報價金額必須大於 0'
   }
@@ -182,6 +251,7 @@ function submit() {
   if (!validate()) return
   emit('confirm', {
     quoted_price: finalPrice.value!,
+    production_job_id: selectedJobId.value!,
     detail: detail.value,
     surcharge_ids: Array.from(surchargeIds.value),
     quote_note: note.value.trim() || null,
@@ -208,12 +278,77 @@ const previewImageSrc = computed(
         <p class="text-ink-muted text-[12px] mt-1">{{ customerSpecsHint }}</p>
       </div>
 
+      <!-- 製作版本選擇器 — 必填，admin 跑了多版本時選一個給客戶 -->
+      <div>
+        <label class="block text-[13px] text-ink-strong mb-2">
+          選擇製作版本
+          <span class="text-state-danger">*</span>
+          <span class="text-[11px] text-ink-muted ml-1 font-normal">客戶會看到這個版本的預覽圖；規格也以此為準</span>
+        </label>
+        <div v-if="jobsQuery.isLoading.value" class="py-6 flex justify-center text-ink-muted">
+          <Loader2 :size="16" :stroke-width="1.5" class="animate-spin" />
+        </div>
+        <div
+          v-else-if="completedJobs.length === 0"
+          class="p-4 border border-state-warning/40 bg-[var(--color-state-warning)]/[0.06] rounded-[var(--radius-xs)] text-[12px]"
+        >
+          <AlertTriangle :size="14" :stroke-width="1.5" class="inline mr-1 text-state-warning" />
+          尚無 completed 製作 — 請先「前往製作」跑出至少一個 job 才能報價。
+        </div>
+        <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+          <button
+            v-for="(j, idx) in completedJobs"
+            :key="j.id"
+            type="button"
+            class="relative aspect-[4/3] rounded-[var(--radius-xs)] border-2 overflow-hidden bg-paper-canvas hover:border-accent transition-colors text-left"
+            :class="
+              selectedJobId === j.id
+                ? 'border-accent'
+                : 'border-line-hairline'
+            "
+            @click="selectedJobId = j.id"
+          >
+            <img
+              v-if="jobThumbnails.get(j.id)"
+              :src="jobThumbnails.get(j.id)"
+              :alt="`版本 ${idx + 1}`"
+              class="w-full h-full object-contain"
+            />
+            <div v-else class="absolute inset-0 flex items-center justify-center text-ink-muted">
+              <ImageOff :size="20" :stroke-width="1.25" />
+            </div>
+            <!-- meta overlay -->
+            <div class="absolute bottom-0 left-0 right-0 px-2 py-1 bg-paper-canvas/90 border-t border-line-hairline">
+              <p class="text-[11px] font-mono leading-tight text-ink-strong truncate">
+                #{{ idx + 1 }} · {{ j.canvas_w_cm }}×{{ j.canvas_h_cm }}cm
+              </p>
+              <p class="text-[10px] text-ink-muted leading-tight truncate">
+                {{ j.difficulty || '—' }} · {{ j.mode === 'standard' ? '標準' : j.mode }}
+              </p>
+            </div>
+            <!-- selected check -->
+            <div
+              v-if="selectedJobId === j.id"
+              class="absolute top-1 right-1 w-5 h-5 rounded-full bg-accent flex items-center justify-center"
+            >
+              <Check :size="12" :stroke-width="2" class="text-paper-canvas" />
+            </div>
+            <!-- approved chip -->
+            <span
+              v-if="j.approved"
+              class="absolute top-1 left-1 px-1.5 h-4 inline-flex items-center text-[9px] tracking-[0.04em] rounded-[2px] bg-fresh-tint text-fresh font-medium"
+            >已 APPROVED</span>
+          </button>
+        </div>
+        <p v-if="errors.job" class="mt-2 text-[12px] text-state-danger">{{ errors.job }}</p>
+      </div>
+
       <!-- 試算規格 — admin 敲定報價基準 -->
       <div class="p-3 border border-aux-rice-mid/40 bg-aux-rice-mid/[0.06] rounded-[var(--radius-xs)] space-y-3">
         <p class="text-[12px] text-ink-default">
           報價試算規格
-          <span v-if="usingCustomerSpec" class="text-ink-muted">（沿用客戶填的）</span>
-          <span v-else class="text-state-warning">（你已調整 — 請確認最終要報的尺寸／難度）</span>
+          <span v-if="usingJobSpec" class="text-ink-muted">（沿用所選製作版本）</span>
+          <span v-else-if="selectedJob" class="text-state-warning">（你已手動調整，與所選版本不同 — 報價試算用此欄位，但客戶看到的預覽仍是上方所選版本）</span>
         </p>
         <div class="grid grid-cols-2 gap-3">
           <div>

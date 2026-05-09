@@ -126,6 +126,8 @@ export interface PhotoSignedUrlResponse {
 
 export interface QuotePayload {
   quoted_price: number
+  /** admin 在 QuoteDialog 選定的 completed production_job — 報價綁該 job */
+  production_job_id: string
   detail: Detail
   surcharge_ids: string[]
   quote_note?: string | null
