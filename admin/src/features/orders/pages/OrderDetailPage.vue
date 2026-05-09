@@ -476,6 +476,14 @@ function copyOrderNumber() {
               <div>
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-medium text-ink-strong">{{ item.product_title_snapshot }}</span>
+                  <RouterLink
+                    v-if="item.custom_request_id"
+                    :to="`/admin/custom-requests/${item.custom_request_id}`"
+                    class="inline-flex items-center px-2 h-[20px] text-[11px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-accent-tint text-accent-deep border border-accent hover:bg-accent hover:text-paper-canvas transition-colors"
+                    title="開啟客製申請詳情"
+                  >
+                    客製 #{{ item.custom_request_id.slice(0, 8) }}
+                  </RouterLink>
                   <span
                     v-if="item.is_returned"
                     class="inline-flex items-center px-2 h-[20px] text-[11px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-paper-subtle text-ink-muted"

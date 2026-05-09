@@ -106,6 +106,10 @@ export interface ProductionProgress {
 export interface OrderItem {
   id: string
   product_variant_id: string | null
+  /** 若 OrderItem 來自客製申請（客戶在 cart 確認後 → checkout 建單）*/
+  custom_request_id?: string | null
+  /** admin 在 QuoteDialog 選定的 production_job */
+  production_job_id?: string | null
   product_title_snapshot: string
   variant_spec_snapshot: Record<string, unknown>
   unit_price: number
