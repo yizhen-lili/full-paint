@@ -65,6 +65,8 @@ export interface CustomRequestDetail {
   customer_notes: string | null
   quoted_price: number | null
   quote_expires_at: string | null
+  /** owner 看到的可進入 viewer 的 token；status=quote_sent 才有值 */
+  quote_token: string | null
   is_extended: boolean
   revision_count: number
   parent_request_id: string | null

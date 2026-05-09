@@ -271,9 +271,12 @@ const banner = computed<{
 })
 
 function goToQuote() {
-  // 報價 token 存在於 backend，前端目前只能透過 email 連結進入；
-  // 此 CTA 留空待 #15 quote-token 路由支援由 detail 拿 token。
-  // 暫時 fallback：滾到「報價事件卡」位置。
+  const t = detail.value?.quote_token
+  if (t) {
+    router.push(`/custom/quote/${encodeURIComponent(t)}`)
+    return
+  }
+  // 萬一沒拿到 token（舊資料 / status 不對），退回滾到報價事件卡
   const el = document.querySelector('.quote-event')
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }

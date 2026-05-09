@@ -52,6 +52,9 @@ class CustomRequestDetailResponse(BaseModel):
     customer_notes: str | None
     quoted_price: float | None
     quote_expires_at: datetime | None
+    # plain token — owner 從 detail 直接 router.push 到 /custom/quote/:token
+    # （該 endpoint 已驗 owner，所以 token 對 owner 不是 secret）
+    quote_token: str | None = None
     is_extended: bool
     revision_count: int
     parent_request_id: UUID | None

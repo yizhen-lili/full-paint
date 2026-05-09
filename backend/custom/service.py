@@ -500,11 +500,23 @@ async def update_request_fields(
 
 
 async def _load_request_by_token(db: AsyncSession, token: str) -> CustomRequest:
-    hashed = _hash_token(token)
+    """支援 plain 與舊 hashed token（向後相容）。
+
+    新發出的 token 是 plain 32-byte URL-safe random（24h TTL），DB 直接存 plain，
+    讓 customer detail 能回給 owner，從 store 直接跳 quote viewer 不需 email link。
+    舊 quote 的 hash token 仍 fallback 比對，避免 in-flight 報價連結失效。
+    """
     result = await db.execute(
-        select(CustomRequest).where(CustomRequest.quote_token == hashed)
+        select(CustomRequest).where(CustomRequest.quote_token == token)
     )
     req = result.scalar_one_or_none()
+    if req is None:
+        # 向後相容：舊 quote token 是 hash 過的
+        hashed = _hash_token(token)
+        result = await db.execute(
+            select(CustomRequest).where(CustomRequest.quote_token == hashed)
+        )
+        req = result.scalar_one_or_none()
     if req is None:
         raise NotFoundError("報價連結無效")
     return req
@@ -1127,7 +1139,8 @@ async def admin_send_quote(
 
     plain_token = secrets.token_urlsafe(32)
     req.quoted_price = Decimal(str(quoted_price))
-    req.quote_token = _hash_token(plain_token)
+    # 直接存 plain（_load_request_by_token 仍 fallback hash 比對舊 in-flight quote）
+    req.quote_token = plain_token
     req.quote_expires_at = datetime.now(UTC) + timedelta(hours=24)
     req.quoted_at = datetime.now(UTC)
     req.status = CustomRequestStatusEnum.quote_sent
@@ -1264,6 +1277,11 @@ async def _request_detail(db: AsyncSession, req: CustomRequest) -> dict:
         "customer_notes": req.customer_notes,
         "quoted_price": float(req.quoted_price) if req.quoted_price else None,
         "quote_expires_at": req.quote_expires_at,
+        # owner / admin 兩端共用此 helper，token 對 owner 是合法可見（已驗 owner）
+        # 對 admin 也合理（admin 寄 email 也用同一個 token）。
+        # 新 quote 是 plain，舊 quote 是 hash — 兩種都能直接餵 viewer endpoint
+        # （後端 _load_request_by_token 雙路徑比對）。
+        "quote_token": req.quote_token,
         "is_extended": req.is_extended,
         "revision_count": req.revision_count,
         "parent_request_id": req.parent_request_id,
