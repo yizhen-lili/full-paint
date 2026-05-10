@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
-import { ArrowLeft, Loader2, Check, Copy, Package, AlertCircle, X, Truck } from 'lucide-vue-next'
+import {
+  ArrowLeft, Loader2, Check, Copy, Package, AlertCircle, X, Truck, Wallet,
+} from 'lucide-vue-next'
 import {
   useOrderDetailQuery,
   useSubmitPaymentMutation,
   useConfirmReceivedMutation,
+  useConfirmRefundMutation,
   useCancelOrderMutation,
   useUpdateShippingMutation,
   usePublicSettingsQuery,
   STATUS_LABEL,
   STATUS_TAB,
 } from '../queries'
+import { useOrderSse } from '../useOrderSse'
 import type { ApiError, UpdateShippingPayload } from '../api'
 import ShippingProfileForm from '@/features/profile/components/ShippingProfileForm.vue'
 import type { ShippingProfileInput } from '@/features/profile/api'
@@ -21,6 +25,39 @@ const orderId = computed(() => String(route.params.id || ''))
 
 const orderQuery = useOrderDetailQuery(orderId)
 const order = computed(() => orderQuery.data.value ?? null)
+
+// SSE：訂閱訂單狀態變更（admin 標 paid / 出貨 / webhook 推 ECpay 狀態 / 退款）
+// query invalidate 由 useOrderSse 內部處理
+const sseToast = ref<string | null>(null)
+let sseToastTimer: ReturnType<typeof setTimeout> | null = null
+function showSseToast(text: string) {
+  sseToast.value = text
+  if (sseToastTimer) clearTimeout(sseToastTimer)
+  sseToastTimer = setTimeout(() => { sseToast.value = null }, 4500)
+}
+useOrderSse(() => orderId.value || null, {
+  onStatusChanged: (d) => {
+    showSseToast(`訂單狀態更新：${STATUS_LABEL[d.status as keyof typeof STATUS_LABEL] ?? d.status}`)
+  },
+  onShipmentCreated: (d) => {
+    showSseToast(`已出貨！追蹤號：${d.tracking_number}`)
+  },
+  onShipmentStatusChanged: (d) => {
+    showSseToast(`物流狀態：${d.rtn_msg}`)
+  },
+})
+
+// 退款確認
+const confirmRefundMut = useConfirmRefundMutation(orderId)
+const confirmRefundError = ref<string | null>(null)
+async function doConfirmRefund() {
+  confirmRefundError.value = null
+  try {
+    await confirmRefundMut.mutateAsync()
+  } catch (e) {
+    confirmRefundError.value = (e as ApiError).detail || '確認失敗'
+  }
+}
 
 // 24h 倒數（pending_payment）
 const now = ref(Date.now())
@@ -320,6 +357,52 @@ function specSummary(spec: Record<string, unknown>): string {
         <p v-if="!expired" class="band-hint">逾期未付款訂單將自動取消。</p>
         <p v-else class="band-hint band-hint-expired">付款期限已過。</p>
       </section>
+
+      <!-- 退款 / 取消狀態 banner（取代 stepper）-->
+      <section
+        v-if="order.status === 'refund_processing'"
+        class="refund-banner refund-processing"
+      >
+        <Wallet :size="20" :stroke-width="1.5" class="refund-icon" />
+        <div class="refund-text">
+          <h3 class="refund-title">退款處理中</h3>
+          <p class="refund-body">
+            您的退款申請已受理，預計 5 個工作天內會匯回您的銀行帳戶。
+            收到款項後請點下方按鈕確認。
+          </p>
+        </div>
+      </section>
+
+      <section
+        v-else-if="order.status === 'refunded' || order.status === 'partially_refunded'"
+        class="refund-banner refund-done"
+      >
+        <Wallet :size="20" :stroke-width="1.5" class="refund-icon" />
+        <div class="refund-text">
+          <h3 class="refund-title">
+            {{ order.status === 'partially_refunded' ? '部分退款' : '退款完成' }}
+          </h3>
+          <p class="refund-body">
+            退款金額：<strong>NT$ {{ (order.refund_amount ?? 0).toLocaleString() }}</strong>
+            <span v-if="order.refunded_at"> · 處理時間：{{ fmtDateTime(order.refunded_at) }}</span>
+          </p>
+          <p v-if="order.refund_confirmed_at" class="refund-confirmed">
+            <Check :size="12" :stroke-width="2" /> 您已確認收到退款（{{ fmtDateTime(order.refund_confirmed_at) }}）
+          </p>
+        </div>
+        <button
+          v-if="!order.refund_confirmed_at"
+          type="button"
+          class="refund-cta"
+          :disabled="confirmRefundMut.isPending.value"
+          @click="doConfirmRefund"
+        >
+          <Loader2 v-if="confirmRefundMut.isPending.value" :size="14" class="spin" />
+          <Check v-else :size="14" :stroke-width="1.5" />
+          我已收到退款
+        </button>
+      </section>
+      <p v-if="confirmRefundError" class="refund-error">{{ confirmRefundError }}</p>
 
       <!-- 進度 stepper（只在主流程狀態顯示；取消/退款相關不顯示） -->
       <section
@@ -701,6 +784,16 @@ function specSummary(spec: Record<string, unknown>): string {
           </div>
         </Transition>
       </Teleport>
+
+      <!-- SSE toast：訂單狀態 / 物流狀態即時通知 -->
+      <Teleport to="body">
+        <Transition name="sse-toast">
+          <div v-if="sseToast" class="sse-toast" @click="sseToast = null">
+            <Truck :size="14" :stroke-width="1.5" />
+            <span>{{ sseToast }}</span>
+          </div>
+        </Transition>
+      </Teleport>
     </template>
   </main>
 </template>
@@ -720,6 +813,88 @@ function specSummary(spec: Record<string, unknown>): string {
   margin-bottom: 32px;
 }
 .back-link:hover { color: var(--color-accent-deep); }
+
+/* ── 退款 banner ──────────────────────────────────────────────── */
+.refund-banner {
+  display: flex; align-items: flex-start; gap: 16px;
+  padding: 18px 22px;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  margin-bottom: 36px;
+  flex-wrap: wrap;
+}
+.refund-icon { flex-shrink: 0; margin-top: 2px; }
+.refund-text { flex: 1; min-width: 240px; }
+.refund-title {
+  margin: 0 0 6px;
+  font-family: var(--font-cn-serif);
+  font-weight: 400;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+}
+.refund-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-ink-default);
+  letter-spacing: 0.04em;
+}
+.refund-body strong { color: var(--color-ink-strong); font-weight: 500; }
+.refund-confirmed {
+  margin: 8px 0 0;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--color-fresh);
+}
+.refund-cta {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 11px 22px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--color-ink-strong);
+  color: var(--color-paper-canvas);
+  font-family: var(--font-cn-serif);
+  font-size: 13px; letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.refund-cta:hover { background: var(--color-accent-deep); }
+.refund-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.refund-error {
+  font-size: 12px; color: var(--color-state-danger);
+  margin: 0 0 24px;
+}
+
+.refund-processing {
+  background: var(--color-paper-surface);
+  border-color: var(--color-state-warning);
+  color: var(--color-state-warning);
+}
+.refund-done {
+  background: var(--color-fresh-tint);
+  border-color: var(--color-fresh-soft);
+  color: var(--color-fresh);
+}
+
+/* ── SSE toast ───────────────────────────────────────────────── */
+.sse-toast {
+  position: fixed; right: 32px; bottom: 32px; z-index: 1100;
+  padding: 12px 18px;
+  background: var(--color-ink-strong); color: var(--color-paper-canvas);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-cn-serif); font-size: 13px; letter-spacing: 0.04em;
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(46, 40, 35, 0.18);
+  max-width: 360px;
+}
+.sse-toast-enter-active, .sse-toast-leave-active {
+  transition: opacity 200ms, transform 200ms;
+}
+.sse-toast-enter-from, .sse-toast-leave-to {
+  opacity: 0; transform: translateY(8px);
+}
 
 .loading {
   display: flex;

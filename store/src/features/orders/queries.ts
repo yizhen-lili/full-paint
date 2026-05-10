@@ -62,6 +62,17 @@ export function useCancelOrderMutation(orderId: MaybeRefOrGetter<string>) {
   })
 }
 
+export function useConfirmRefundMutation(orderId: MaybeRefOrGetter<string>) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => ordersApi.confirmRefund(toValue(orderId)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['order', toValue(orderId)] })
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+    },
+  })
+}
+
 export function useUpdateShippingMutation(orderId: MaybeRefOrGetter<string>) {
   const queryClient = useQueryClient()
   return useMutation({

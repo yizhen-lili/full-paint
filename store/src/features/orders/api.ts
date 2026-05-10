@@ -218,6 +218,12 @@ export async function confirmReceived(orderId: string): Promise<ConfirmReceivedR
   })
 }
 
+export async function confirmRefund(orderId: string): Promise<void> {
+  await jsonRequest<void>(`/orders/${orderId}/confirm-refund`, {
+    method: 'POST',
+  })
+}
+
 export interface CancelOrderResponse {
   id: string
   order_number: string

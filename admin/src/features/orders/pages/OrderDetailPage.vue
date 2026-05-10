@@ -16,6 +16,8 @@ import {
   X,
   Printer,
   ExternalLink,
+  Quote,
+  Wrench,
 } from 'lucide-vue-next'
 
 import Card from '@/shared/ui/Card.vue'
@@ -472,18 +474,17 @@ function copyOrderNumber() {
               v-for="item in order.items"
               :key="item.id"
               class="py-4 first:pt-0 last:pb-0 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3"
+              :class="item.custom_request_id ? 'pl-3 border-l-2 border-accent bg-accent/[0.04]' : ''"
             >
               <div>
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-medium text-ink-strong">{{ item.product_title_snapshot }}</span>
-                  <RouterLink
+                  <span
                     v-if="item.custom_request_id"
-                    :to="`/admin/custom-requests/${item.custom_request_id}`"
-                    class="inline-flex items-center px-2 h-[20px] text-[11px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-accent-tint text-accent-deep border border-accent hover:bg-accent hover:text-paper-canvas transition-colors"
-                    title="開啟客製申請詳情"
+                    class="inline-flex items-center px-2 h-[20px] text-[11px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-accent-tint text-accent-deep border border-accent font-medium"
                   >
-                    客製 #{{ item.custom_request_id.slice(0, 8) }}
-                  </RouterLink>
+                    客製
+                  </span>
                   <span
                     v-if="item.is_returned"
                     class="inline-flex items-center px-2 h-[20px] text-[11px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-paper-subtle text-ink-muted"
@@ -498,6 +499,25 @@ function copyOrderNumber() {
                   <span v-if="item.preorder_qty > 0" class="text-ink-muted">
                     （現貨 {{ item.fulfilled_qty }} + 預購 {{ item.preorder_qty }}）
                   </span>
+                </div>
+
+                <!-- 客製 OrderItem 快捷連結列：客製申請 + 製作 job -->
+                <div v-if="item.custom_request_id" class="mt-2 flex items-center gap-3 text-[12px]">
+                  <RouterLink
+                    :to="`/admin/custom-requests/${item.custom_request_id}`"
+                    class="inline-flex items-center gap-1 text-accent hover:text-accent-deep transition-colors"
+                  >
+                    <Quote :size="12" :stroke-width="1.5" />
+                    客製申請 #{{ item.custom_request_id.slice(0, 8) }}
+                  </RouterLink>
+                  <RouterLink
+                    v-if="item.production_job_id"
+                    :to="`/admin/production/${item.production_job_id}`"
+                    class="inline-flex items-center gap-1 text-accent hover:text-accent-deep transition-colors"
+                  >
+                    <Wrench :size="12" :stroke-width="1.5" />
+                    製作圖檔
+                  </RouterLink>
                 </div>
 
                 <ProductionProgressRow
