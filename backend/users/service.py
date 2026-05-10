@@ -120,6 +120,46 @@ async def request_email_change(
     await _send_email(new_email, "PaintLearn — 驗證您的新 Email", body)
 
 
+async def resend_email_change_verification(
+    db: AsyncSession, user: User,
+) -> None:
+    """重寄 pending_email 的驗證信（用戶沒收到 / 過期想重發）。
+
+    必要條件：user.pending_email 必須有值（已 request 過）。
+    行為：作廢舊 token + 簽新 token + 寄信至 pending_email。
+    """
+    if not user.pending_email:
+        raise BadRequestError("目前沒有待驗證的新 Email", code="NO_PENDING_EMAIL")
+
+    # 作廢所有舊 email_change token
+    await db.execute(
+        update(EmailVerificationToken)
+        .where(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.token_type == TokenTypeEnum.email_change,
+            EmailVerificationToken.used_at.is_(None),
+        )
+        .values(used_at=datetime.now(UTC))
+    )
+
+    plain = secrets.token_urlsafe(32)
+    db.add(EmailVerificationToken(
+        user_id=user.id,
+        token=_hash_token(plain),
+        token_type=TokenTypeEnum.email_change,
+        expires_at=datetime.now(UTC) + timedelta(hours=24),
+    ))
+    await db.commit()
+
+    verify_url = f"{settings.frontend_url}/verify-email/{plain}"
+    body = (
+        f"<p>請點擊以下連結驗證您的新 Email：</p>"
+        f"<p><a href='{verify_url}'>{verify_url}</a></p>"
+        f"<p>連結 24 小時內有效。</p>"
+    )
+    await _send_email(user.pending_email, "PaintLearn — 驗證您的新 Email（重寄）", body)
+
+
 async def list_shipping_profiles(
     db: AsyncSession, user_id: UUID
 ) -> list[ShippingProfile]:
