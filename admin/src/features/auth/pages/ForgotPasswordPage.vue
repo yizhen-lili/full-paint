@@ -54,9 +54,21 @@ const onSubmit = handleSubmit(async (values) => {
 
     <div
       v-if="submitted"
-      class="border border-state-success/40 bg-[var(--color-state-success)]/[0.06] text-state-success px-3 py-3 rounded-[var(--radius-xs)] text-[13px] leading-relaxed"
+      class="space-y-2"
     >
-      若該帳號存在，重設連結已寄出。請至信箱收信（連結 1 小時內有效）。
+      <div
+        class="border border-state-success/40 bg-[var(--color-state-success)]/[0.06] text-state-success px-3 py-3 rounded-[var(--radius-xs)] text-[13px] leading-relaxed"
+      >
+        若該帳號存在，重設連結已寄出。請至信箱收信（連結 1 小時內有效）。
+      </div>
+      <div
+        class="border-l-2 border-accent bg-paper-deep px-3 py-2.5 rounded-r-[var(--radius-xs)] text-[12px] leading-[1.7] text-ink-default"
+      >
+        <strong class="block text-ink-strong text-[12px] mb-1">📧 沒收到信？</strong>
+        新註冊網域可能會被誤判為垃圾信，請檢查
+        <strong class="text-accent">垃圾郵件</strong>夾，
+        或 Gmail 的「<strong class="text-accent">促銷內容</strong>」分頁。
+      </div>
     </div>
 
     <form v-else class="flex flex-col gap-3.5" novalidate @submit="onSubmit">

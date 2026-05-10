@@ -248,6 +248,9 @@ function onEmailChangeSuccess(newEmail: string) {
               已寄驗證信至 <strong>{{ profile.pending_email }}</strong>，
               點信內連結即可完成變更（驗證前舊 Email 仍可登入）。
             </p>
+            <p class="pending-spam-hint">
+              📧 沒收到？請檢查<strong>垃圾郵件</strong>或 Gmail 的<strong>促銷內容</strong>分頁。
+            </p>
             <button
               type="button"
               class="link-btn"
@@ -457,6 +460,15 @@ function onEmailChangeSuccess(newEmail: string) {
 }
 .pending-banner p { margin: 0; flex: 1; min-width: 200px; }
 .pending-banner strong { font-weight: 500; color: var(--color-ink-strong); }
+.pending-spam-hint {
+  font-size: 11px !important;
+  color: var(--color-ink-muted) !important;
+  letter-spacing: 0.02em;
+  flex-basis: 100% !important;
+  padding-top: 4px !important;
+  border-top: 1px dashed var(--color-line-subtle);
+}
+.pending-spam-hint strong { color: var(--color-accent) !important; font-weight: 500 !important; }
 
 /* ── Actions ─────────────────────────────────────────────────────── */
 .actions {

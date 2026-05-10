@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { useForm } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
 import { Loader2, Mail } from 'lucide-vue-next'
+import SpamTip from '@/shared/components/SpamTip.vue'
 import * as authApi from '../api'
 import { forgotPasswordSchema, type ForgotPasswordValues } from '../schemas'
 
@@ -44,6 +45,7 @@ const onSubmit = handleSubmit(async (values) => {
       重設密碼連結已寄至此 email。
     </p>
     <p class="hint">連結 1 小時內有效。</p>
+    <SpamTip />
     <RouterLink to="/login" class="btn-secondary">回到登入</RouterLink>
   </div>
 

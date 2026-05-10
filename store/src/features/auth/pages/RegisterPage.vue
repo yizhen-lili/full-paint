@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { useForm } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
 import { Loader2, Check } from 'lucide-vue-next'
+import SpamTip from '@/shared/components/SpamTip.vue'
 import * as authApi from '../api'
 import { registerSchema, type RegisterValues } from '../schemas'
 
@@ -96,8 +97,9 @@ onUnmounted(() => {
       <strong>{{ sentEmail }}</strong><br />
       請點擊信中連結完成註冊。
     </p>
+    <SpamTip />
     <p class="hint">
-      沒收到信？檢查垃圾郵件夾，或
+      還是沒收到？
       <button
         type="button"
         class="link-btn"
