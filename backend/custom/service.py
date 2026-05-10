@@ -256,6 +256,7 @@ async def create_custom_request(
     detail: str | None,
     customer_notes: str | None,
     parent_request_id: UUID | None,
+    display_consent: bool = False,
 ) -> CustomRequest:
     if request_type == "custom_spec" and ref_product_id is not None:
         prod = await db.execute(select(Product).where(Product.id == ref_product_id))
@@ -281,6 +282,7 @@ async def create_custom_request(
         detail=detail,
         customer_notes=customer_notes,
         parent_request_id=parent_request_id,
+        display_consent=display_consent,
     )
     db.add(req)
     await db.flush()

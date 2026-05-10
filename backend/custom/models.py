@@ -58,6 +58,8 @@ class CustomRequest(Base):
     difficulty = Column(Enum(DifficultyEnum), nullable=True)
     detail = Column(Enum(DetailEnum), nullable=True)
     customer_notes = Column(Text, nullable=True)
+    # 客人是否同意作品於 IG / 網站作品案例展示（spec 第九頁智財權條款）
+    display_consent = Column(Boolean, nullable=False, default=False)
     quoted_price = Column(Numeric(10, 2), nullable=True)
     quote_token = Column(String, nullable=True, unique=True)
     quote_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)

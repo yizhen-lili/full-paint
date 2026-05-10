@@ -119,6 +119,7 @@ async def create_custom_request(
         body.canvas_w_cm, body.canvas_h_cm,
         body.difficulty, body.detail,
         body.customer_notes, body.parent_request_id,
+        display_consent=body.display_consent,
     )
     return CreateCustomRequestResponse(
         id=req.id, request_type=req.request_type.value,

@@ -235,15 +235,34 @@ async function submitCancel() {
 }
 
 // 進度 stepper（依 status 點亮）
-// 使用者可見的進度時間軸（4 個主階段）。
-// 對應 backend OrderStatusEnum；多種 status 可能映射到同一個 step。
+// 使用者可見的進度時間軸（5 個主階段）+ 對應 timestamps。
+import { Wallet as WalletStep, CheckCircle2, Hammer, Truck as TruckStep, Sparkles as SparklesStep } from 'lucide-vue-next'
+
 const PROGRESS_STEPS = [
-  { idx: 0, label: '待付款' },
-  { idx: 1, label: '已付款' },
-  { idx: 2, label: '製作中' },
-  { idx: 3, label: '已出貨' },
-  { idx: 4, label: '已完成' },
+  { idx: 0, label: '待付款', Icon: WalletStep },
+  { idx: 1, label: '已付款', Icon: CheckCircle2 },
+  { idx: 2, label: '製作中', Icon: Hammer },
+  { idx: 3, label: '已出貨', Icon: TruckStep },
+  { idx: 4, label: '已完成', Icon: SparklesStep },
 ]
+
+// 各 step 的對應 timestamp（達成才顯示）
+function stepTimestamp(idx: number): string | null {
+  if (!order.value) return null
+  const o = order.value
+  if (idx === 0) return o.created_at
+  if (idx === 1) return o.paid_at
+  if (idx === 2) return o.paid_at  // 製作中沒有專屬時間，沿用付款時間
+  if (idx === 3) return o.shipments?.[0]?.shipped_at ?? null
+  if (idx === 4) return o.completed_at
+  return null
+}
+
+function fmtDateShort(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 // status → step idx（無對應的特殊狀態：cancelled / refunded 等不顯示 stepper）
 const STATUS_TO_STEP_IDX: Record<string, number> = {
@@ -426,19 +445,30 @@ function specSummary(spec: Record<string, unknown>): string {
           <span class="stepper-no">No. 01</span>
           <span class="stepper-dot"></span>
           <span class="stepper-italic">Progress</span>
+          <span class="stepper-line"></span>
+          <span class="stepper-status">{{ STATUS_LABEL[order.status] }}</span>
         </div>
         <div class="steps">
           <div
+            class="steps-fill"
+            :style="{ width: `${(currentStepIdx / (PROGRESS_STEPS.length - 1)) * 100}%` }"
+          ></div>
+          <div
             v-for="(step, idx) in PROGRESS_STEPS"
-            :key="step.key"
+            :key="idx"
             class="step"
             :class="{
               'step-done': idx < currentStepIdx,
               'step-current': idx === currentStepIdx,
             }"
           >
-            <span class="step-no">{{ String(idx + 1).padStart(2, '0') }}</span>
+            <span class="step-bullet">
+              <component :is="step.Icon" :size="16" :stroke-width="1.75" />
+            </span>
             <span class="step-label">{{ step.label }}</span>
+            <span v-if="stepTimestamp(idx) && idx <= currentStepIdx" class="step-time">
+              {{ fmtDateShort(stepTimestamp(idx)) }}
+            </span>
           </div>
         </div>
       </section>
@@ -1104,12 +1134,18 @@ function specSummary(spec: Record<string, unknown>): string {
 .band-hint-expired { color: var(--color-state-danger); }
 
 /* Stepper */
-.stepper { margin-bottom: 36px; }
+.stepper {
+  margin-bottom: 36px;
+  padding: 28px 32px 32px;
+  background: var(--color-paper-surface);
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-sm);
+}
 .stepper-cap {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 .stepper-no {
   font-family: var(--font-mono);
@@ -1125,23 +1161,50 @@ function specSummary(spec: Record<string, unknown>): string {
   font-size: 14px;
   color: var(--color-accent);
 }
+.stepper-line {
+  flex: 1;
+  height: 1px;
+  background: var(--color-line-subtle);
+  margin: 0 4px;
+}
+.stepper-status {
+  font-family: var(--font-cn-serif);
+  font-weight: 400;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--color-ink-strong);
+}
 
 .steps {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0;
   position: relative;
-  padding: 24px 0 16px;
+  padding: 28px 0 4px;
 }
+/* 灰底連接線 */
 .steps::before {
   content: '';
   position: absolute;
-  top: 36px;
-  left: 16px;
-  right: 16px;
-  height: 1px;
-  background: var(--color-line);
+  top: 46px;
+  left: 18px;
+  right: 18px;
+  height: 2px;
+  background: var(--color-line-subtle);
+  border-radius: 1px;
   z-index: 0;
+}
+/* 完成進度 fill — accent 漸層 */
+.steps-fill {
+  position: absolute;
+  top: 46px;
+  left: 18px;
+  height: 2px;
+  background: linear-gradient(to right, var(--color-fresh) 0%, var(--color-accent) 100%);
+  border-radius: 1px;
+  z-index: 0;
+  transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+  max-width: calc(100% - 36px);
 }
 .step {
   position: relative;
@@ -1149,44 +1212,68 @@ function specSummary(spec: Record<string, unknown>): string {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   z-index: 1;
 }
-.step-no {
-  width: 32px;
-  height: 32px;
+.step-bullet {
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: var(--color-paper-canvas);
-  border: 1px solid var(--color-line);
+  border: 1.5px solid var(--color-line);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
   color: var(--color-ink-muted);
+  transition: background 240ms, border-color 240ms, color 240ms, transform 240ms;
 }
+.step-bullet :deep(svg) { stroke: currentColor; fill: none; }
 .step-label {
   font-family: var(--font-cn-serif);
   font-weight: 300;
   font-size: 12px;
   letter-spacing: 0.06em;
   color: var(--color-ink-muted);
+  margin-top: 2px;
 }
-.step-done .step-no {
-  background: var(--color-fresh-tint);
+.step-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--color-ink-muted);
+  margin-top: 1px;
+}
+
+/* Done step */
+.step-done .step-bullet {
+  background: var(--color-fresh);
   border-color: var(--color-fresh);
-  color: var(--color-fresh);
-}
-.step-done .step-label { color: var(--color-fresh); }
-.step-current .step-no {
-  background: var(--color-ink-strong);
-  border-color: var(--color-ink-strong);
   color: var(--color-paper-canvas);
 }
-.step-current .step-label {
-  color: var(--color-ink-strong);
+.step-done .step-label {
+  color: var(--color-fresh);
   font-weight: 400;
+}
+.step-done .step-time { color: var(--color-fresh); }
+
+/* Current step — pulse + filled accent */
+.step-current .step-bullet {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-paper-canvas);
+  transform: scale(1.1);
+  box-shadow: 0 0 0 4px rgba(196, 122, 79, 0.15);
+  animation: step-pulse 2.4s ease-in-out infinite;
+}
+.step-current .step-label {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+.step-current .step-time { color: var(--color-accent); }
+
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(196, 122, 79, 0.15); }
+  50% { box-shadow: 0 0 0 8px rgba(196, 122, 79, 0.05); }
 }
 
 /* Grid */

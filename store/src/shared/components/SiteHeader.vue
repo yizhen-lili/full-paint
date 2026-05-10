@@ -169,7 +169,43 @@ const TAGS_LIMIT = 8
             <RouterLink to="/custom" class="mega-cta">客製化首頁 →</RouterLink>
           </div>
         </MegaMenu>
-        <RouterLink to="/help" class="nav-link">購物說明</RouterLink>
+
+        <MegaMenu label="購物說明" to="/help">
+          <div class="mega-help">
+            <div class="mega-col">
+              <h4 class="mega-heading">先了解一下</h4>
+              <ul class="mega-list">
+                <li><RouterLink to="/about-pbn">什麼是數字油畫</RouterLink></li>
+                <li><RouterLink to="/painting-tips">新手教學</RouterLink></li>
+              </ul>
+            </div>
+            <div class="mega-col">
+              <h4 class="mega-heading">買之前想知道</h4>
+              <ul class="mega-list">
+                <li><RouterLink to="/size-guide">尺寸指南</RouterLink></li>
+                <li><RouterLink to="/pricing">報價參考</RouterLink></li>
+              </ul>
+            </div>
+            <div class="mega-col">
+              <h4 class="mega-heading">下單後</h4>
+              <ul class="mega-list">
+                <li><RouterLink to="/custom-process">訂製流程</RouterLink></li>
+                <li><RouterLink to="/shipping-info">配送與付款</RouterLink></li>
+                <li><RouterLink to="/refund-policy">退換貨政策</RouterLink></li>
+              </ul>
+            </div>
+            <div class="mega-col">
+              <h4 class="mega-heading">更深入</h4>
+              <ul class="mega-list">
+                <li><RouterLink to="/faq">常見問題</RouterLink></li>
+                <li><RouterLink to="/about">關於易木 YIIMUI</RouterLink></li>
+              </ul>
+            </div>
+          </div>
+          <div class="mega-footer">
+            <RouterLink to="/help" class="mega-cta">購物說明總覽 →</RouterLink>
+          </div>
+        </MegaMenu>
       </nav>
 
       <SiteLogo size="md" />
@@ -298,6 +334,13 @@ const TAGS_LIMIT = 8
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   min-width: 560px;
+}
+
+.mega-help {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 28px;
+  min-width: 640px;
 }
 .mega-custom-card {
   display: flex; flex-direction: column; gap: 6px;

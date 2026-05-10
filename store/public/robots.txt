@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin/
+Disallow: /api/
+Disallow: /profile/
+Disallow: /orders/
+Disallow: /cart
+Disallow: /checkout
+Disallow: /custom/requests/
+Disallow: /custom/quote/
+
+Sitemap: https://yiimui.com/sitemap.xml

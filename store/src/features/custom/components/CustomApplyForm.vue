@@ -2,7 +2,7 @@
 // 客製照片申請表單（純 form + success state，不含 page chrome）
 // 用於 /custom/apply 與 /custom 兩個頁面共用
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, RouterLink } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import {
   Camera, CheckCircle2, Loader2, Sparkles, Upload, X, Lock,
@@ -76,6 +76,7 @@ watch(difficultyChoice, (v) => {
 })
 
 const customerNotes = ref<string>('')
+const displayConsent = ref<boolean>(false)
 const formError = ref<string | null>(null)
 const showStashedToast = ref(false)
 const submittedRequestId = ref<string | null>(null)
@@ -173,6 +174,7 @@ function buildPayload(): CreateCustomRequestPayload {
     detail: null,
     customer_notes: customerNotes.value.trim() || null,
     parent_request_id: null,
+    display_consent: displayConsent.value,
   }
 }
 
@@ -461,6 +463,25 @@ onBeforeUnmount(() => {
         ></textarea>
       </fieldset>
 
+      <!-- Step 5: 作品展示授權 -->
+      <fieldset class="field">
+        <legend class="field-legend">
+          <span class="field-no">05</span>作品展示授權
+          <span class="field-optional">（選填）</span>
+        </legend>
+        <label class="consent" :class="{ 'consent-active': displayConsent }">
+          <input v-model="displayConsent" type="checkbox" />
+          <span class="consent-text">
+            <strong>我同意易木 YIIMUI 將完成作品展示於 IG / 網站作品案例</strong>
+            <span class="consent-hint">
+              不勾選不影響訂單。完成後若想分享，我們會再次徵詢同意。
+              智財權細節見
+              <RouterLink to="/terms" target="_blank" class="consent-link">服務條款 04</RouterLink>。
+            </span>
+          </span>
+        </label>
+      </fieldset>
+
       <p v-if="formError" class="info-msg">{{ formError }}</p>
 
       <div class="submit-row">
@@ -536,6 +557,52 @@ onBeforeUnmount(() => {
 
 .textarea { width: 100%; padding: 12px 14px; font: inherit; font-size: 14px; line-height: 1.7; color: var(--color-ink-default); background: var(--color-paper-surface); border: 1px solid var(--color-line); border-radius: var(--radius-sm); resize: vertical; min-height: 96px; }
 .textarea:focus { outline: none; border-color: var(--color-accent); background: var(--color-paper-canvas); }
+
+.consent {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 16px 18px;
+  background: var(--color-paper-surface);
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: border-color 150ms, background 150ms;
+}
+.consent:hover { border-color: var(--color-accent-soft); }
+.consent-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-tint);
+}
+.consent input {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.consent-text { display: flex; flex-direction: column; gap: 4px; }
+.consent-text strong {
+  font-family: var(--font-cn-serif);
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-strong);
+  line-height: 1.5;
+}
+.consent-hint {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-ink-muted);
+  letter-spacing: 0.02em;
+}
+.consent-link {
+  color: var(--color-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-accent);
+}
+.consent-link:hover { color: var(--color-accent-deep); border-color: var(--color-accent-deep); }
 
 .error { font-size: 13px; color: var(--color-accent-wine); margin: 8px 0 0; }
 .info-msg { padding: 12px 16px; margin: 0; background: var(--color-accent-tint); border: 1px solid var(--color-accent-soft); border-radius: var(--radius-xs); font-size: 13px; color: var(--color-accent-deep); }

@@ -87,6 +87,7 @@ export interface CreateCustomRequestPayload {
   detail?: Detail | null
   customer_notes?: string | null
   parent_request_id?: string | null
+  display_consent?: boolean
 }
 
 export interface CreateCustomRequestResponse {

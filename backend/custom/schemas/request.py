@@ -19,6 +19,8 @@ class CreateCustomRequestRequest(BaseModel):
     detail: Literal["rough", "standard", "detailed", "premium"] | None = None
     customer_notes: str | None = Field(default=None, max_length=NOTES_MAX_LEN)
     parent_request_id: UUID | None = None
+    # 是否同意作品於 IG / 網站作品案例展示（spec 第九頁智財權條款）
+    display_consent: bool = False
 
     @model_validator(mode="after")
     def validate_type_specific_fields(self):

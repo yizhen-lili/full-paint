@@ -39,6 +39,8 @@ import AboutPbnPage from '@/features/pages/AboutPbnPage.vue'
 import PaintingTipsPage from '@/features/pages/PaintingTipsPage.vue'
 import FaqPage from '@/features/pages/FaqPage.vue'
 import AboutBrandPage from '@/features/pages/AboutBrandPage.vue'
+import PrivacyPage from '@/features/pages/PrivacyPage.vue'
+import TermsPage from '@/features/pages/TermsPage.vue'
 import NotFoundPage from '@/shared/components/NotFoundPage.vue'
 import PaletteDebugPage from '@/features/dev/pages/PaletteDebugPage.vue'
 import BandPickerPage from '@/features/dev/pages/BandPickerPage.vue'
@@ -74,6 +76,8 @@ export const router = createRouter({
     { path: '/painting-tips', name: 'painting-tips', component: PaintingTipsPage, meta: { layout: 'default' } },
     { path: '/faq', name: 'faq', component: FaqPage, meta: { layout: 'default' } },
     { path: '/about', name: 'about', component: AboutBrandPage, meta: { layout: 'default' } },
+    { path: '/privacy', name: 'privacy', component: PrivacyPage, meta: { layout: 'default' } },
+    { path: '/terms', name: 'terms', component: TermsPage, meta: { layout: 'default' } },
 
     // ── Auth required — DefaultLayout ────────────────────────────────────
     { path: '/cart', name: 'cart', component: CartPage, meta: { layout: 'default', requiresAuth: true } },

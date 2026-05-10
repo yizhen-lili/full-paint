@@ -51,7 +51,13 @@ import { RouterLink } from 'vue-router'
 
     <div class="footer-bottom">
       <span>© 2026 易木 YIIMUI</span>
-      <a href="mailto:contact@yiimui.com">contact@yiimui.com</a>
+      <div class="footer-bottom-links">
+        <RouterLink to="/privacy">隱私權政策</RouterLink>
+        <span class="dot">·</span>
+        <RouterLink to="/terms">服務條款</RouterLink>
+        <span class="dot">·</span>
+        <a href="mailto:contact@yiimui.com">contact@yiimui.com</a>
+      </div>
     </div>
   </footer>
 </template>
@@ -145,6 +151,16 @@ import { RouterLink } from 'vue-router'
   transition: color 150ms;
 }
 .footer-bottom a:hover { color: var(--color-paper-canvas); }
+
+.footer-bottom-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.footer-bottom-links .dot {
+  opacity: 0.5;
+}
 
 @media (max-width: 1023px) {
   .site-footer { padding: 64px 32px 32px; margin-top: 80px; }

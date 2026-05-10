@@ -63,6 +63,11 @@ const STEPS = [
           </RouterLink>
         </div>
       </div>
+
+      <footer class="foot">
+        <p class="foot-text">第一次接觸數字油畫？</p>
+        <RouterLink to="/about-pbn" class="foot-link">看完整介紹 →</RouterLink>
+      </footer>
     </div>
   </section>
 </template>
@@ -239,6 +244,41 @@ const STEPS = [
   transition: color 150ms, border-color 150ms;
 }
 .step-link:hover {
+  color: var(--color-accent-deep);
+  border-color: var(--color-accent-deep);
+}
+
+.foot {
+  margin-top: 80px;
+  padding-top: 32px;
+  border-top: 1px solid var(--color-line-subtle);
+  text-align: center;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.foot-text {
+  font-family: var(--font-cn-serif);
+  font-weight: 300;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-muted);
+  margin: 0;
+}
+.foot-link {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-accent);
+  padding-bottom: 3px;
+  transition: color 150ms, border-color 150ms;
+}
+.foot-link:hover {
   color: var(--color-accent-deep);
   border-color: var(--color-accent-deep);
 }
