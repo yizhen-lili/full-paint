@@ -113,15 +113,22 @@ export const STATUS_LABEL: Record<string, string> = {
   partially_refunded: '部分退款',
 }
 
-export const STATUS_TAB: Record<string, 'unpaid' | 'shipping' | 'done'> = {
+export type OrderTab =
+  | 'unpaid'
+  | 'shipping'
+  | 'completed'
+  | 'cancelled'
+  | 'refund'
+
+export const STATUS_TAB: Record<string, OrderTab> = {
   pending_payment: 'unpaid',
   payment_expired: 'unpaid',     // 逾期也算未付（讓用戶看到並能處理）
   paid: 'shipping',
   processing: 'shipping',
   shipped: 'shipping',
-  completed: 'done',
-  cancelled: 'done',
-  refund_processing: 'done',     // 退款處理中歸類已結案區
-  refunded: 'done',
-  partially_refunded: 'done',
+  completed: 'completed',
+  cancelled: 'cancelled',
+  refund_processing: 'refund',
+  refunded: 'refund',
+  partially_refunded: 'refund',
 }

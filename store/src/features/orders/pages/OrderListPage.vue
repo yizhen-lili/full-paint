@@ -3,11 +3,11 @@ import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ArrowLeft, Loader2, ShoppingBag } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
-import { useOrdersQuery, STATUS_LABEL, STATUS_TAB } from '../queries'
+import { useOrdersQuery, STATUS_LABEL, STATUS_TAB, type OrderTab } from '../queries'
 
-type Tab = 'unpaid' | 'shipping' | 'done'
+const TABS: readonly OrderTab[] = ['unpaid', 'shipping', 'completed', 'cancelled', 'refund'] as const
 
-const tab = ref<Tab>('unpaid')
+const tab = ref<OrderTab>('unpaid')
 const page = ref(1)
 
 // 後端的 status query 是單一字串，前端 tab 對應多種狀態
@@ -19,11 +19,16 @@ const items = computed(() =>
   allItems.value.filter((o) => STATUS_TAB[o.status] === tab.value),
 )
 const totalCount = computed(() => allItems.value.length)
-const tabCounts = computed(() => ({
-  unpaid: allItems.value.filter((o) => STATUS_TAB[o.status] === 'unpaid').length,
-  shipping: allItems.value.filter((o) => STATUS_TAB[o.status] === 'shipping').length,
-  done: allItems.value.filter((o) => STATUS_TAB[o.status] === 'done').length,
-}))
+const tabCounts = computed(() => {
+  const counts: Record<OrderTab, number> = {
+    unpaid: 0, shipping: 0, completed: 0, cancelled: 0, refund: 0,
+  }
+  for (const o of allItems.value) {
+    const t = STATUS_TAB[o.status]
+    if (t) counts[t]++
+  }
+  return counts
+})
 
 const isEmpty = computed(
   () => !ordersQuery.isPending.value && items.value.length === 0,
@@ -34,16 +39,28 @@ function fmtDate(iso: string): string {
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
 }
 
-const TAB_LABEL: Record<Tab, string> = {
+const TAB_LABEL: Record<OrderTab, string> = {
   unpaid: '待付款',
   shipping: '出貨中',
-  done: '已完成',
+  completed: '已完成',
+  cancelled: '已取消',
+  refund: '退款',
 }
 
-const TAB_AUX: Record<Tab, string> = {
-  unpaid: 'pending payment',
-  shipping: 'in transit',
-  done: 'closed',
+const TAB_AUX: Record<OrderTab, string> = {
+  unpaid: 'pending',
+  shipping: 'shipping',
+  completed: 'done',
+  cancelled: 'cancelled',
+  refund: 'refund',
+}
+
+const EMPTY_HINT: Record<OrderTab, string> = {
+  unpaid: '所有訂單都已付款。',
+  shipping: '目前沒有出貨中的訂單。',
+  completed: '尚未有已完成的訂單。',
+  cancelled: '沒有已取消的訂單。',
+  refund: '沒有退款相關的訂單。',
 }
 </script>
 
@@ -64,7 +81,7 @@ const TAB_AUX: Record<Tab, string> = {
     <!-- Tabs -->
     <nav class="tabs">
       <button
-        v-for="t in (['unpaid', 'shipping', 'done'] as Tab[])"
+        v-for="t in TABS"
         :key="t"
         type="button"
         class="tab"
@@ -84,11 +101,7 @@ const TAB_AUX: Record<Tab, string> = {
     <section v-else-if="isEmpty" class="empty">
       <ShoppingBag class="empty-icon" />
       <h2 class="empty-title">這裡還沒有訂單</h2>
-      <p class="empty-hint">
-        {{ tab === 'unpaid' ? '所有訂單都已付款。' :
-           tab === 'shipping' ? '目前沒有出貨中的訂單。' :
-           '尚未完成任何訂單。' }}
-      </p>
+      <p class="empty-hint">{{ EMPTY_HINT[tab] }}</p>
       <RouterLink to="/products" class="empty-cta">看看商品 →</RouterLink>
     </section>
 
@@ -322,7 +335,9 @@ const TAB_AUX: Record<Tab, string> = {
 }
 .dot-unpaid { background: var(--color-state-warning); }
 .dot-shipping { background: var(--color-fresh); }
-.dot-done { background: var(--color-ink-muted); }
+.dot-completed { background: var(--color-ink-muted); }
+.dot-cancelled { background: var(--color-ink-disabled); }
+.dot-refund { background: var(--color-accent-wine); }
 
 .status-text {
   font-family: var(--font-cn-serif);
