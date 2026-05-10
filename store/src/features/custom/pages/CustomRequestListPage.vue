@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Loader2, FileQuestion } from 'lucide-vue-next'
+import { ArrowLeft, Loader2, FileQuestion } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import { useCustomRequestListQuery } from '../queries'
 import { STATUS_LABEL, REQUEST_TYPE_LABEL, type RequestStatus } from '../api'
@@ -55,6 +55,11 @@ function statusTone(status: RequestStatus): string {
 
 <template>
   <main class="page">
+    <RouterLink to="/profile" class="back-link">
+      <ArrowLeft :size="14" />
+      會員中心
+    </RouterLink>
+
     <SectionMasthead
       no="07"
       chapter="My Requests"
@@ -118,8 +123,16 @@ function statusTone(status: RequestStatus): string {
 <style scoped>
 .page {
   max-width: 960px; margin: 0 auto;
-  padding: 56px 24px 96px;
+  padding: 32px 24px 96px;
 }
+.back-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted); text-decoration: none;
+  margin-bottom: 32px;
+}
+.back-link:hover { color: var(--color-accent-deep); }
 .filter-row {
   display: flex; flex-wrap: wrap; gap: 8px;
   margin: 32px 0 24px;

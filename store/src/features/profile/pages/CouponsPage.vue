@@ -43,13 +43,6 @@ const TAB_LABEL = {
       caption="My Coupons"
     />
 
-    <nav class="sub-nav">
-      <RouterLink to="/profile" class="sub-link" exact-active-class="is-active">概覽</RouterLink>
-      <RouterLink to="/profile/info" class="sub-link" active-class="is-active">個人資料</RouterLink>
-      <RouterLink to="/profile/shipping" class="sub-link" active-class="is-active">收件資料</RouterLink>
-      <RouterLink to="/profile/coupons" class="sub-link" active-class="is-active">折扣券錢包</RouterLink>
-    </nav>
-
     <div class="tabs">
       <button
         v-for="key in ['available', 'used', 'expired'] as const"
@@ -113,30 +106,10 @@ const TAB_LABEL = {
 .spin { animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.sub-nav {
-  display: flex; gap: 24px;
-  margin: 32px 0 24px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-line-subtle);
-}
-.sub-link {
-  font-family: var(--font-cn-serif); font-weight: 300;
-  font-size: 14px; letter-spacing: 0.06em;
-  color: var(--color-ink-muted); text-decoration: none;
-  padding-bottom: 12px; margin-bottom: -13px;
-  border-bottom: 1px solid transparent;
-  transition: color 150ms, border-color 150ms;
-}
-.sub-link:hover { color: var(--color-accent-deep); }
-.sub-link.is-active {
-  color: var(--color-ink-strong);
-  border-bottom-color: var(--color-accent);
-}
-
 .tabs {
   display: flex;
   gap: 4px;
-  margin-bottom: 32px;
+  margin: 40px 0 32px;
 }
 .tab {
   display: inline-flex; align-items: center; gap: 8px;

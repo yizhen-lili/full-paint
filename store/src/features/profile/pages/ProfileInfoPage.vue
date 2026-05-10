@@ -151,13 +151,6 @@ const GENDER_LABEL: Record<Gender, string> = {
       caption="Personal Info"
     />
 
-    <nav class="sub-nav">
-      <RouterLink to="/profile" class="sub-link" exact-active-class="is-active">概覽</RouterLink>
-      <RouterLink to="/profile/info" class="sub-link" active-class="is-active">個人資料</RouterLink>
-      <RouterLink to="/profile/shipping" class="sub-link" active-class="is-active">收件資料</RouterLink>
-      <RouterLink to="/profile/coupons" class="sub-link" active-class="is-active">折扣券錢包</RouterLink>
-    </nav>
-
     <div v-if="profileQuery.isPending.value" class="state">
       <Loader2 :size="20" class="spin" /> 載入中…
     </div>
@@ -311,27 +304,10 @@ const GENDER_LABEL: Record<Gender, string> = {
 .spin { animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.sub-nav {
-  display: flex; gap: 24px;
-  margin: 32px 0 40px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-line-subtle);
+.form {
+  display: flex; flex-direction: column; gap: 28px;
+  margin-top: 40px;
 }
-.sub-link {
-  font-family: var(--font-cn-serif); font-weight: 300;
-  font-size: 14px; letter-spacing: 0.06em;
-  color: var(--color-ink-muted); text-decoration: none;
-  padding-bottom: 12px; margin-bottom: -13px;
-  border-bottom: 1px solid transparent;
-  transition: color 150ms, border-color 150ms;
-}
-.sub-link:hover { color: var(--color-accent-deep); }
-.sub-link.is-active {
-  color: var(--color-ink-strong);
-  border-bottom-color: var(--color-accent);
-}
-
-.form { display: flex; flex-direction: column; gap: 28px; }
 
 .field { display: flex; flex-direction: column; gap: 10px; }
 .field-label {
