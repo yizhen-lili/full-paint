@@ -55,6 +55,7 @@ const { handleSubmit, errors, defineField, setValues, values } = useForm<Product
     series_id: null,
     series_order: 0,
     status: 'draft',
+    is_featured: false,
     tag_ids: [],
   },
 })
@@ -75,6 +76,7 @@ watch(existing, (next) => {
       series_id: next.series_id,
       series_order: next.series_order ?? 0,
       status: next.status,
+      is_featured: next.is_featured ?? false,
       tag_ids: (next.tags ?? []).map((t) => t.id),
     })
   }
@@ -106,15 +108,24 @@ async function doSubmit(payload: ProductFormValues) {
   }
 }
 
-const onSubmit = handleSubmit((vals) => {
-  // 若由 on_sale 改成 off_sale，先彈警告（暫時不查實際進行中訂單數，只用 status 變化判斷）
-  if (existing.value?.status === 'on_sale' && vals.status === 'off_sale') {
-    pendingSubmit.value = () => doSubmit(vals)
-    warningOpen.value = true
-    return
-  }
-  doSubmit(vals)
-})
+const onSubmit = handleSubmit(
+  (vals) => {
+    // 若由 on_sale 改成 off_sale，先彈警告
+    if (existing.value?.status === 'on_sale' && vals.status === 'off_sale') {
+      pendingSubmit.value = () => doSubmit(vals)
+      warningOpen.value = true
+      return
+    }
+    doSubmit(vals)
+  },
+  ({ errors: validationErrors }) => {
+    // 表單驗證失敗 — 把錯誤訊息顯示給 user，避免「按了沒反應」的 silent fail
+    const firstError = Object.values(validationErrors)[0]
+    apiError.value = firstError
+      ? `表單驗證失敗：${firstError}`
+      : '表單有欄位未填寫或格式錯誤，請檢查紅字提示'
+  },
+)
 
 function confirmWarning() {
   warningOpen.value = false
