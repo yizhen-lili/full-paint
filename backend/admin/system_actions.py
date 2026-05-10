@@ -62,19 +62,19 @@ async def execute_clear_test_data(
 ) -> dict:
     """實際清除測試資料。回傳 deleted summary。
 
-    使用 engine.begin() 包成一個 transaction 確保 atomicity；
-    ORM session 也接受（呼叫端 commit / rollback）。
+    支援兩種呼叫情境：
+    - AsyncSession（FastAPI Depends 注入）：已有 implicit transaction，直接 execute + commit
+    - AsyncEngine（script 呼叫）：用 engine.begin() 開 transaction context
+
+    用 isinstance 區分，不能用 hasattr("begin") 因為兩者都有此方法但行為不同。
     """
-    # 統一抽 connection — engine 給 begin()，session 直接 execute
-    if hasattr(db_or_engine, "begin"):
-        # AsyncEngine
+    if isinstance(db_or_engine, AsyncEngine):
         async with db_or_engine.begin() as conn:
             return await _do_clear(conn)
-    else:
-        # AsyncSession — 已在 transaction 中
-        result = await _do_clear(db_or_engine)
-        await db_or_engine.commit()
-        return result
+    # AsyncSession 路徑 — 已在 transaction 中（FastAPI get_db 已開）
+    result = await _do_clear(db_or_engine)
+    await db_or_engine.commit()
+    return result
 
 
 async def _do_clear(conn) -> dict:
