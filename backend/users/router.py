@@ -50,6 +50,20 @@ async def request_email_change(
     return MessageResponse(message="驗證信已寄出")
 
 
+@router.post(
+    "/users/me/resend-email-change-verification",
+    response_model=MessageResponse,
+    tags=["Users"],
+)
+async def resend_email_change_verification(
+    user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """重寄 pending_email 的驗證信（用戶說沒收到 / 想重新觸發）。"""
+    await service.resend_email_change_verification(db, user)
+    return MessageResponse(message="驗證信已重新寄出")
+
+
 # ── Shipping Profiles ──────────────────────────────────────────────────────────
 
 @router.get(
