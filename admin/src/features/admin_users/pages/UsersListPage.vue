@@ -22,21 +22,25 @@ const role = ref<'' | UserRole>(
 const isActive = ref<'' | 'true' | 'false'>(
   (typeof route.query.is_active === 'string' ? route.query.is_active : '') as '' | 'true' | 'false',
 )
+const isVerified = ref<'' | 'true' | 'false'>(
+  (typeof route.query.is_email_verified === 'string' ? route.query.is_email_verified : '') as '' | 'true' | 'false',
+)
 const page = ref<number>(Number(route.query.page) > 0 ? Number(route.query.page) : 1)
 const pageSize = 20
 
-watch([search, role, isActive], () => {
+watch([search, role, isActive, isVerified], () => {
   page.value = 1
 })
 
 watch(
-  [search, role, isActive, page],
+  [search, role, isActive, isVerified, page],
   () => {
     router.replace({
       query: {
         ...(search.value ? { search: search.value } : {}),
         ...(role.value ? { role: role.value } : {}),
         ...(isActive.value ? { is_active: isActive.value } : {}),
+        ...(isVerified.value ? { is_email_verified: isVerified.value } : {}),
         ...(page.value > 1 ? { page: String(page.value) } : {}),
       },
     })
@@ -49,6 +53,8 @@ const params = computed(() => ({
   role: role.value || undefined,
   is_active:
     isActive.value === 'true' ? true : isActive.value === 'false' ? false : undefined,
+  is_email_verified:
+    isVerified.value === 'true' ? true : isVerified.value === 'false' ? false : undefined,
   page: page.value,
   page_size: pageSize,
 }))
@@ -67,6 +73,12 @@ const activeOptions = [
   { value: '', label: '全部狀態' },
   { value: 'true', label: '啟用中' },
   { value: 'false', label: '已停用' },
+]
+
+const verifiedOptions = [
+  { value: '', label: 'Email 驗證：全部' },
+  { value: 'true', label: '已驗證' },
+  { value: 'false', label: '未驗證' },
 ]
 
 const columns: Column<AdminUser>[] = [
@@ -98,10 +110,11 @@ function fmtDateTime(iso: string): string {
   <PageHeader title="用戶管理" subtitle="客戶與管理員帳號維護" />
 
   <section class="bg-paper-surface border border-line-hairline rounded-[var(--radius-sm)] p-4 mb-5">
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       <AppSearchInput v-model="search" placeholder="搜尋名稱 / email..." />
       <Select v-model="role" :options="roleOptions" />
       <Select v-model="isActive" :options="activeOptions" />
+      <Select v-model="isVerified" :options="verifiedOptions" />
     </div>
   </section>
 
@@ -139,8 +152,12 @@ function fmtDateTime(iso: string): string {
       <span class="text-[12px] text-ink-default">{{ row.email }}</span>
       <span
         v-if="!row.is_email_verified"
-        class="ml-1 inline-flex items-center px-1.5 h-[16px] text-[10px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-paper-subtle text-ink-muted"
-      >未驗證</span>
+        class="ml-1.5 inline-flex items-center gap-1 px-1.5 h-[18px] text-[10px] font-medium tracking-[0.04em] rounded-[var(--radius-xs)] border border-[var(--color-accent-wine)]/40 bg-[var(--color-accent-wine)]/[0.08] text-accent-wine"
+        title="此帳號尚未完成 Email 驗證，無法登入"
+      >
+        <span class="w-[5px] h-[5px] rounded-full bg-[var(--color-accent-wine)]"></span>
+        未驗證
+      </span>
     </template>
 
     <template #cell-role="{ row }">

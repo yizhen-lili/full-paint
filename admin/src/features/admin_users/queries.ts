@@ -3,8 +3,10 @@ import type { MaybeRefOrGetter } from 'vue'
 import { toValue } from 'vue'
 
 import {
+  forceVerifyEmail,
   getUser,
   listUsers,
+  resendVerification,
   updateUser,
   type UpdateUserPayload,
   type UsersListParams,
@@ -39,6 +41,23 @@ export function useUpdateUserMutation(id: string) {
     mutationFn: (payload: UpdateUserPayload) => updateUser(id, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: AU_KEYS.detail(id) })
+      qc.invalidateQueries({ queryKey: AU_KEYS.all })
+    },
+  })
+}
+
+export function useResendVerificationMutation(id: MaybeRefOrGetter<string>) {
+  return useMutation({
+    mutationFn: () => resendVerification(toValue(id)),
+  })
+}
+
+export function useForceVerifyEmailMutation(id: MaybeRefOrGetter<string>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => forceVerifyEmail(toValue(id)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: AU_KEYS.detail(toValue(id)) })
       qc.invalidateQueries({ queryKey: AU_KEYS.all })
     },
   })

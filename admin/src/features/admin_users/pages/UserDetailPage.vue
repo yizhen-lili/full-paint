@@ -16,7 +16,12 @@ import Button from '@/shared/ui/Button.vue'
 import { useAuthStore } from '@/features/auth/store'
 
 import EditUserDialog from '../components/EditUserDialog.vue'
-import { useUpdateUserMutation, useUserQuery } from '../queries'
+import {
+  useForceVerifyEmailMutation,
+  useResendVerificationMutation,
+  useUpdateUserMutation,
+  useUserQuery,
+} from '../queries'
 import type { UpdateUserPayload } from '../api'
 
 import { useOrdersQuery } from '@/features/orders/queries'
@@ -44,6 +49,45 @@ async function onConfirmEdit(payload: UpdateUserPayload) {
     editOpen.value = false
   } catch (e) {
     apiError.value = (e as { message?: string }).message || '儲存失敗'
+  }
+}
+
+// ── 救援動作（未驗證 user 救援）────────────────────────────────────────
+const resendMut = useResendVerificationMutation(userId)
+const forceVerifyMut = useForceVerifyEmailMutation(userId)
+const recoveryMsg = ref<{ kind: 'success' | 'error'; text: string } | null>(null)
+
+async function doResendVerification() {
+  recoveryMsg.value = null
+  try {
+    await resendMut.mutateAsync()
+    recoveryMsg.value = {
+      kind: 'success',
+      text: `驗證信已重寄到 ${user.value?.email ?? ''}`,
+    }
+  } catch (e) {
+    recoveryMsg.value = {
+      kind: 'error',
+      text: (e as { message?: string }).message || '寄送失敗',
+    }
+  }
+}
+
+async function doForceVerify() {
+  if (!confirm(
+    `確定要強制標記此帳號 email 為已驗證嗎？\n\n`
+    + `此動作會跳過 email 驗證流程，user 立刻可以登入。\n`
+    + `僅在 user 真的收不到驗證信時使用。`,
+  )) return
+  recoveryMsg.value = null
+  try {
+    await forceVerifyMut.mutateAsync()
+    recoveryMsg.value = { kind: 'success', text: '已強制標記為已驗證' }
+  } catch (e) {
+    recoveryMsg.value = {
+      kind: 'error',
+      text: (e as { message?: string }).message || '操作失敗',
+    }
   }
 }
 
@@ -184,7 +228,7 @@ function fmtMoney(n: number | string): string {
                   :class="
                     user.is_email_verified
                       ? 'bg-[var(--color-state-success)]/[0.10] text-state-success'
-                      : 'bg-paper-subtle text-ink-muted'
+                      : 'border border-[var(--color-accent-wine)]/40 bg-[var(--color-accent-wine)]/[0.08] text-accent-wine font-medium'
                   "
                 >
                   {{ user.is_email_verified ? '已驗證' : '未驗證' }}
@@ -193,6 +237,45 @@ function fmtMoney(n: number | string): string {
             </div>
             <div class="flex justify-between"><dt class="text-ink-muted">註冊</dt><dd class="font-mono text-[12px]">{{ fmtDateTime(user.created_at) }}</dd></div>
           </dl>
+
+          <!-- 救援動作（僅未驗證 user 顯示）-->
+          <div
+            v-if="!user.is_email_verified"
+            class="mt-4 pt-4 border-t border-line-hairline"
+          >
+            <p class="text-[11px] text-ink-muted mb-2 leading-[1.7]">
+              此帳號尚未完成 email 驗證，無法登入。
+            </p>
+            <div class="flex flex-col gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                :loading="resendMut.isPending.value"
+                @click="doResendVerification"
+              >
+                重寄驗證信
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                :loading="forceVerifyMut.isPending.value"
+                @click="doForceVerify"
+              >
+                強制標為已驗證（跳過 email）
+              </Button>
+            </div>
+            <div
+              v-if="recoveryMsg"
+              class="mt-2 px-2 py-1.5 text-[11px] rounded-[var(--radius-xs)]"
+              :class="
+                recoveryMsg.kind === 'success'
+                  ? 'bg-[var(--color-state-success)]/[0.08] text-state-success'
+                  : 'bg-[var(--color-state-danger)]/[0.08] text-state-danger'
+              "
+            >
+              {{ recoveryMsg.text }}
+            </div>
+          </div>
         </Card>
       </div>
 

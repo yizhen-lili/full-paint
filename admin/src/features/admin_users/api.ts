@@ -59,6 +59,7 @@ export interface UsersListParams {
   search?: string
   role?: UserRole | ''
   is_active?: boolean | ''
+  is_email_verified?: boolean | ''
   page?: number
   page_size?: number
 }
@@ -79,6 +80,9 @@ export function listUsers(params: UsersListParams = {}) {
   if (params.is_active !== undefined && params.is_active !== '') {
     q.set('is_active', String(params.is_active))
   }
+  if (params.is_email_verified !== undefined && params.is_email_verified !== '') {
+    q.set('is_email_verified', String(params.is_email_verified))
+  }
   q.set('page', String(params.page ?? 1))
   q.set('page_size', String(params.page_size ?? 20))
   return request<UsersListResponse>(`/admin/users?${q.toString()}`)
@@ -93,4 +97,14 @@ export function updateUser(id: string, payload: UpdateUserPayload) {
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
+}
+
+/** Admin 替未驗證 user 重寄驗證信。 */
+export function resendVerification(id: string) {
+  return request<void>(`/admin/users/${id}/resend-verification`, { method: 'POST' })
+}
+
+/** Admin 強制標記 email 已驗證（跳過 email 流程）。 */
+export function forceVerifyEmail(id: string) {
+  return request<AdminUser>(`/admin/users/${id}/force-verify-email`, { method: 'POST' })
 }
