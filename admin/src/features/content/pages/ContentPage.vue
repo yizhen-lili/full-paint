@@ -11,6 +11,7 @@ import PhotoPricesTab from '../components/PhotoPricesTab.vue'
 import PhotoSurchargesTab from '../components/PhotoSurchargesTab.vue'
 import CustomCasesTab from '../components/CustomCasesTab.vue'
 import CaseCategoriesTab from '../components/CaseCategoriesTab.vue'
+import DangerZoneTab from '../components/DangerZoneTab.vue'
 
 const route = useRoute()
 const tab = computed(() => {
@@ -30,4 +31,5 @@ const tab = computed(() => {
   <PhotoSurchargesTab v-else-if="tab === 'surcharges'" />
   <CustomCasesTab v-else-if="tab === 'cases'" />
   <CaseCategoriesTab v-else-if="tab === 'categories'" />
+  <DangerZoneTab v-else-if="tab === 'danger'" />
 </template>

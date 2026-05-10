@@ -74,3 +74,45 @@ async def admin_force_verify_email(
 ):
     """Admin 強制標記 email 已驗證（跳過 email 流程，救援收不到信的 user）。"""
     return await service.admin_force_verify_email(db, user_id)
+
+
+# ── System Danger Zone ────────────────────────────────────────────────────────
+
+
+from pydantic import BaseModel  # noqa: E402
+
+from admin import system_actions  # noqa: E402
+
+
+class ClearTestDataRequest(BaseModel):
+    confirm_phrase: str
+
+
+@router.post("/admin/system/clear-test-data/preview")
+async def admin_preview_clear_test_data(
+    _operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """預覽會清除哪些資料（不實際刪除）。"""
+    return await system_actions.preview_clear_test_data(db)
+
+
+@router.post("/admin/system/clear-test-data")
+async def admin_clear_test_data(
+    body: ClearTestDataRequest,
+    _operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """⚠️ 清除所有 orders / cart / custom_requests，還原 stock + 釋放 coupons。
+
+    必須 confirm_phrase = "CLEAR-ALL-TEST-DATA" 才執行。
+    Admin auth + confirm phrase 雙重驗證。
+    """
+    if body.confirm_phrase != system_actions.CONFIRM_PHRASE:
+        from core.exceptions import BadRequestError
+        raise BadRequestError(
+            f"確認字串錯誤，需輸入 {system_actions.CONFIRM_PHRASE}",
+            code="INVALID_CONFIRM_PHRASE",
+        )
+    summary = await system_actions.execute_clear_test_data(db)
+    return {"ok": True, "summary": summary}

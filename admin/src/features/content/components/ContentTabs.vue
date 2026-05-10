@@ -8,6 +8,7 @@ import {
   Plus as PlusIcon,
   Sparkles,
   Tag,
+  AlertTriangle,
 } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -20,6 +21,7 @@ const tabs = [
   { id: 'surcharges', label: '加費項目', icon: PlusIcon },
   { id: 'cases', label: '完成案例', icon: Sparkles },
   { id: 'categories', label: '案例分類', icon: Tag },
+  { id: 'danger', label: 'Danger Zone', icon: AlertTriangle },
 ] as const
 
 const current = computed(() => {
