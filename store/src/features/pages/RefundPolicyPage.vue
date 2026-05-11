@@ -190,10 +190,10 @@ const FLOW_STEPS = [
           </div>
         </li>
         <li>
-          <a href="mailto:contact@yiimui.com" class="contact-row contact-row-link">
+          <a href="mailto:contact@yii.mui.com" class="contact-row contact-row-link">
             <Mail :size="18" class="contact-icon" />
             <div class="contact-text">
-              <strong>contact@yiimui.com</strong>
+              <strong>contact@yii.mui.com</strong>
               <span>Email 寄信（主要聯絡管道）</span>
             </div>
             <span class="contact-arrow">→</span>
@@ -210,10 +210,10 @@ const FLOW_STEPS = [
           </a>
         </li>
         <li>
-          <a href="https://instagram.com/yiimui" target="_blank" rel="noopener noreferrer" class="contact-row contact-row-link">
+          <a href="https://instagram.com/yii.mui" target="_blank" rel="noopener noreferrer" class="contact-row contact-row-link">
             <Instagram :size="18" class="contact-icon" />
             <div class="contact-text">
-              <strong>@yiimui</strong>
+              <strong>@yii.mui</strong>
               <span>Instagram 私訊</span>
             </div>
             <span class="contact-arrow">→</span>

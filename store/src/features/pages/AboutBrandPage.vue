@@ -121,7 +121,7 @@ const PILLARS = [
       <div class="closing-cta">
         <RouterLink to="/products" class="cta-btn">開始逛逛 →</RouterLink>
         <a
-          href="https://instagram.com/yiimui"
+          href="https://instagram.com/yii.mui"
           target="_blank"
           rel="noopener noreferrer"
           class="cta-btn cta-btn-ghost"

@@ -90,7 +90,8 @@ const SECTIONS = [
     body: [
       '若對個資處理有任何疑問或要求，請聯絡：',
       'Email：contact@yiimui.com（24 小時內回覆）',
-      'Instagram 私訊：@yiimui',
+      '緊急聯絡：yiimui.studio@gmail.com（系統異常或主信箱無回時的備用管道）',
+      'Instagram 私訊：@yii.mui',
       '',
       '本政策最後更新日期：2026 年 5 月 10 日。如有重大修訂，我們會於網站公告並寄信通知註冊會員。',
     ],

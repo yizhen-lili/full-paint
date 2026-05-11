@@ -54,10 +54,13 @@ const messagesEl = ref<HTMLElement | null>(null)
 async function scrollToBottom() {
   await nextTick()
   if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight
-  // 也讓整頁滑到底（雜誌長頁的「最新」即在最下）
-  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })
 }
-watch(() => detail.value?.messages?.length, () => scrollToBottom())
+// 只在訊息「增加」時自動滾（避免初次載入也把整頁滑到底）
+watch(() => detail.value?.messages?.length, (newLen, oldLen) => {
+  if (oldLen !== undefined && newLen !== undefined && newLen > oldLen) {
+    scrollToBottom()
+  }
+})
 
 async function sendMessage() {
   const text = draftMessage.value.trim()

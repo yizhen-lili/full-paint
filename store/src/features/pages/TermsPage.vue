@@ -127,7 +127,8 @@ const SECTIONS = [
 
     <footer class="foot">
       <p class="foot-text">
-        如對本條款有疑問，請聯絡 contact@yiimui.com<br />
+        如對本條款有疑問，請聯絡 <a href="mailto:contact@yiimui.com">contact@yiimui.com</a><br />
+        緊急聯絡：<a href="mailto:yiimui.studio@gmail.com">yiimui.studio@gmail.com</a><br />
         we respect your trust ・ 易木 YIIMUI
       </p>
     </footer>

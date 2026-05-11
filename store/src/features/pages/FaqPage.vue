@@ -151,8 +151,8 @@ function isOpen(g: number, i: number): boolean {
       <p class="contact-title">找不到答案？</p>
       <p class="contact-body">私訊或來信，我們在 24 小時內回覆。</p>
       <div class="contact-links">
-        <a href="https://instagram.com/yiimui" target="_blank" rel="noopener noreferrer" class="contact-link">
-          IG @yiimui →
+        <a href="https://instagram.com/yii.mui" target="_blank" rel="noopener noreferrer" class="contact-link">
+          IG @yii.mui →
         </a>
         <a href="mailto:contact@yiimui.com" class="contact-link">
           contact@yiimui.com →

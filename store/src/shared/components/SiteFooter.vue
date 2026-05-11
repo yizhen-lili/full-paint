@@ -57,6 +57,8 @@ import { RouterLink } from 'vue-router'
         <RouterLink to="/terms">服務條款</RouterLink>
         <span class="dot">·</span>
         <a href="mailto:contact@yiimui.com">contact@yiimui.com</a>
+        <span class="dot">·</span>
+        <a href="mailto:yiimui.studio@gmail.com" class="footer-urgent">緊急 yiimui.studio@gmail.com</a>
       </div>
     </div>
   </footer>
@@ -151,6 +153,7 @@ import { RouterLink } from 'vue-router'
   transition: color 150ms;
 }
 .footer-bottom a:hover { color: var(--color-paper-canvas); }
+.footer-urgent { opacity: 0.85; }
 
 .footer-bottom-links {
   display: flex;
