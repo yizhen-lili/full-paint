@@ -30,6 +30,31 @@ const apiError = ref<string | null>(null)
 
 const REQUIRED_PHRASE = 'CLEAR-ALL-TEST-DATA'
 
+// 通知中心清除
+const clearNotifSubmitting = ref(false)
+const clearNotifResult = ref<{ before: number; deleted: number } | null>(null)
+const clearNotifError = ref<string | null>(null)
+
+async function clearAllNotifications() {
+  if (!confirm('確定要清空整個通知中心嗎？此動作不可復原。')) return
+  clearNotifSubmitting.value = true
+  clearNotifError.value = null
+  clearNotifResult.value = null
+  try {
+    const res = await fetch(`${API}/admin/system/clear-all-notifications`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`)
+    clearNotifResult.value = body as { before: number; deleted: number }
+  } catch (e) {
+    clearNotifError.value = (e as Error).message || '清除失敗'
+  } finally {
+    clearNotifSubmitting.value = false
+  }
+}
+
 async function loadPreview() {
   previewLoading.value = true
   previewError.value = null
@@ -197,6 +222,43 @@ onMounted(() => {
           確認清除
         </Button>
       </div>
+    </Card>
+
+    <!-- 通知中心清空 -->
+    <Card>
+      <div class="flex items-baseline justify-between mb-3">
+        <h3 class="font-display text-ink-strong text-[16px] leading-[24px]">
+          清空通知中心
+        </h3>
+      </div>
+
+      <p class="text-[12px] leading-[1.7] text-ink-muted mb-4">
+        刪除所有 admin_notifications（含 production_failed / stock_shortage / order / custom_request 等所有類型）。
+        適用於 maintenance 清空累積通知。<strong class="text-ink-default">不會動到任何業務資料</strong>。
+      </p>
+
+      <div
+        v-if="clearNotifResult"
+        class="px-3 py-2.5 mb-3 border border-state-success/40 bg-[var(--color-state-success)]/[0.06] text-state-success text-[12px] rounded-[var(--radius-xs)]"
+      >
+        ✅ 已清除 {{ clearNotifResult.deleted }} 筆通知（原 {{ clearNotifResult.before }} 筆）
+      </div>
+
+      <div
+        v-if="clearNotifError"
+        class="px-3 py-2 mb-3 text-[12px] text-state-danger bg-[var(--color-state-danger)]/[0.06] border border-state-danger/40 rounded-[var(--radius-xs)]"
+      >
+        {{ clearNotifError }}
+      </div>
+
+      <Button
+        variant="secondary"
+        :loading="clearNotifSubmitting"
+        @click="clearAllNotifications"
+      >
+        <Trash2 :size="14" :stroke-width="1.5" />
+        清空通知中心
+      </Button>
     </Card>
   </div>
 </template>

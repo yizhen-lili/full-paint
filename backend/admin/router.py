@@ -116,3 +116,15 @@ async def admin_clear_test_data(
         )
     summary = await system_actions.execute_clear_test_data(db)
     return {"ok": True, "summary": summary}
+
+
+@router.post("/admin/system/clear-all-notifications")
+async def admin_clear_all_notifications(
+    _operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """清空整個 admin 通知中心（所有 admin_notifications）。
+
+    跟 clear-test-data 分開 — 通知會自然累積，admin 偶爾 maintenance 清空。
+    """
+    return await system_actions.execute_clear_all_notifications(db)

@@ -57,6 +57,20 @@ async def preview_clear_test_data(db: AsyncSession) -> dict:
     }
 
 
+async def execute_clear_all_notifications(db: AsyncSession) -> dict:
+    """清空整個 admin 通知中心（所有 admin_notifications）。
+
+    跟 clear_test_data 分開因為通知會自然累積，admin 偶爾需要 maintenance 清空，
+    跟「清測試訂單」是不同情境。
+    """
+    r = await db.execute(text("SELECT COUNT(*) FROM admin_notifications"))
+    before_count = r.scalar() or 0
+    r = await db.execute(text("DELETE FROM admin_notifications"))
+    deleted = r.rowcount or 0
+    await db.commit()
+    return {"before": before_count, "deleted": deleted}
+
+
 async def execute_clear_test_data(
     db_or_engine: AsyncSession | AsyncEngine,
 ) -> dict:
