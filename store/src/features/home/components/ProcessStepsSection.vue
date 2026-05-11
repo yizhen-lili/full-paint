@@ -13,7 +13,7 @@ const STEPS = [
   {
     no: '02',
     title: '選規格',
-    body: '畫布尺寸、難易度、礦物顏料色數 — 三步搞定你的版本。',
+    body: '畫布尺寸、難易度、細緻度 — 三步搞定你的版本。',
     aux: 'customize',
     to: '/size-guide',
     cta: '尺寸指南',

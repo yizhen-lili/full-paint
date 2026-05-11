@@ -235,15 +235,15 @@ const fullOpen = ref(false)
       <ul class="spec-list">
         <li>
           <strong>畫布材質</strong>
-          <span>加厚棉麻織布裱於 1.5 cm MDF 板上</span>
+          <span>已繃好的油畫布</span>
         </li>
         <li>
           <strong>表面</strong>
-          <span>已上 acrylic primer 底劑，可直接上色</span>
+          <span>已上底劑，可直接上色</span>
         </li>
         <li>
           <strong>完成後</strong>
-          <span>自帶背框，無需額外裱框，可直接掛牆</span>
+          <span>不需額外裱框，可直接掛牆</span>
         </li>
       </ul>
     </section>

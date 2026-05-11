@@ -155,13 +155,12 @@ const FLOW_STEPS = [
       </header>
 
       <ol class="flow">
-        <li v-for="(s, idx) in FLOW_STEPS" :key="s.no">
+        <li v-for="s in FLOW_STEPS" :key="s.no">
           <span class="flow-no">{{ s.no }}</span>
           <div class="flow-text">
             <strong>{{ s.title }}</strong>
             <span>{{ s.desc }}</span>
           </div>
-          <span v-if="idx < FLOW_STEPS.length - 1" class="flow-arrow">→</span>
         </li>
       </ol>
 
@@ -392,7 +391,7 @@ const FLOW_STEPS = [
 }
 .flow li {
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: 32px 1fr;
   gap: 14px;
   align-items: center;
   padding: 12px 4px;
@@ -433,13 +432,6 @@ const FLOW_STEPS = [
   color: var(--color-ink-muted);
   letter-spacing: 0.02em;
 }
-.flow-arrow {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  color: var(--color-accent);
-  flex-shrink: 0;
-}
-
 .hint {
   font-size: 12px;
   line-height: 1.7;
@@ -532,6 +524,5 @@ const FLOW_STEPS = [
   .watershed { padding: 20px 22px; }
   .watershed-title { font-size: 15px; }
   .flow li { grid-template-columns: 32px 1fr; }
-  .flow-arrow { display: none; }
 }
 </style>

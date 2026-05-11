@@ -34,7 +34,7 @@ const heroProductQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 
 
         <p class="hero-sub">
           親手畫的療癒，從一個下午開始。<br />
-          60 色礦物顏料 · 17 種畫布尺寸 — 一筆一筆，沒有快進鍵。
+          壓克力顏料・畫筆・畫布全寄到家 — 一筆一筆，沒有快進鍵。
         </p>
 
         <div class="hero-actions">

@@ -6,7 +6,7 @@ import { RouterLink } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useTitle } from '@vueuse/core'
 import {
-  Loader2, Calculator, Users, PawPrint, Layers, Zap, ArrowRight,
+  Loader2, Calculator, Users, PawPrint, Zap, ArrowRight,
 } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
@@ -144,7 +144,6 @@ const SURCHARGES = [
   { Icon: Users, label: '人物 2 人', amount: 200 },
   { Icon: Users, label: '人物 3 人以上', amount: 400 },
   { Icon: PawPrint, label: '寵物毛髮細節', amount: 250 },
-  { Icon: Layers, label: '複雜背景', amount: 300 },
   { Icon: Zap, label: '加急（5 工作天）', amount: 500 },
 ]
 
@@ -347,7 +346,7 @@ function sizePreview(s: CanvasSize) {
 
           <article class="example-card">
             <span class="example-no">範例 02</span>
-            <h3 class="example-title">40×50 進階・家庭照（3 人）・複雜背景</h3>
+            <h3 class="example-title">40×50 進階・家庭照（3 人）</h3>
             <div class="example-calc">
               <div class="example-line">
                 <span>基礎價</span>
@@ -357,13 +356,9 @@ function sizePreview(s: CanvasSize) {
                 <span>+ 人物 3 人以上</span>
                 <span class="example-line-val">NT$ 400</span>
               </div>
-              <div class="example-line">
-                <span>+ 複雜背景</span>
-                <span class="example-line-val">NT$ 300</span>
-              </div>
               <div class="example-line example-line-total">
                 <span><strong>總計</strong></span>
-                <span class="example-total"><strong>NT$ 2,550</strong></span>
+                <span class="example-total"><strong>NT$ 2,250</strong></span>
               </div>
             </div>
           </article>

@@ -24,7 +24,7 @@ const SECTIONS: Section[] = [
     key: 'canvas',
     title: '畫布材質',
     body:
-      '加厚棉麻畫布，pre-primed 適合壓克力顏料，繃在 1.5 cm 厚 FSC 認證松木框架上。完成後可直接掛牆。',
+      '已繃好的油畫布，已上底劑適合壓克力顏料。完成後可直接掛牆，不需另外裱框。',
   },
   {
     key: 'tip',
