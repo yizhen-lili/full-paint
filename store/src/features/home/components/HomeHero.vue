@@ -68,7 +68,8 @@ const heroProductQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 
   position: relative;
   max-width: 1440px;
   margin: 0 auto;
-  padding: 88px 56px 112px;
+  /* 左 padding 加大讓 hero-stamp（垂直雜誌戳印）有專屬空間，避免與標題重疊 */
+  padding: 88px 56px 112px 104px;
 }
 
 /* 左側垂直 stamp — 雜誌封面風 */
@@ -305,6 +306,10 @@ const heroProductQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 
 }
 
 @media (max-width: 1279px) {
+  .hero {
+    /* 中型螢幕：縮減 stamp 區域同時讓主標仍有呼吸 */
+    padding: 88px 56px 112px 88px;
+  }
   .hero-title { font-size: 60px; }
   .hero-stamp { left: 16px; top: 96px; bottom: 96px; }
 }
