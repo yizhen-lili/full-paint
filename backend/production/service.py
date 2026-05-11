@@ -360,6 +360,35 @@ async def delete_job(db: AsyncSession, job_id: UUID, *, force: bool = False) -> 
             logger.warning("schedule deferred firebase cleanup failed for %s: %s", job_id, e)
 
 
+async def batch_delete_jobs(
+    db: AsyncSession,
+    job_ids: list[UUID],
+    *,
+    force: bool = False,
+) -> list[dict]:
+    """批次硬刪除：逐筆呼叫 delete_job，獨立 try/except，失敗筆不影響成功筆。
+
+    回 list[{"job_id", "ok", "error"}] 給 router 包裝成 BatchDeleteJobsResponse。
+
+    刻意逐筆執行而非一次性 transaction，因為：
+    - 每筆 delete_job 都會 commit DB + 觸發 Firebase 清檔（不可逆）
+    - 若中途失敗 rollback，前面已清的 Firebase blob 無法復原 → 反而留下 DB row
+      指向已不存在的 Firebase 物件
+    - 一筆失敗不該擋其他成功筆，partial success 更符合 admin 預期
+    """
+    results: list[dict] = []
+    for job_id in job_ids:
+        try:
+            await delete_job(db, job_id, force=force)
+            results.append({"job_id": job_id, "ok": True, "error": None})
+        except (BadRequestError, NotFoundError) as e:
+            results.append({"job_id": job_id, "ok": False, "error": e.detail})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("batch_delete_jobs unexpected error for %s", job_id)
+            results.append({"job_id": job_id, "ok": False, "error": f"未預期錯誤：{e}"})
+    return results
+
+
 async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[str]:
     """回傳所有引用此 job_id 的表標籤（中文），空 list 代表沒引用可安全刪。"""
     from orders.models import OrderItem  # noqa: PLC0415

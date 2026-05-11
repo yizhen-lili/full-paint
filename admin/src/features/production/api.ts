@@ -200,6 +200,45 @@ export function unapproveJob(id: string) {
   })
 }
 
+/**
+ * 硬刪除 job — 連帶刪 palette_color_mappings 子資料 + Firebase svg/filled/snapped/mask 物件。
+ * Backend 拒絕情況：status=processing（worker 在跑）或被 product/batch/order 引用。
+ *
+ * @param force 為 true 時繞過 processing 檢查，用於 worker 卡死的 zombie task
+ *   （注意：產生的 Firebase 物件可能成 orphan，需手動清理）
+ */
+export function deleteJob(id: string, options: { force?: boolean } = {}) {
+  const qs = options.force ? '?force=true' : ''
+  return request<null>(`/admin/production/jobs/${id}${qs}`, {
+    method: 'DELETE',
+  })
+}
+
+export interface BatchDeleteJobResult {
+  job_id: string
+  ok: boolean
+  error: string | null
+}
+
+export interface BatchDeleteJobsResponse {
+  total: number
+  success: number
+  failed: number
+  results: BatchDeleteJobResult[]
+}
+
+/**
+ * 批次硬刪除製作任務（一次最多 50 筆）— 失敗筆獨立、不影響成功筆。
+ * 每筆都會走單筆 deleteJob 的所有檢查（processing 拒絕 / 外部引用拒絕 /
+ * Firebase prefix 清檔）。前端拿到 response 後可顯示成功/失敗清單。
+ */
+export function deleteJobsBatch(jobIds: string[], options: { force?: boolean } = {}) {
+  return request<BatchDeleteJobsResponse>('/admin/production/jobs/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ job_ids: jobIds, force: options.force ?? false }),
+  })
+}
+
 export function requestUploadProductionImage(payload: UploadProductionImageRequest) {
   return request<UploadProductionImageResponse>('/upload/production-image', {
     method: 'POST',

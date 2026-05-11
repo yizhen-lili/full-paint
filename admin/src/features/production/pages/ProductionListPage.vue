@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Plus, Wrench } from 'lucide-vue-next'
+import { Check, Loader2, Plus, Trash2, Wrench, X as XIcon } from 'lucide-vue-next'
 
 import PageHeader from '@/shared/components/PageHeader.vue'
 import AppDataTable, { type Column } from '@/shared/components/AppDataTable.vue'
 import AppPagination from '@/shared/components/AppPagination.vue'
 import Button from '@/shared/ui/Button.vue'
+import Dialog from '@/shared/ui/Dialog.vue'
 import Select from '@/shared/ui/Select.vue'
 import Input from '@/shared/ui/Input.vue'
 
 import JobStatusBadge from '../components/JobStatusBadge.vue'
-import { useJobsQuery } from '../queries'
+import { useDeleteJobsBatchMutation, useJobsQuery } from '../queries'
 import {
+  type BatchDeleteJobResult,
   type JobListItem,
   type JobStatus,
   DETAIL_LABEL,
@@ -84,6 +86,7 @@ const approvedOptions = [
 ]
 
 const columns: Column<JobListItem>[] = [
+  { key: '__select', label: '', width: '40px' },
   { key: 'cover', label: '預覽', width: '64px' },
   { key: 'id_short', label: 'Job ID', width: '110px' },
   { key: 'source', label: '來源', width: '110px' },
@@ -105,6 +108,67 @@ function fmtDateTime(iso: string): string {
   const d = new Date(iso)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// ── 批次刪除 ─────────────────────────────────────────────────────────────
+// 允許多選任何 job；processing / 被引用的 job 由 backend 逐筆檢查並回報失敗
+// （UI 不預先排除，partial success 結果 dialog 會顯示原因）。
+
+const selectedIds = ref<Set<string>>(new Set())
+const batchMut = useDeleteJobsBatchMutation()
+const batchConfirmOpen = ref(false)
+const batchResultsOpen = ref(false)
+const batchResults = ref<BatchDeleteJobResult[]>([])
+const forceDelete = ref(false)
+
+function toggleSelect(id: string) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+const allSelected = computed(
+  () => items.value.length > 0 && items.value.every((r) => selectedIds.value.has(r.id)),
+)
+
+function toggleSelectAll() {
+  if (allSelected.value) clearSelection()
+  else selectedIds.value = new Set(items.value.map((r) => r.id))
+}
+
+const selectedCount = computed(() => selectedIds.value.size)
+
+// 換頁 / 換篩選 → 清空選取（避免跨頁誤刪）
+watch([page, status, approvedFilter, batchId], () => clearSelection())
+
+const successCount = computed(() => batchResults.value.filter((r) => r.ok).length)
+const failedCount = computed(() => batchResults.value.filter((r) => !r.ok).length)
+
+// 確認 dialog 顯示用的「將被刪除」清單（從 items 過濾出已勾選的 row）
+const selectedJobsForDialog = computed(() =>
+  items.value.filter((j) => selectedIds.value.has(j.id)),
+)
+
+async function doBatchDelete() {
+  batchConfirmOpen.value = false
+  try {
+    const res = await batchMut.mutateAsync({
+      jobIds: Array.from(selectedIds.value),
+      force: forceDelete.value,
+    })
+    batchResults.value = res.results
+    batchResultsOpen.value = true
+    clearSelection()
+    forceDelete.value = false
+  } catch (e) {
+    const err = e as { message?: string }
+    alert(err.message || '批次刪除失敗')
+  }
 }
 </script>
 
@@ -133,6 +197,34 @@ function fmtDateTime(iso: string): string {
     載入失敗：{{ (error as { message?: string })?.message ?? '未知錯誤' }}
   </div>
 
+  <!-- 批次工具列：勾選任何 row 後出現 -->
+  <div
+    v-if="selectedCount > 0"
+    class="mb-3 px-4 py-3 bg-state-danger/[0.08] border border-state-danger/40 rounded-[var(--radius-xs)] flex items-center justify-between"
+  >
+    <div class="flex items-center gap-3 text-[13px] text-ink-strong">
+      <Trash2 :size="16" :stroke-width="1.5" class="text-state-danger" />
+      <span>已選取 <span class="font-mono">{{ selectedCount }}</span> 筆製作任務</span>
+      <button
+        type="button"
+        class="text-[12px] text-ink-muted hover:text-ink-strong transition-colors"
+        @click="clearSelection"
+      >
+        清除選取
+      </button>
+    </div>
+    <Button
+      variant="primary"
+      :disabled="batchMut.isPending.value"
+      class="bg-state-danger hover:bg-state-danger/90"
+      @click="batchConfirmOpen = true"
+    >
+      <Loader2 v-if="batchMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+      <Trash2 v-else :size="14" :stroke-width="1.5" />
+      批次刪除
+    </Button>
+  </div>
+
   <AppDataTable
     :columns="columns"
     :rows="items"
@@ -143,6 +235,26 @@ function fmtDateTime(iso: string): string {
     :empty-icon="Wrench"
     @row-click="(r) => goDetail(r.id)"
   >
+    <template #header-__select>
+      <input
+        type="checkbox"
+        class="cursor-pointer"
+        :checked="allSelected"
+        :disabled="items.length === 0"
+        :title="allSelected ? '取消全選' : `全選本頁（${items.length} 筆）`"
+        @click.stop="toggleSelectAll"
+      />
+    </template>
+
+    <template #cell-__select="{ row }">
+      <input
+        type="checkbox"
+        class="cursor-pointer"
+        :checked="selectedIds.has(row.id)"
+        @click.stop="toggleSelect(row.id)"
+      />
+    </template>
+
     <template #cell-cover="{ row }">
       <img
         v-if="row.filled_template_url"
@@ -204,4 +316,99 @@ function fmtDateTime(iso: string): string {
     :page-size="pageSize"
     :total="total"
   />
+
+  <!-- 批次刪除確認 dialog -->
+  <Dialog
+    :open="batchConfirmOpen"
+    title="批次刪除製作任務"
+    @close="batchConfirmOpen = false"
+  >
+    <div class="text-[14px] text-ink-default leading-[1.7] space-y-3">
+      <p>
+        將永久刪除以下 <span class="font-mono text-ink-strong">{{ selectedCount }}</span> 筆製作任務：
+      </p>
+      <ul class="bg-paper-subtle border border-line-hairline rounded-[var(--radius-xs)] p-3 max-h-[280px] overflow-auto text-[12px] font-mono space-y-1">
+        <li
+          v-for="j in selectedJobsForDialog"
+          :key="j.id"
+          class="flex items-center justify-between"
+        >
+          <span class="text-ink-strong">{{ j.id.slice(0, 8) }}</span>
+          <span class="text-ink-muted">
+            {{ MODE_LABEL[j.mode] }} · {{ DIFFICULTY_LABEL[j.difficulty] }} · {{ DETAIL_LABEL[j.detail] }}
+          </span>
+        </li>
+      </ul>
+      <div class="text-[12px] text-ink-muted space-y-1">
+        <p>• 連帶刪除 palette_color_mappings 子資料</p>
+        <p>• Firebase 中 production_jobs/{job_id}/ 下的 svg / filled / snapped / mask 等檔案會被清除</p>
+        <p>• 處理中（processing）或被商品 / 訂單 / 列印批次引用的 job 會在結果中標示失敗、不會被刪除</p>
+      </div>
+      <label class="flex items-center gap-2 text-[12px] text-ink-default cursor-pointer">
+        <input v-model="forceDelete" type="checkbox" class="cursor-pointer" />
+        <span>強制刪除（含處理中任務，可能產生 Firebase orphan 物件）</span>
+      </label>
+    </div>
+    <template #footer>
+      <div class="flex items-center justify-end gap-2">
+        <Button variant="secondary" @click="batchConfirmOpen = false">取消</Button>
+        <Button
+          variant="primary"
+          :disabled="batchMut.isPending.value"
+          class="bg-state-danger hover:bg-state-danger/90"
+          @click="doBatchDelete"
+        >
+          <Loader2 v-if="batchMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+          <Trash2 v-else :size="14" :stroke-width="1.5" />
+          確認刪除
+        </Button>
+      </div>
+    </template>
+  </Dialog>
+
+  <!-- 批次刪除結果 dialog -->
+  <Dialog
+    :open="batchResultsOpen"
+    title="批次刪除結果"
+    @close="batchResultsOpen = false"
+  >
+    <div class="space-y-3">
+      <div class="flex items-center gap-4 text-[13px]">
+        <span class="text-ink-strong">總共 <span class="font-mono">{{ batchResults.length }}</span> 筆</span>
+        <span class="text-state-success">
+          <Check :size="13" :stroke-width="1.5" class="inline" />
+          成功 <span class="font-mono">{{ successCount }}</span>
+        </span>
+        <span v-if="failedCount > 0" class="text-state-danger">
+          <XIcon :size="13" :stroke-width="1.5" class="inline" />
+          失敗 <span class="font-mono">{{ failedCount }}</span>
+        </span>
+      </div>
+      <ul class="bg-paper-subtle border border-line-hairline rounded-[var(--radius-xs)] p-3 max-h-[400px] overflow-auto text-[12px] space-y-2">
+        <li
+          v-for="r in batchResults"
+          :key="r.job_id"
+          class="border-b border-line-hairline pb-2 last:border-b-0 last:pb-0"
+        >
+          <div class="flex items-center justify-between">
+            <code class="text-ink-strong text-[11px]">{{ r.job_id.slice(0, 8) }}</code>
+            <span v-if="r.ok" class="text-state-success font-mono text-[11px]">
+              <Check :size="11" :stroke-width="1.5" class="inline" />
+              已刪除
+            </span>
+            <span v-else class="text-state-danger text-[11px]">
+              <XIcon :size="11" :stroke-width="1.5" class="inline" />
+              失敗
+            </span>
+          </div>
+          <p v-if="!r.ok && r.error" class="mt-1 text-ink-muted text-[11px] whitespace-pre-line">{{ r.error }}</p>
+        </li>
+      </ul>
+    </div>
+    <template #footer>
+      <div class="flex justify-end">
+        <Button variant="primary" @click="batchResultsOpen = false">關閉</Button>
+      </div>
+    </template>
+  </Dialog>
 </template>

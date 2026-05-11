@@ -93,6 +93,25 @@ class ApproveRequest(BaseModel):
     notes: str | None = None
 
 
+class BatchDeleteJobsRequest(BaseModel):
+    """批次硬刪除製作任務 — 一次最多 50 筆。
+
+    - 後端對每個 id 獨立執行（沿用單筆 delete_job 的所有檢查），
+      失敗筆不影響其他筆，結果逐筆回報於 response.results
+    - force=True 用於整批中包含 processing 卡死的 zombie job
+      （慎用：產生 Firebase orphan 物件，sweep 任務會延後 90s 清）
+    """
+    job_ids: list[UUID] = Field(min_length=1, max_length=50)
+    force: bool = False
+
+    @field_validator("job_ids")
+    @classmethod
+    def unique_ids(cls, v: list[UUID]) -> list[UUID]:
+        if len(set(v)) != len(v):
+            raise ValueError("job_ids 內含重複值")
+        return v
+
+
 class MergeColorRequest(BaseModel):
     """A 格子合併（區域層級）：admin 點 template.svg 上一格 → 選目標色號。
 

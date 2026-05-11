@@ -6,6 +6,8 @@ import {
   approveJob,
   batchPostProcess,
   createJobs,
+  deleteJob,
+  deleteJobsBatch,
   eliminateBorder,
   getJob,
   listJobs,
@@ -74,6 +76,31 @@ export function useUnapproveJobMutation(id: string) {
   return useMutation({
     mutationFn: () => unapproveJob(id),
     onSuccess: () => invalidate(qc, id),
+  })
+}
+
+/** 硬刪除 job — 成功後 invalidate list / detail，前端自行處理 router.push 跳轉。
+ *
+ * 接受 { id, force? }：force=true 用於強制刪除卡死的 processing job。
+ */
+export function useDeleteJobMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, force = false }: { id: string; force?: boolean }) =>
+      deleteJob(id, { force }),
+    onSuccess: (_, vars) => invalidate(qc, vars.id),
+  })
+}
+
+/** 批次硬刪除 — 不論失敗筆數多少，成功後一律 invalidate 整個 list；
+ *  detail 不個別 invalidate（jobs 可能是任意組合），統一 PJ_KEYS.all 就夠。
+ */
+export function useDeleteJobsBatchMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ jobIds, force = false }: { jobIds: string[]; force?: boolean }) =>
+      deleteJobsBatch(jobIds, { force }),
+    onSuccess: () => invalidate(qc),
   })
 }
 
