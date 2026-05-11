@@ -99,14 +99,17 @@ async def _send_email(to: str, subject: str, html: str) -> None:
     try:
         import resend
         resend.api_key = settings.resend_api_key
+        payload: dict = {
+            "from": settings.resend_from_email,
+            "to": to,
+            "subject": subject,
+            "html": html,
+        }
+        if settings.support_email:
+            payload["reply_to"] = settings.support_email
         await asyncio.get_running_loop().run_in_executor(
             None,
-            lambda: resend.Emails.send({
-                "from": settings.resend_from_email,
-                "to": to,
-                "subject": subject,
-                "html": html,
-            }),
+            lambda: resend.Emails.send(payload),
         )
     except Exception as e:
         logger.warning(f"Email send failed to {to}: {e}")
@@ -911,6 +914,16 @@ async def create_order(
             f"{payment_info.get('bank_account_number', '')}</p>"
             f"<p>戶名：{payment_info.get('bank_account_name', '')}</p>"
         ),
+    )
+
+    # 10.5 Admin in-app 通知 + email（新訂單成立，等待匯款）
+    await create_notification(
+        db,
+        type="new_order",
+        message=f"新訂單 {order_number}（NT$ {float(total):,.0f}）— 等待客戶匯款",
+        reference_type="order",
+        reference_id=order.id,
+        requires_action=False,
     )
 
     return {

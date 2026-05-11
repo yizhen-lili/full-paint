@@ -18,14 +18,17 @@ async def _send_email(to: str, subject: str, html: str) -> None:
     try:
         import resend
         resend.api_key = settings.resend_api_key
+        payload: dict = {
+            "from": settings.resend_from_email,
+            "to": to,
+            "subject": subject,
+            "html": html,
+        }
+        if settings.support_email:
+            payload["reply_to"] = settings.support_email
         await asyncio.get_running_loop().run_in_executor(
             None,
-            lambda: resend.Emails.send({
-                "from": settings.resend_from_email,
-                "to": to,
-                "subject": subject,
-                "html": html,
-            }),
+            lambda: resend.Emails.send(payload),
         )
     except Exception as e:
         logger.warning(f"Email send failed to {to}: {e}")

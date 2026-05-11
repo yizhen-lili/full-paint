@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     resend_api_key: str = ""
     resend_from_email: str = "onboarding@resend.dev"
+    # 客人按「回信」會回到這個地址 — 通常是商家可即時收信的 Gmail / 工作信箱
+    support_email: str = ""
     frontend_url: str = "http://localhost:5173"
     admin_url: str = "http://localhost:5174"
 

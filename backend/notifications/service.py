@@ -1,12 +1,69 @@
+import asyncio
+import logging
 import uuid as uuidlib
+from datetime import UTC, datetime
+from html import escape as html_escape
 from uuid import UUID
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from core.exceptions import BadRequestError, NotFoundError
 from notifications.models import AdminNotification, NotificationStatusEnum
+
+logger = logging.getLogger(__name__)
+
+
+# 商家會額外收 email 通知的 notification 類型（其餘 type 只在 admin 後台通知中心顯示）
+EMAIL_TRIGGER_TYPES: set[str] = {
+    "new_order",                    # 新訂單成立（等待匯款）
+    "payment_submitted",            # 客人提交匯款回填
+    "payment_resubmitted",          # 客人重交匯款回填
+    "quote_pending",                # 新客製化申請
+    "new_message",                  # 客製化 thread 新訊息
+    "draft_revision_requested",     # 客人要求修改 draft
+    "stock_shortage",               # 庫存不足（critical）
+    "production_failed",            # 生產失敗（critical）
+    "customer_modified_shipping",   # 客人改地址（出貨前要重新審）
+}
+
+
+async def _send_admin_email(subject: str, message: str, type_: str) -> None:
+    """寄通知信給商家（settings.support_email）。Fire-and-forget，失敗不影響主流程。"""
+    if not settings.support_email or not settings.resend_api_key:
+        return
+    try:
+        import resend
+        resend.api_key = settings.resend_api_key
+        admin_url = (settings.admin_url or "").rstrip("/")
+        ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        link_html = (
+            f'<p style="margin-top:24px;"><a href="{admin_url}/admin/notifications" '
+            'style="background:#2E2823;color:#FCF7E5;padding:10px 20px;'
+            'text-decoration:none;border-radius:4px;font-size:13px;">前往後台查看</a></p>'
+            if admin_url else ""
+        )
+        body_html = (
+            '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;'
+            'max-width:560px;margin:0 auto;padding:24px;color:#2E2823;">'
+            '<h2 style="font-weight:400;margin:0 0 16px;">易木 YIIMUI 後台通知</h2>'
+            f'<p style="font-size:15px;line-height:1.7;margin:0;">{html_escape(message)}</p>'
+            f'<p style="font-size:12px;color:#888;margin-top:20px;">類型：{type_}　時間：{ts}</p>'
+            f'{link_html}</div>'
+        )
+        payload: dict = {
+            "from": settings.resend_from_email,
+            "to": settings.support_email,
+            "subject": f"[YIIMUI 後台] {subject}",
+            "html": body_html,
+        }
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: resend.Emails.send(payload),
+        )
+    except Exception as e:
+        logger.warning("Admin notification email failed (type=%s): %s", type_, e)
 
 
 async def create_notification(
@@ -27,6 +84,8 @@ async def create_notification(
         status=status,
     )
     db.add(notification)
+    if type in EMAIL_TRIGGER_TYPES:
+        await _send_admin_email(subject=message[:60], message=message, type_=type)
     return notification
 
 
@@ -74,7 +133,9 @@ async def create_or_update_stock_shortage(
     result = await db.execute(
         stmt.execution_options(populate_existing=True)
     )
-    return result.scalar_one()
+    notification = result.scalar_one()
+    await _send_admin_email(subject=message[:60], message=message, type_="stock_shortage")
+    return notification
 
 
 async def create_payment_resubmitted(
