@@ -223,6 +223,31 @@ export function deleteJob(id: string, options: { force?: boolean } = {}) {
   })
 }
 
+export interface BatchDeleteJobResult {
+  job_id: string
+  ok: boolean
+  error: string | null
+}
+
+export interface BatchDeleteJobsResponse {
+  total: number
+  success: number
+  failed: number
+  results: BatchDeleteJobResult[]
+}
+
+/**
+ * 批次硬刪除製作任務（一次最多 50 筆）— 失敗筆獨立、不影響成功筆。
+ * 每筆都會走單筆 deleteJob 的所有檢查（processing 拒絕 / 外部引用拒絕 /
+ * Firebase prefix 清檔）。前端拿到 response 後可顯示成功/失敗清單。
+ */
+export function deleteJobsBatch(jobIds: string[], options: { force?: boolean } = {}) {
+  return request<BatchDeleteJobsResponse>('/admin/production/jobs/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ job_ids: jobIds, force: options.force ?? false }),
+  })
+}
+
 export function requestUploadProductionImage(payload: UploadProductionImageRequest) {
   return request<UploadProductionImageResponse>('/upload/production-image', {
     method: 'POST',

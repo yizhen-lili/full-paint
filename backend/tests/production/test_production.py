@@ -823,6 +823,150 @@ async def test_delete_job_firebase_failure_does_not_rollback_db(client: AsyncCli
     assert found is None
 
 
+# ── POST /admin/production/jobs/batch-delete ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_all_ok(client: AsyncClient, db):
+    """全部成功：兩筆 pending → 都刪除，回 success=2 failed=0。"""
+    from sqlalchemy import select
+    from production.models import ProductionJob
+
+    j1 = await _create_pending_job(client, db)
+    j2 = await _create_pending_job(client, db)
+
+    with patch("production.service.get_bucket"):
+        res = await client.post(
+            f"{JOBS_URL}/batch-delete", json={"job_ids": [j1, j2]}
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 2
+    assert body["success"] == 2
+    assert body["failed"] == 0
+    assert all(r["ok"] for r in body["results"])
+
+    # DB 應全部消失
+    for jid in (j1, j2):
+        row = (await db.execute(
+            select(ProductionJob).where(ProductionJob.id == jid)
+        )).scalar_one_or_none()
+        assert row is None
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_partial_failure(client: AsyncClient, db):
+    """混合：1 筆 pending（可刪）+ 1 筆 processing（拒絕，需 force）+ 1 筆不存在。
+    回 success=1 failed=2，各筆 results 帶各自原因，DB 對應狀態正確。
+    """
+    from sqlalchemy import select, update
+    from production.models import ProductionJob
+
+    j_ok = await _create_pending_job(client, db)
+    j_proc = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == j_proc).values(status="processing")
+    )
+    await db.commit()
+    j_missing = str(uuid.uuid4())
+
+    with patch("production.service.get_bucket"):
+        res = await client.post(
+            f"{JOBS_URL}/batch-delete",
+            json={"job_ids": [j_ok, j_proc, j_missing]},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 3
+    assert body["success"] == 1
+    assert body["failed"] == 2
+
+    by_id = {r["job_id"]: r for r in body["results"]}
+    assert by_id[j_ok]["ok"] is True
+    assert by_id[j_proc]["ok"] is False
+    assert "處理中" in by_id[j_proc]["error"]
+    assert by_id[j_missing]["ok"] is False
+    assert "不存在" in by_id[j_missing]["error"]
+
+    # j_ok 真的被刪、j_proc 仍存活
+    ok_row = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == j_ok)
+    )).scalar_one_or_none()
+    assert ok_row is None
+    proc_row = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == j_proc)
+    )).scalar_one_or_none()
+    assert proc_row is not None
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_force_allows_processing(client: AsyncClient, db):
+    """force=true → processing 也可刪。"""
+    from sqlalchemy import select, update
+    from production.models import ProductionJob
+
+    j = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == j).values(status="processing")
+    )
+    await db.commit()
+
+    with patch("production.service.get_bucket"), \
+         patch("production.tasks.cleanup_job_firebase"):
+        res = await client.post(
+            f"{JOBS_URL}/batch-delete",
+            json={"job_ids": [j], "force": True},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] == 1
+    assert body["results"][0]["ok"] is True
+    row = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == j)
+    )).scalar_one_or_none()
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_validation_errors(client: AsyncClient, db):
+    """schema validation：空陣列 / 重複 ID / 超過 50 筆 → 422。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+
+    # empty
+    r1 = await client.post(f"{JOBS_URL}/batch-delete", json={"job_ids": []})
+    assert r1.status_code == 422
+
+    # duplicate
+    same = str(uuid.uuid4())
+    r2 = await client.post(f"{JOBS_URL}/batch-delete", json={"job_ids": [same, same]})
+    assert r2.status_code == 422
+
+    # over 50
+    r3 = await client.post(
+        f"{JOBS_URL}/batch-delete",
+        json={"job_ids": [str(uuid.uuid4()) for _ in range(51)]},
+    )
+    assert r3.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_non_admin_rejected(client: AsyncClient, db):
+    await _make_customer(client, db)
+    await _login(client, CUSTOMER_USER["email"], CUSTOMER_USER["password"])
+    res = await client.post(
+        f"{JOBS_URL}/batch-delete", json={"job_ids": [str(uuid.uuid4())]},
+    )
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_unauthenticated(client: AsyncClient, db):
+    res = await client.post(
+        f"{JOBS_URL}/batch-delete", json={"job_ids": [str(uuid.uuid4())]},
+    )
+    assert res.status_code == 401
+
+
 # ── POST /admin/production/jobs/{id}/unapprove ────────────────────────────────
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from product.schemas.response import AvailableJobListResponse
 from production import service
 from production.schemas.request import (
     ApproveRequest,
+    BatchDeleteJobsRequest,
     BatchPostProcessRequest,
     CreateImageRequest,
     CreateJobsRequest,
@@ -21,6 +22,7 @@ from production.schemas.request import (
     SuggestCanvasSizesRequest,
 )
 from production.schemas.response import (
+    BatchDeleteJobsResponse,
     BatchStartResponse,
     CreateJobsResponse,
     ImageListResponse,
@@ -150,6 +152,32 @@ async def delete_job(
     """
     await service.delete_job(db, job_id, force=force)
     return Response(status_code=204)
+
+
+@router.post(
+    "/admin/production/jobs/batch-delete",
+    response_model=BatchDeleteJobsResponse,
+)
+async def batch_delete_jobs(
+    body: BatchDeleteJobsRequest,
+    operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """批次硬刪除製作任務（一次最多 50 筆）— 失敗筆獨立，不影響成功筆。
+
+    每筆都沿用單筆 delete_job 的檢查（status=processing 阻擋、外部引用阻擋、
+    palette_color_mappings 連帶刪、Firebase prefix 清檔）。
+
+    刻意用 POST 而非 DELETE：DELETE 帶 body 非標準，部份 proxy / SDK 會剝掉。
+    """
+    results = await service.batch_delete_jobs(db, body.job_ids, force=body.force)
+    success = sum(1 for r in results if r["ok"])
+    return BatchDeleteJobsResponse(
+        total=len(results),
+        success=success,
+        failed=len(results) - success,
+        results=results,
+    )
 
 
 @router.get("/admin/production/jobs/{job_id}/signed-url", response_model=SignedUrlResponse)

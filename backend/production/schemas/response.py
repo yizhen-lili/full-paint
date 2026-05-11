@@ -177,3 +177,17 @@ class BatchStartSkippedItem(BaseModel):
 class BatchStartResponse(BaseModel):
     enqueued: int
     skipped: list[BatchStartSkippedItem]
+
+
+class BatchDeleteJobResult(BaseModel):
+    """批次刪除單筆結果（成功 or 失敗）."""
+    job_id: UUID
+    ok: bool
+    error: str | None = None  # 失敗時填原因（中文，給 admin 看）
+
+
+class BatchDeleteJobsResponse(BaseModel):
+    total: int
+    success: int
+    failed: int
+    results: list[BatchDeleteJobResult]
