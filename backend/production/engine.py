@@ -655,17 +655,31 @@ DIFFICULTY_LEVELS = {
     "advanced":     {"num_colors": 50, "pruning_threshold": 1.5e-5,  "refine_extra_colors": 25},
 }
 
+# DB / schema 的 detail enum string → DETAIL_PRESETS 中文 key
+# 與 run.py DETAIL_PRESETS 對齊；UI 看到的「粗糙/標準/細緻/高級」就是這套
+_DETAIL_KEY_MAP = {
+    "rough": "粗糙",
+    "standard": "標準",
+    "detailed": "細緻",
+    "premium": "高級",
+}
+
 
 def resolve_engine_params(job: Any) -> dict[str, Any]:
     """從 ProductionJob 物件解出引擎參數。
 
-    優先使用 job 上的覆蓋值（admin 可能在建任務時調整）；缺失時用 difficulty + detail="標準" 預設。
+    優先使用 job 上的覆蓋值（admin 可能在建任務時調整 num_colors / blur 等）；
+    缺失時用 difficulty + detail 預設值組合。
     """
     difficulty = str(job.difficulty)
     if difficulty not in DIFFICULTY_LEVELS:
         raise ValueError(f"未支援的難易度：{difficulty}")
     diff_preset = DIFFICULTY_LEVELS[difficulty]
-    detail_preset = DETAIL_PRESETS["標準"]  # admin 後台目前只暴露 difficulty，detail 用標準
+
+    detail = str(job.detail)
+    if detail not in _DETAIL_KEY_MAP:
+        raise ValueError(f"未支援的細緻度：{detail}")
+    detail_preset = DETAIL_PRESETS[_DETAIL_KEY_MAP[detail]]
 
     def _pick(field: str, default: Any) -> Any:
         v = getattr(job, field, None)

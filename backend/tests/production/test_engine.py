@@ -144,9 +144,9 @@ class _FakeJob:
 
 
 def test_resolve_engine_params_uses_difficulty_default():
-    """difficulty=beginner、其他欄位皆 None → 用 difficulty preset + 標準 detail。"""
+    """difficulty=beginner + detail=standard、其他欄位皆 None → 用 difficulty + 標準 preset。"""
     job = _FakeJob(
-        difficulty="beginner",
+        difficulty="beginner", detail="standard",
         canvas_w_cm=30, canvas_h_cm=40,
         num_colors=None, blur_ksize=None, blur_sigma_color=None, blur_sigma_space=None,
         prune_iterations=None, pruning_threshold=None, min_ratio_multiplier=None,
@@ -164,7 +164,7 @@ def test_resolve_engine_params_uses_difficulty_default():
 def test_resolve_engine_params_overrides_take_priority():
     """job 上有覆蓋值時，優先使用覆蓋值。"""
     job = _FakeJob(
-        difficulty="advanced",
+        difficulty="advanced", detail="standard",
         canvas_w_cm=40, canvas_h_cm=60,
         num_colors=42,
         blur_ksize=15,
@@ -184,10 +184,51 @@ def test_resolve_engine_params_overrides_take_priority():
 
 def test_resolve_engine_params_unknown_difficulty_raises():
     job = _FakeJob(
-        difficulty="ultra-hard",
+        difficulty="ultra-hard", detail="standard",
         canvas_w_cm=30, canvas_h_cm=40, min_brush_diam_cm=1.0,
     )
     with pytest.raises(ValueError, match="未支援的難易度"):
+        resolve_engine_params(job)
+
+
+# ── detail 細緻度真的被讀進來（regression：之前 hardcode 標準）──────────
+
+@pytest.mark.parametrize(
+    "detail_enum,expected_blur_ksize,expected_prune,expected_min_ratio",
+    [
+        ("rough",    31, 10, 2.0),
+        ("standard", 21,  6, 1.0),
+        ("detailed", 13,  3, 0.6),
+        ("premium",   7,  1, 0.3),
+    ],
+)
+def test_resolve_engine_params_honors_detail(
+    detail_enum, expected_blur_ksize, expected_prune, expected_min_ratio,
+):
+    """admin 選擇的 detail 必須真的 propagate 到引擎參數，不可被寫死。
+
+    Regression test：先前 engine.py:668 hardcode `DETAIL_PRESETS["標準"]`，
+    使用者選「高級」實際跑「標準」，造成中間色全被磨光、35 色預算只用 13 色。
+    """
+    job = _FakeJob(
+        difficulty="intermediate", detail=detail_enum,
+        canvas_w_cm=30, canvas_h_cm=40,
+        num_colors=None, blur_ksize=None, blur_sigma_color=None, blur_sigma_space=None,
+        prune_iterations=None, pruning_threshold=None, min_ratio_multiplier=None,
+        min_brush_diam_cm=None,
+    )
+    params = resolve_engine_params(job)
+    assert params["blur_ksize"] == expected_blur_ksize
+    assert params["prune_iterations"] == expected_prune
+    assert params["min_ratio_multiplier"] == pytest.approx(expected_min_ratio)
+
+
+def test_resolve_engine_params_unknown_detail_raises():
+    job = _FakeJob(
+        difficulty="intermediate", detail="ultra-fine",
+        canvas_w_cm=30, canvas_h_cm=40, min_brush_diam_cm=1.0,
+    )
+    with pytest.raises(ValueError, match="未支援的細緻度"):
         resolve_engine_params(job)
 
 
