@@ -507,3 +507,251 @@ async def test_complete_non_admin(client: AsyncClient, db):
 async def test_complete_unauthenticated(client: AsyncClient, db):
     res = await client.post(f"{_palette_url(uuid.uuid4())}/complete")
     assert res.status_code == 401
+
+
+# ── finalize_template (對應完成後產出實體色版最終模板) ──────────────────────
+
+_SVG_TEMPLATE = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+    b'<polygon id="r0" points="0,0 50,0 0,50" fill="#ff0000"/>'
+    b'<g id="0"><text x="10" y="10">1</text></g>'
+    b'<g id="1"><text x="20" y="20">2</text></g>'
+    b'<g id="2"><text x="30" y="30">3</text></g>'
+    b'</svg>'
+)
+
+# palette_json 帶 pixels，模擬 pbn_gen 的真實輸出
+_PALETTE_FOR_FINALIZE = [
+    {"template_id": 1, "rgb": [247, 167, 132], "percent": 0.40, "pixels": 4000},
+    {"template_id": 2, "rgb": [100, 50, 200],  "percent": 0.35, "pixels": 3500},
+    {"template_id": 3, "rgb": [50, 200, 100],  "percent": 0.25, "pixels": 2500},
+]
+
+
+async def _setup_job_for_finalize(db, mappings_spec: list[tuple[int, str]]):
+    """建立 svg_url+palette_json 齊全的 job + 對應 mappings。
+    mappings_spec: [(template_id, color_code), ...]，color_code 找 PhysicalColor。
+    """
+    from palette.models import MappedByEnum, PaletteColorMapping
+    job = ProductionJob(
+        detail="standard", difficulty="beginner", mode="standard",
+        canvas_w_cm=30, canvas_h_cm=40,
+        status=JobStatusEnum.completed,
+        palette_json=_PALETTE_FOR_FINALIZE,
+        svg_url="gs://test-bucket/production_jobs/xxx/template.svg",
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    job.svg_url = f"gs://test-bucket/production_jobs/{job.id}/template.svg"
+    code_to_color = {}
+    for _, code in mappings_spec:
+        if code in code_to_color:
+            continue
+        result = await db.execute(select(PhysicalColor).where(PhysicalColor.code == code))
+        code_to_color[code] = result.scalar_one()
+    for tid, code in mappings_spec:
+        db.add(PaletteColorMapping(
+            production_job_id=job.id,
+            template_id=tid,
+            algorithm_rgb=[0, 0, 0],
+            physical_color_id=code_to_color[code].id,
+            mapped_by=MappedByEnum.system,
+        ))
+    await db.commit()
+    return job
+
+
+def _mock_bucket_for_finalize(svg_bytes: bytes = _SVG_TEMPLATE):
+    """產生 mock bucket：download_as_bytes 回 svg_bytes；upload_from_string 收 capture。"""
+    from unittest.mock import MagicMock
+    captured: dict[str, bytes] = {}
+
+    def make_blob(path: str):
+        b = MagicMock(name=f"blob:{path}")
+        b.download_as_bytes = MagicMock(return_value=svg_bytes)
+        def _upload(data, content_type=None):  # noqa: ARG001
+            captured[path] = data if isinstance(data, bytes) else data.encode("utf-8")
+        b.upload_from_string = MagicMock(side_effect=_upload)
+        return b
+
+    bucket = MagicMock()
+    bucket.name = "test-bucket"
+    bucket.blob = MagicMock(side_effect=make_blob)
+    return bucket, captured
+
+
+@pytest.mark.asyncio
+async def test_finalize_groups_by_physical_color(db):
+    """3 個 template 對到 2 個物理色 → output_label 應為 {1: 不重複, 2: 不重複}。
+    同物理色的 template 拿到同一 label。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    from palette.models import PaletteColorMapping
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    # template 1, 3 → COLOR_A；template 2 → COLOR_B
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, captured = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        result = await finalize_template(db, job.id)
+
+    assert result["output_labels_count"] == 2
+    # 重抓 mappings 確認 output_label 寫進去
+    rows = list((await db.execute(
+        select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+    )).scalars().all())
+    by_tid = {m.template_id: m.output_label for m in rows}
+    # template 1 跟 3 對到同色 → 應同 label
+    assert by_tid[1] == by_tid[3]
+    # template 2 對到別色 → 不同 label
+    assert by_tid[2] != by_tid[1]
+    # 兩個 label 必為 {1, 2}
+    assert set(by_tid.values()) == {1, 2}
+
+
+@pytest.mark.asyncio
+async def test_finalize_largest_area_gets_label_1(db):
+    """COLOR_A 對 template 1+3（pixels 4000+2500=6500），COLOR_B 對 template 2（3500）
+    → COLOR_A 面積大 → label 1，COLOR_B → label 2"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    from palette.models import PaletteColorMapping
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    rows = list((await db.execute(
+        select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+    )).scalars().all())
+    by_tid = {m.template_id: m.output_label for m in rows}
+    # COLOR_A 群（template 1, 3）label = 1
+    assert by_tid[1] == 1
+    assert by_tid[3] == 1
+    # COLOR_B 群（template 2）label = 2
+    assert by_tid[2] == 2
+
+
+@pytest.mark.asyncio
+async def test_finalize_uploads_svg_and_palette_final(db):
+    """確認 template_final.svg 與 palette_final.json 都被上傳到正確路徑。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, captured = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    svg_key = f"production_jobs/{job.id}/template_final.svg"
+    json_key = f"production_jobs/{job.id}/palette_final.json"
+    assert svg_key in captured
+    assert json_key in captured
+
+    # SVG 內容應該已換 label：原 "1", "2", "3" → 物理色版 "1", "2", "1"
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(captured[svg_key])
+    texts = [t.text for t in root.iter("{http://www.w3.org/2000/svg}text")]
+    # template 1, 3 → label 1；template 2 → label 2
+    assert texts == ["1", "2", "1"]
+
+    # palette_final.json 結構正確、按 output_label 排序
+    import json
+    palette = json.loads(captured[json_key])
+    assert len(palette) == 2
+    assert palette[0]["output_label"] == 1
+    assert palette[1]["output_label"] == 2
+    # 大面積的色（label 1）member_template_ids 應該含 1, 3
+    assert sorted(palette[0]["member_template_ids"]) == [1, 3]
+    assert palette[1]["member_template_ids"] == [2]
+
+
+@pytest.mark.asyncio
+async def test_finalize_updates_job_columns(db):
+    """job.template_final_url / palette_final_url / finalized_at 都該被寫入。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    await db.refresh(job)
+    assert job.template_final_url is not None
+    assert job.template_final_url.endswith("/template_final.svg")
+    assert job.palette_final_url is not None
+    assert job.palette_final_url.endswith("/palette_final.json")
+    assert job.finalized_at is not None
+
+
+@pytest.mark.asyncio
+async def test_finalize_idempotent(db):
+    """重跑 finalize → 結果一致、不爆。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    from palette.models import PaletteColorMapping
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+        first = {m.template_id: m.output_label for m in (await db.execute(
+            select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+        )).scalars().all()}
+        # 重跑（mock 一樣返回原 svg）
+        await finalize_template(db, job.id)
+        second = {m.template_id: m.output_label for m in (await db.execute(
+            select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+        )).scalars().all()}
+    assert first == second
+
+
+@pytest.mark.asyncio
+async def test_finalize_no_svg_url_raises(db):
+    """job.svg_url=None → BadRequestError（呼叫端 complete_mappings 會吞掉）。"""
+    from palette.service import finalize_template
+    from core.exceptions import BadRequestError
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = ProductionJob(
+        detail="standard", difficulty="beginner", mode="standard",
+        canvas_w_cm=30, canvas_h_cm=40,
+        status=JobStatusEnum.completed,
+        palette_json=_PALETTE_FOR_FINALIZE,
+        svg_url=None,
+    )
+    db.add(job)
+    await db.commit()
+    with pytest.raises(BadRequestError, match="template.svg"):
+        await finalize_template(db, job.id)
+
+
+@pytest.mark.asyncio
+async def test_complete_mappings_finalize_failure_does_not_break(db, client: AsyncClient):
+    """既有 complete_mappings 測試已涵蓋的場景：svg_url=None / Firebase fail
+    都應被 best-effort 吞掉，complete API 仍回 200。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    await _seed_settings(db)
+    # job 沒 svg_url → finalize 必失敗，但 complete 仍應 200
+    job = await _create_job_with_palette(db)
+    assert job.svg_url is None
+
+    await client.get(_palette_url(job.id))   # 自動 mapping
+    res = await client.post(f"{_palette_url(job.id)}/complete")
+    assert res.status_code == 200

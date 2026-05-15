@@ -35,6 +35,9 @@ class PaletteColorMapping(Base):
         UUID(as_uuid=True), ForeignKey("physical_colors.id"), nullable=False
     )
     required_ml = Column(Numeric(8, 4), nullable=True)
+    # 對應完成（finalize）後填入 1..N 的「實體色版編號」。
+    # 多個 template_id 對到同一物理色 → output_label 相同；NULL 表尚未 finalize。
+    output_label = Column(Integer, nullable=True)
     mapped_by = Column(
         Enum(MappedByEnum), nullable=False, default=MappedByEnum.system
     )

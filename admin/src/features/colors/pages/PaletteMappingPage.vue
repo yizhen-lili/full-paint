@@ -183,6 +183,20 @@ async function complete() {
         </li>
       </ul>
     </div>
+    <!-- finalize 完成後給 admin 看最終模板的連結 -->
+    <p
+      v-if="jobData?.template_final_url"
+      class="mt-3 pt-3 border-t border-current/20 text-[12px] flex items-center gap-2"
+    >
+      <CheckCircle2 :size="12" :stroke-width="1.5" />
+      已產出「實體色版最終模板」（重編號 + PDF 含色號對照表）：
+      <a
+        :href="jobData.template_final_url"
+        target="_blank"
+        rel="noopener"
+        class="underline font-medium"
+      >查看 SVG</a>
+    </p>
   </div>
 
   <div v-if="isLoading" class="py-20 flex justify-center text-ink-muted">
@@ -241,11 +255,17 @@ async function complete() {
               :style="{ backgroundColor: rgbToHex(m.physical_color.rgb) }"
             />
             <div class="flex-1 min-w-0">
-              <p class="text-[12px] font-mono text-ink-strong">
-                {{ m.physical_color.code }}
+              <p class="text-[12px] font-mono text-ink-strong flex items-center gap-1.5 flex-wrap">
+                <span>{{ m.physical_color.code }}</span>
+                <!-- 對應完成後的「實體色版編號」（多個 template 對到同色 → 同 label） -->
+                <span
+                  v-if="m.output_label != null"
+                  class="inline-flex items-center px-1.5 h-[16px] text-[10px] tracking-[0.04em] rounded-[var(--radius-xs)] bg-accent/[0.12] text-accent"
+                  title="塗色模板上顯示的編號（已 finalize）"
+                >模板 #{{ m.output_label }}</span>
                 <span
                   v-if="m.mapped_by === 'system'"
-                  class="ml-1 text-[10px] text-ink-muted"
+                  class="text-[10px] text-ink-muted"
                 >（自動）</span>
               </p>
               <p class="text-[12px] text-ink-default truncate">{{ m.physical_color.name }}</p>

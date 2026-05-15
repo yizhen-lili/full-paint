@@ -92,6 +92,11 @@ export interface JobDetail extends JobListItem {
   snapped_rgb_url: string | null
   palette_json: PaletteColor[] | null
   notes: string | null
+  /** Finalize 後產出的「實體色版最終模板」SVG（並存於 svg_url）；NULL = 尚未 finalize */
+  template_final_url: string | null
+  /** Finalize 後產出的色號對照表 JSON；給 PDF legend 與 admin 預覽用 */
+  palette_final_url: string | null
+  finalized_at: string | null
   // F06-B 用：palette_mappings、sam_points、polygons、mask_url 等暫不入型別
 }
 

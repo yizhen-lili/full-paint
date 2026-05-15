@@ -762,14 +762,22 @@ _PDF_MARGIN_CM = 5.0
 
 
 async def export_job_pdf(db: AsyncSession, job_id: UUID) -> bytes:
-    """SVG → 單頁 PDF（四周 5cm 邊框）。沿用 print_batch 的 svglib→cairosvg fallback。"""
+    """SVG → 多頁 PDF（第 1 頁模板四周 5cm 邊框，第 2 頁色號對照表）。
+
+    若 job 已 finalize（有 template_final_url + palette_final_url）：
+      - 第 1 頁用 template_final.svg（實體色版編號）
+      - 第 2 頁渲染 palette_final.json 的 legend 表
+    若未 finalize（向後相容舊 job）：
+      - 第 1 頁用 svg_url（演算法 template_id）
+      - 不加 legend 頁
+    """
     job = await get_job(db, job_id)
     if job.status != "completed":
         raise BadRequestError("僅 completed 任務可匯出 PDF")
     # 資料異常情境（completed 但無 svg_url）刻意回 400 而非 500：
     # 理論上 worker 寫完 svg_url 才會把 status 設 completed；若真的發生不一致，
     # 4xx 讓前端能顯示「請聯繫管理員」友善訊息，而非通用 5xx tomato page。
-    if not job.svg_url:
+    if not job.svg_url and not job.template_final_url:
         raise BadRequestError("此任務無 SVG 檔案")
 
     try:
@@ -787,13 +795,12 @@ async def export_job_pdf(db: AsyncSession, job_id: UUID) -> bytes:
 
     w_cm = float(job.canvas_w_cm)
     h_cm = float(job.canvas_h_cm)
-    # SVG 存的是 gs:// URL（私有），httpx 不認識；需要先轉 https signed URL。
-    # 已是 http/https 的（測試 fixture 或先前簽過）直接傳給 httpx，不重簽，
-    # 避免 _make_signed_url 對 bucket name 不匹配的測試 URL 失敗。
-    if job.svg_url and job.svg_url.startswith("gs://"):
-        svg_fetch_url = _make_signed_url(job.svg_url)
+    # 優先用 final SVG（實體色版編號），缺則 fallback 演算法版（舊 job 相容）
+    svg_url_to_use = job.template_final_url or job.svg_url
+    if svg_url_to_use and svg_url_to_use.startswith("gs://"):
+        svg_fetch_url = _make_signed_url(svg_url_to_use)
     else:
-        svg_fetch_url = job.svg_url
+        svg_fetch_url = svg_url_to_use
     drawing, png_bytes = await _render_svg_with_fallbacks(svg_fetch_url, w_cm, h_cm)
     if drawing is None and png_bytes is None:
         raise BadRequestError("SVG 渲染失敗（svglib 與 cairosvg 皆無法解析此檔案）")
@@ -825,8 +832,114 @@ async def export_job_pdf(db: AsyncSession, job_id: UUID) -> bytes:
         img = ImageReader(io.BytesIO(png_bytes))
         c.drawImage(img, x_pt, y_pt, width=target_w_pt, height=target_h_pt)
     c.showPage()
+
+    # 第 2 頁：色號對照表（僅當 job 已 finalize，有 palette_final.json）
+    if job.palette_final_url:
+        palette_final = await _load_palette_final(job.palette_final_url)
+        if palette_final:
+            _draw_palette_legend_page(c, palette_final, page_w_cm, page_h_cm)
+            c.showPage()
+
     c.save()
     return buf.getvalue()
+
+
+async def _load_palette_final(url: str) -> list[dict] | None:
+    """從 Firebase 拉 palette_final.json。失敗只回 None（PDF 第 1 頁仍能匯出）。"""
+    import json  # noqa: PLC0415
+    try:
+        bucket = get_bucket()
+        prefix = f"gs://{bucket.name}/"
+        path = url[len(prefix):] if url.startswith(prefix) else url.split("/", 3)[-1]
+        data = bucket.blob(path).download_as_bytes()
+        return json.loads(data.decode("utf-8"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("load palette_final.json failed (%s): %s", url, e)
+        return None
+
+
+def _draw_palette_legend_page(canvas, palette_final: list[dict], page_w_cm: float, page_h_cm: float) -> None:
+    """在 PDF 上畫一頁色號對照表。
+
+    每 row：output_label / 色票方塊 / 色號 / 名稱 / hex / 預估油料 ml。
+    用 ReportLab 原生繪圖（不重建 Drawing），避免另一條 SVG dependency。
+    """
+    from reportlab.lib import colors as rl_colors  # noqa: PLC0415
+    from reportlab.lib.units import cm  # noqa: PLC0415
+    from reportlab.pdfbase import pdfmetrics  # noqa: PLC0415
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont  # noqa: PLC0415
+
+    # 註冊 CJK 字型（ReportLab 原生附 HeiseiMin-W3）— 為了顯示中文色名
+    font_name = "Helvetica"
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
+        font_name = "HeiseiMin-W3"
+    except Exception:  # noqa: BLE001
+        # 註冊失敗就用 Helvetica；中文可能顯示為空白方塊，但至少數字與英文 ASCII 正確
+        font_name = "Helvetica"
+
+    margin = 2.0 * cm
+    y = (page_h_cm - 2.0) * cm  # 從頁面頂端往下畫
+
+    # 標題
+    canvas.setFont(font_name, 18)
+    canvas.drawString(margin, y, "色號對照表 / Palette Legend")
+    y -= 0.6 * cm
+    canvas.setFont(font_name, 9)
+    canvas.setFillColor(rl_colors.grey)
+    canvas.drawString(margin, y, "依塗色面積由大至小排序；同編號的所有區域使用同一個顏料")
+    canvas.setFillColor(rl_colors.black)
+    y -= 1.2 * cm
+
+    # 表頭
+    canvas.setFont(font_name, 10)
+    col_x = {
+        "label": margin,
+        "swatch": margin + 1.5 * cm,
+        "code": margin + 3.5 * cm,
+        "name": margin + 6.5 * cm,
+        "hex": margin + 12.0 * cm,
+        "ml": margin + 16.0 * cm,
+    }
+    for header, x in [
+        ("編號", col_x["label"]),
+        ("色票", col_x["swatch"]),
+        ("色號", col_x["code"]),
+        ("名稱", col_x["name"]),
+        ("HEX", col_x["hex"]),
+        ("用量 (ml)", col_x["ml"]),
+    ]:
+        canvas.drawString(x, y, header)
+    y -= 0.2 * cm
+    canvas.setLineWidth(0.5)
+    canvas.line(margin, y, (page_w_cm * cm) - margin, y)
+    y -= 0.6 * cm
+
+    # rows
+    row_h = 0.8 * cm
+    for item in palette_final:
+        if y < margin + row_h:
+            # 換頁（超過 N 色情境）
+            canvas.showPage()
+            y = (page_h_cm - 2.0) * cm
+            canvas.setFont(font_name, 10)
+
+        rgb = item.get("rgb", [0, 0, 0])
+        # 色票方塊 1cm × 0.6cm
+        canvas.setFillColorRGB(rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0)
+        canvas.rect(
+            col_x["swatch"], y - 0.1 * cm, 1.6 * cm, 0.55 * cm,
+            stroke=1, fill=1,
+        )
+        canvas.setFillColor(rl_colors.black)
+
+        canvas.drawString(col_x["label"], y, str(item.get("output_label", "")))
+        canvas.drawString(col_x["code"], y, str(item.get("code", "")))
+        canvas.drawString(col_x["name"], y, str(item.get("name", "")))
+        canvas.drawString(col_x["hex"], y, str(item.get("hex", "")))
+        ml = item.get("total_ml", 0)
+        canvas.drawString(col_x["ml"], y, f"{ml:.1f}" if isinstance(ml, (int, float)) else str(ml))
+        y -= row_h
 
 
 async def post_process(
