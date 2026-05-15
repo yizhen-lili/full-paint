@@ -4,7 +4,7 @@ import Dialog from '@/shared/ui/Dialog.vue'
 import Button from '@/shared/ui/Button.vue'
 import Input from '@/shared/ui/Input.vue'
 import Select from '@/shared/ui/Select.vue'
-import { Search, Sparkles, Palette } from 'lucide-vue-next'
+import { Search, Sparkles, Palette, Pipette } from 'lucide-vue-next'
 
 import { useColorsQuery } from '../queries'
 import { rgbToHex, type PhysicalColor } from '../api'
@@ -21,6 +21,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   pick: [physicalColorId: string]
+  /** 校正該色 RGB；由 parent 開 RgbCalibrationDialog 處理（picker 不自閉，讓
+   *  user 校正完還能繼續挑色） */
+  calibrate: [color: PhysicalColor]
 }>()
 
 const { data: colorsData } = useColorsQuery(() => ({}))
@@ -166,6 +169,14 @@ const algoHex = computed(() => rgbToHex(props.algorithmRgb))
               </span>
             </p>
           </div>
+          <button
+            type="button"
+            class="shrink-0 p-1 rounded-[var(--radius-xs)] hover:bg-white text-ink-muted hover:text-ink-strong transition-colors"
+            title="校正此色 RGB"
+            @click.stop="emit('calibrate', r.color)"
+          >
+            <Pipette :size="12" :stroke-width="1.5" />
+          </button>
         </div>
       </div>
 
@@ -182,7 +193,7 @@ const algoHex = computed(() => rgbToHex(props.algorithmRgb))
           <div
             v-for="c in familyResults"
             :key="c.id"
-            class="flex items-center gap-2 p-2 border border-line-hairline rounded-[var(--radius-xs)] cursor-pointer hover:bg-paper-subtle transition-colors"
+            class="group flex items-center gap-2 p-2 border border-line-hairline rounded-[var(--radius-xs)] cursor-pointer hover:bg-paper-subtle transition-colors"
             :class="c.id === currentId ? 'border-accent bg-[var(--color-accent)]/[0.04]' : ''"
             @click="pick(c)"
           >
@@ -194,6 +205,14 @@ const algoHex = computed(() => rgbToHex(props.algorithmRgb))
               <p class="text-[12px] font-mono text-ink-strong">{{ c.code }}</p>
               <p class="text-[11px] text-ink-default truncate">{{ c.name }}</p>
             </div>
+            <button
+              type="button"
+              class="shrink-0 p-1 rounded-[var(--radius-xs)] opacity-0 group-hover:opacity-100 hover:bg-white text-ink-muted hover:text-ink-strong transition-all"
+              title="校正此色 RGB"
+              @click.stop="emit('calibrate', c)"
+            >
+              <Pipette :size="12" :stroke-width="1.5" />
+            </button>
           </div>
         </div>
       </div>
@@ -228,6 +247,14 @@ const algoHex = computed(() => rgbToHex(props.algorithmRgb))
                 {{ c.color_family || '—' }} · 庫存 {{ c.stock_ml }} ml
               </p>
             </div>
+            <button
+              type="button"
+              class="shrink-0 p-1 rounded-[var(--radius-xs)] hover:bg-white text-ink-muted hover:text-ink-strong transition-colors"
+              title="校正此色 RGB"
+              @click.stop="emit('calibrate', c)"
+            >
+              <Pipette :size="12" :stroke-width="1.5" />
+            </button>
           </div>
         </div>
       </div>

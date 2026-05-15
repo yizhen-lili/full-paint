@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useQueryClient } from '@tanstack/vue-query'
 import {
   ChevronLeft,
   Loader2,
@@ -8,23 +9,27 @@ import {
   Copy,
   AlertTriangle,
   Sparkles,
+  Pipette,
 } from 'lucide-vue-next'
 
 import Card from '@/shared/ui/Card.vue'
 import Button from '@/shared/ui/Button.vue'
 
 import {
+  PM_KEYS,
   useCompleteMappingsMutation,
   useCopyMappingsMutation,
   usePaletteMappingsQuery,
   useUpdateMappingMutation,
 } from '../queries_mapping'
-import { rgbToHex } from '../api'
+import { useRevertRgbMutation, useUpdateRgbMutation } from '../queries'
+import { rgbToHex, type PhysicalColor } from '../api'
 import type { PaletteMapping } from '../api_mapping'
 
 import PhysicalColorPickerDialog from '../components/PhysicalColorPickerDialog.vue'
 import CopyMappingsDialog from '../components/CopyMappingsDialog.vue'
 import PalettePreviewCanvas from '../components/PalettePreviewCanvas.vue'
+import RgbCalibrationDialog from '../components/RgbCalibrationDialog.vue'
 
 import { useJobQuery } from '@/features/production/queries'
 
@@ -75,6 +80,51 @@ async function onPickPhysicalColor(physicalColorId: string) {
     pickerOpen.value = false
   } catch (e) {
     apiError.value = (e as { message?: string }).message || '更新對應失敗'
+  }
+}
+
+// ── RGB 校正 dialog（內嵌，免跳轉「實體色管理」頁面）─────────────────────
+// 在對應 row 或 picker 內任一色項點 Pipette icon 都進這裡。
+// 校正成功後依賴 useUpdateRgbMutation invalidate COL_KEYS.all → mappings query
+// 自動 refetch，使用該實體色的所有 row（含 picker 內）色票同步刷新。
+const rgbDialogOpen = ref(false)
+const rgbDialogColor = ref<PhysicalColor | null>(null)
+const updateRgbMut = useUpdateRgbMutation()
+const revertRgbMut = useRevertRgbMutation()
+
+function openRgbDialog(color: PhysicalColor) {
+  rgbDialogColor.value = color
+  rgbDialogOpen.value = true
+}
+
+const qc = useQueryClient()
+
+// 校正成功後額外 invalidate 本頁的 palette-mappings query
+// （useUpdateRgbMutation 預設只 invalidate ['admin','colors']，跟 mappings 的
+//  ['admin','palette-mappings',jobId] 不同 prefix → 不會自動 refetch）
+function refreshMappings() {
+  if (jobId.value) qc.invalidateQueries({ queryKey: PM_KEYS.mappings(jobId.value) })
+}
+
+async function onSaveRgb(hex: string) {
+  if (!rgbDialogColor.value) return
+  apiError.value = null
+  try {
+    await updateRgbMut.mutateAsync({ id: rgbDialogColor.value.id, payload: { hex } })
+    refreshMappings()
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || 'RGB 校正失敗'
+  }
+}
+
+async function onRevertRgb(history_id: string) {
+  if (!rgbDialogColor.value) return
+  apiError.value = null
+  try {
+    await revertRgbMut.mutateAsync({ id: rgbDialogColor.value.id, history_id })
+    refreshMappings()
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || 'RGB 還原失敗'
   }
 }
 
@@ -254,6 +304,15 @@ async function complete() {
                 <span v-if="m.required_ml"> · 需 {{ m.required_ml }} ml</span>
               </p>
             </div>
+            <!-- RGB 校正：免跳「實體色管理」頁也能即時改 -->
+            <button
+              type="button"
+              class="shrink-0 p-1.5 rounded-[var(--radius-xs)] hover:bg-paper-subtle text-ink-muted hover:text-ink-strong transition-colors"
+              title="校正此實體色 RGB"
+              @click.stop="openRgbDialog(m.physical_color!)"
+            >
+              <Pipette :size="14" :stroke-width="1.5" />
+            </button>
           </div>
           <div v-else class="flex-1 text-[12px] text-state-warning">尚未對應</div>
         </div>
@@ -269,6 +328,7 @@ async function complete() {
     :current-id="pickerMapping.physical_color?.id ?? null"
     @close="pickerOpen = false"
     @pick="onPickPhysicalColor"
+    @calibrate="openRgbDialog"
   />
 
   <CopyMappingsDialog
@@ -277,5 +337,14 @@ async function complete() {
     :pending="copyMut.isPending.value"
     @close="copyOpen = false"
     @confirm="onConfirmCopy"
+  />
+
+  <RgbCalibrationDialog
+    :open="rgbDialogOpen"
+    :color="rgbDialogColor"
+    :pending="updateRgbMut.isPending.value || revertRgbMut.isPending.value"
+    @close="rgbDialogOpen = false"
+    @save-rgb="onSaveRgb"
+    @revert="onRevertRgb"
   />
 </template>
