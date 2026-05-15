@@ -95,6 +95,11 @@ class ProductionJob(Base):
     snapped_rgb_url = Column(String, nullable=True)
     palette_json = Column(JSONB, nullable=True)
     num_colors_used = Column(Integer, nullable=True)
+    # Finalize 後產出的「實體色版最終模板」與 palette legend；NULL = 尚未 finalize。
+    # 並存於 Firebase（不覆蓋 svg_url 演算法版），PDF 匯出優先用 final 版。
+    template_final_url = Column(String, nullable=True)
+    palette_final_url = Column(String, nullable=True)
+    finalized_at = Column(TIMESTAMP(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
     batch_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

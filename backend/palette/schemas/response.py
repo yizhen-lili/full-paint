@@ -18,6 +18,8 @@ class PaletteMappingResponse(BaseModel):
     physical_color: PhysicalColorBriefResponse | None
     required_ml: float | None
     mapped_by: str
+    # finalize 後填入的「實體色版編號」（同物理色共用）；NULL = 尚未 finalize
+    output_label: int | None = None
 
 
 class PaletteMappingListResponse(BaseModel):

@@ -117,6 +117,9 @@ class JobDetailResponse(BaseModel):
     palette_json: list | None
     num_colors_used: int | None
     notes: str | None
+    template_final_url: str | None = None
+    palette_final_url: str | None = None
+    finalized_at: datetime | None = None
     created_at: datetime
     approved_at: datetime | None
 
@@ -128,6 +131,12 @@ class JobDetailResponse(BaseModel):
     @field_validator("mask_url", mode="before")
     @classmethod
     def _convert_mask(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
+    @field_validator("template_final_url", mode="before")
+    @classmethod
+    def _convert_template_final(cls, v: Any) -> Any:
+        # gs:// → 15-min signed https URL（admin 預覽用）
         return _resolve_filled_url(v)
 
 

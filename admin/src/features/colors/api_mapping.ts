@@ -40,6 +40,9 @@ export interface PaletteMapping {
   physical_color: PhysicalColorBrief | null
   required_ml: number | null
   mapped_by: 'system' | 'manual'
+  /** Finalize 後填入的「實體色版編號」（1..N）；多個 template_id 對到同一物理色 → 同 label。
+   *  NULL = 尚未 finalize（complete 前或失敗）。 */
+  output_label: number | null
 }
 
 export interface CompleteResponse {

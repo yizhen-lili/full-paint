@@ -1,4 +1,8 @@
+import json
+import logging
 import math
+from collections import defaultdict
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -10,6 +14,8 @@ from color.service import lab_distance
 from core.exceptions import BadRequestError, NotFoundError
 from palette.models import MappedByEnum, PaletteColorMapping
 from production.models import ProductionJob
+
+logger = logging.getLogger(__name__)
 
 
 async def list_copy_candidates(db: AsyncSession, job_id: UUID) -> list[dict]:
@@ -263,10 +269,159 @@ async def complete_mappings(db: AsyncSession, job_id: UUID) -> dict:
 
     await db.commit()
 
+    # 對應完成後產出「實體色版最終模板」：重編號 + 上傳 template_final.svg
+    # + palette_final.json。失敗只 log 不擋使用者完成流程（Firebase / SVG
+    # 解析異常時，PDF 匯出會 fallback 回原始 template.svg）。
+    try:
+        await finalize_template(db, job_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("finalize_template failed for %s (best-effort): %s", job_id, e)
+
     return {
         "all_stocked": len(shortage_colors) == 0,
         "shortage_colors": shortage_colors,
     }
+
+
+async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
+    """產出「實體色版最終模板」：
+
+    1. 依 palette_json.pixels 統計每個 template_id 的塗色面積
+    2. 按 physical_color_id groupby，組內總 pixels 加總當排序鍵
+    3. 由大到小派 output_label = 1..N，回寫每個 mapping 的 output_label
+    4. 從 Firebase 拉 template.svg → renumber_svg_labels → 上傳 template_final.svg
+    5. 組 palette_final.json（legend 資料源）→ 上傳
+    6. 更新 job.template_final_url / palette_final_url / finalized_at
+
+    呼叫端：complete_mappings 完成 required_ml 計算後自動觸發。冪等。
+
+    回傳：{"output_labels_count": N, "template_final_url": ..., "palette_final_url": ...}
+    """
+    from core.firebase import get_bucket  # noqa: PLC0415
+
+    from palette.svg_renumber import renumber_svg_labels  # noqa: PLC0415
+
+    job = await _get_job_or_404(db, job_id)
+
+    if not job.svg_url:
+        raise BadRequestError("job 尚無 template.svg URL，無法 finalize")
+    if not job.palette_json:
+        raise BadRequestError("job 尚無 palette_json，無法統計面積")
+
+    mapping_rows = list(
+        (
+            await db.execute(
+                select(PaletteColorMapping).where(
+                    PaletteColorMapping.production_job_id == job_id
+                )
+            )
+        ).scalars().all()
+    )
+    if not mapping_rows:
+        raise BadRequestError("尚無調色板對應資料，無法 finalize")
+
+    # 1. template_id → pixels (來自 pbn_gen 的 palette_json，必有 pixels 欄位)
+    pixels_by_template: dict[int, int] = {}
+    for entry in job.palette_json:
+        pixels_by_template[int(entry["template_id"])] = int(entry.get("pixels", 0))
+
+    # 2. groupby physical_color_id，組內 pixels 加總
+    groups: dict[UUID, list[PaletteColorMapping]] = defaultdict(list)
+    for m in mapping_rows:
+        groups[m.physical_color_id].append(m)
+
+    def group_area(pc_id: UUID) -> int:
+        return sum(pixels_by_template.get(m.template_id, 0) for m in groups[pc_id])
+
+    # 3. 排序+派 label。同面積時用 physical_color_id 字典序破 tie 保證 deterministic
+    sorted_pc_ids = sorted(
+        groups.keys(),
+        key=lambda pc_id: (-group_area(pc_id), str(pc_id)),
+    )
+
+    label_map: dict[int, int] = {}   # template_id → output_label
+    for new_label, pc_id in enumerate(sorted_pc_ids, start=1):
+        for m in groups[pc_id]:
+            m.output_label = new_label
+            label_map[m.template_id] = new_label
+
+    # 4. SVG text surgery — 拉 template.svg → 替換標籤 → 上傳 final
+    bucket = get_bucket()
+    svg_path = _gs_path(job.svg_url, bucket.name)
+    svg_blob = bucket.blob(svg_path)
+    svg_bytes = svg_blob.download_as_bytes()
+    final_svg_bytes = renumber_svg_labels(svg_bytes, label_map)
+
+    final_svg_path = f"production_jobs/{job_id}/template_final.svg"
+    bucket.blob(final_svg_path).upload_from_string(
+        final_svg_bytes, content_type="image/svg+xml",
+    )
+    template_final_url = f"gs://{bucket.name}/{final_svg_path}"
+
+    # 5. palette_final.json — legend 用，按 output_label 1..N 排序
+    colors_by_id = {
+        c.id: c
+        for c in (
+            await db.execute(
+                select(PhysicalColor).where(
+                    PhysicalColor.id.in_(list(groups.keys()))
+                )
+            )
+        ).scalars().all()
+    }
+
+    palette_final = []
+    for new_label, pc_id in enumerate(sorted_pc_ids, start=1):
+        members = groups[pc_id]
+        color = colors_by_id.get(pc_id)
+        total_pixels = sum(pixels_by_template.get(m.template_id, 0) for m in members)
+        total_ml = sum(float(m.required_ml or 0) for m in members)
+        rgb = list(color.rgb) if color else [0, 0, 0]
+        palette_final.append({
+            "output_label": new_label,
+            "physical_color_id": str(pc_id),
+            "code": color.code if color else "?",
+            "name": color.name if color else "?",
+            "rgb": rgb,
+            "hex": "#{:02X}{:02X}{:02X}".format(*rgb),
+            "total_pixels": total_pixels,
+            "total_ml": round(total_ml, 2),
+            "member_template_ids": sorted(m.template_id for m in members),
+        })
+
+    palette_final_path = f"production_jobs/{job_id}/palette_final.json"
+    bucket.blob(palette_final_path).upload_from_string(
+        json.dumps(palette_final, ensure_ascii=False, indent=2),
+        content_type="application/json",
+    )
+    palette_final_url = f"gs://{bucket.name}/{palette_final_path}"
+
+    # 6. 更新 job 欄位 + commit
+    job.template_final_url = template_final_url
+    job.palette_final_url = palette_final_url
+    job.finalized_at = datetime.now(UTC)
+    await db.commit()
+
+    logger.info(
+        "finalize_template: job=%s mappings=%d unique_colors=%d",
+        job_id, len(mapping_rows), len(sorted_pc_ids),
+    )
+    return {
+        "output_labels_count": len(sorted_pc_ids),
+        "template_final_url": template_final_url,
+        "palette_final_url": palette_final_url,
+    }
+
+
+def _gs_path(url: str, bucket_name: str) -> str:
+    """從 gs://bucket/path 萃出 path（不含 bucket）；非 gs:// 直接回 url。"""
+    prefix = f"gs://{bucket_name}/"
+    if url.startswith(prefix):
+        return url[len(prefix):]
+    if url.startswith("gs://"):
+        # 萬一 bucket name 不同（測試環境），仍盡力解析
+        return url.split("/", 3)[-1]
+    return url
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -367,6 +522,7 @@ async def _enrich_mappings(
             } if color else None,
             "required_ml": float(m.required_ml) if m.required_ml is not None else None,
             "mapped_by": m.mapped_by,
+            "output_label": m.output_label,
         })
     return enriched
 
