@@ -99,6 +99,36 @@ async def init_schema() -> None:
                 "ADD COLUMN IF NOT EXISTS production_job_id UUID "
                 "REFERENCES production_jobs(id) ON DELETE SET NULL"
             ))
+            # 客戶是否同意作品於 IG / 網站作品案例展示（spec 第九頁智財權條款）
+            # 對應 migration p6k7l8m9n0o1_custom_request_display_consent
+            await conn.execute(text(
+                "ALTER TABLE custom_requests "
+                "ADD COLUMN IF NOT EXISTS display_consent BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            # 系列封面圖 — admin 上傳，給 SeriesDetailPage hero 用
+            # 對應 migration q7l8m9n0o1p2_series_sample_cover
+            await conn.execute(text(
+                "ALTER TABLE product_series "
+                "ADD COLUMN IF NOT EXISTS sample_cover_image_url VARCHAR"
+            ))
+            # 對應完成（finalize）後產出實體色版最終模板
+            # 對應 migration r8m9n0o1p2q3_finalize_template_columns
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS template_final_url VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS palette_final_url VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMP WITH TIME ZONE"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE palette_color_mappings "
+                "ADD COLUMN IF NOT EXISTS output_label INTEGER"
+            ))
 
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)
