@@ -111,6 +111,24 @@ async def init_schema() -> None:
                 "ALTER TABLE product_series "
                 "ADD COLUMN IF NOT EXISTS sample_cover_image_url VARCHAR"
             ))
+            # 對應完成（finalize）後產出實體色版最終模板
+            # 對應 migration r8m9n0o1p2q3_finalize_template_columns
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS template_final_url VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS palette_final_url VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMP WITH TIME ZONE"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE palette_color_mappings "
+                "ADD COLUMN IF NOT EXISTS output_label INTEGER"
+            ))
 
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)
