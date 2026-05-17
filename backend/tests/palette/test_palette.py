@@ -511,22 +511,28 @@ async def test_complete_unauthenticated(client: AsyncClient, db):
 
 # ── finalize_template (對應完成後產出實體色版最終模板) ──────────────────────
 
-_SVG_TEMPLATE = (
-    b'<?xml version="1.0" encoding="UTF-8"?>'
-    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
-    b'<polygon id="r0" points="0,0 50,0 0,50" fill="#ff0000"/>'
-    b'<g id="0"><text x="10" y="10">1</text></g>'
-    b'<g id="1"><text x="20" y="20">2</text></g>'
-    b'<g id="2"><text x="30" y="30">3</text></g>'
-    b'</svg>'
-)
-
 # palette_json 帶 pixels，模擬 pbn_gen 的真實輸出
 _PALETTE_FOR_FINALIZE = [
     {"template_id": 1, "rgb": [247, 167, 132], "percent": 0.40, "pixels": 4000},
     {"template_id": 2, "rgb": [100, 50, 200],  "percent": 0.35, "pixels": 3500},
     {"template_id": 3, "rgb": [50, 200, 100],  "percent": 0.25, "pixels": 2500},
 ]
+
+# pbn_gen 的 polygon fill = 25% 原色 + 75% 白；mock 必須對得起來才能讓
+# svg_consolidate 真的跑 union（不會 fallback 到只換文字）。
+# tid 1 [247,167,132] → #FDE9E0; tid 2 [100,50,200] → #D8CBF1; tid 3 [50,200,100] → #CBF1D8
+_SVG_TEMPLATE = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+    b'<rect x="0" y="0" width="100" height="100" fill="white"/>'
+    b'<polygon id="r0" points="0,0 40,0 0,40" fill="#FDE9E0" stroke="#AAAAAA" stroke-width="0.5"/>'   # tid 1
+    b'<polygon id="r1" points="60,0 100,0 60,40" fill="#D8CBF1" stroke="#AAAAAA" stroke-width="0.5"/>'  # tid 2
+    b'<polygon id="r2" points="0,60 40,60 0,100" fill="#CBF1D8" stroke="#AAAAAA" stroke-width="0.5"/>'  # tid 3
+    b'<g id="0"><text x="10" y="10">1</text></g>'
+    b'<g id="1"><text x="20" y="20">2</text></g>'
+    b'<g id="2"><text x="30" y="30">3</text></g>'
+    b'</svg>'
+)
 
 
 async def _setup_job_for_finalize(db, mappings_spec: list[tuple[int, str]]):
@@ -656,12 +662,19 @@ async def test_finalize_uploads_svg_and_palette_final(db):
     assert svg_key in captured
     assert json_key in captured
 
-    # SVG 內容應該已換 label：原 "1", "2", "3" → 物理色版 "1", "2", "1"
+    # SVG 內容應該已換 label：原 template_id 1/2/3 → output_label 1/2/1
+    # 經 consolidate 後 tid 1+3 合併（兩個分離 polygon → MultiPolygon → 各 part 各放
+    # 一個 label "1"），tid 2 → 單一 polygon 放一個 label "2"
+    # 順序由 polygons_by_label 插入順序決定（label 1 先，label 2 後）
     import xml.etree.ElementTree as ET
     root = ET.fromstring(captured[svg_key])
     texts = [t.text for t in root.iter("{http://www.w3.org/2000/svg}text")]
-    # template 1, 3 → label 1；template 2 → label 2
-    assert texts == ["1", "2", "1"]
+    # 計數比順序穩：2 個 "1"（label 1 兩個分離 part）+ 1 個 "2"
+    assert sorted(texts) == ["1", "1", "2"], f"got texts={texts}"
+
+    # 應該只有 2 個 <path>（每個 output_label 一個）
+    paths = root.findall("{http://www.w3.org/2000/svg}path")
+    assert len(paths) == 2
 
     # palette_final.json 結構正確、按 output_label 排序
     import json
