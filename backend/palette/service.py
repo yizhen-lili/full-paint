@@ -299,7 +299,7 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     """
     from core.firebase import get_bucket  # noqa: PLC0415
 
-    from palette.svg_renumber import renumber_svg_labels  # noqa: PLC0415
+    from palette.svg_consolidate import regenerate_merged_svg  # noqa: PLC0415
 
     job = await _get_job_or_404(db, job_id)
 
@@ -345,20 +345,7 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
             m.output_label = new_label
             label_map[m.template_id] = new_label
 
-    # 4. SVG text surgery — 拉 template.svg → 替換標籤 → 上傳 final
-    bucket = get_bucket()
-    svg_path = _gs_path(job.svg_url, bucket.name)
-    svg_blob = bucket.blob(svg_path)
-    svg_bytes = svg_blob.download_as_bytes()
-    final_svg_bytes = renumber_svg_labels(svg_bytes, label_map)
-
-    final_svg_path = f"production_jobs/{job_id}/template_final.svg"
-    bucket.blob(final_svg_path).upload_from_string(
-        final_svg_bytes, content_type="image/svg+xml",
-    )
-    template_final_url = f"gs://{bucket.name}/{final_svg_path}"
-
-    # 5. palette_final.json — legend 用，按 output_label 1..N 排序
+    # 4. 先建 palette_final（後面 SVG 合併要用它取得實體色 RGB 算新 tint）
     colors_by_id = {
         c.id: c
         for c in (
@@ -389,6 +376,23 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
             "member_template_ids": sorted(m.template_id for m in members),
         })
 
+    # 5. SVG 合併 — 拉 template.svg → 同 output_label 的多邊形 Shapely union
+    #    → 渲染為新 SVG（消除同色相鄰假邊界）→ 上傳 final
+    bucket = get_bucket()
+    svg_path = _gs_path(job.svg_url, bucket.name)
+    svg_blob = bucket.blob(svg_path)
+    svg_bytes = svg_blob.download_as_bytes()
+    final_svg_bytes = regenerate_merged_svg(
+        svg_bytes, label_map, job.palette_json, palette_final,
+    )
+
+    final_svg_path = f"production_jobs/{job_id}/template_final.svg"
+    bucket.blob(final_svg_path).upload_from_string(
+        final_svg_bytes, content_type="image/svg+xml",
+    )
+    template_final_url = f"gs://{bucket.name}/{final_svg_path}"
+
+    # 6. 上傳 palette_final.json（legend 用）
     palette_final_path = f"production_jobs/{job_id}/palette_final.json"
     bucket.blob(palette_final_path).upload_from_string(
         json.dumps(palette_final, ensure_ascii=False, indent=2),
@@ -396,7 +400,7 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     )
     palette_final_url = f"gs://{bucket.name}/{palette_final_path}"
 
-    # 6. 更新 job 欄位 + commit
+    # 7. 更新 job 欄位 + commit
     job.template_final_url = template_final_url
     job.palette_final_url = palette_final_url
     job.finalized_at = datetime.now(UTC)
