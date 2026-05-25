@@ -34,9 +34,9 @@ _LABEL_FONT_FAMILY = "Inter, Helvetica, Arial, sans-serif"
 # 的 polygon fill → template_id。不可改動，會破壞 input lookup。
 _INPUT_TINT_RATIO = 0.25
 
-# 色彩濃度（10% 原色 + 90% 白）— template_final.svg 輸出用，比 pbn_gen 原版淺
-# 讓塗色者畫上去後完全蓋過。視覺感「淺色線稿」，重點在數字
-_OUTPUT_TINT_RATIO = 0.10
+# 色彩濃度（5% 原色 + 95% 白）— template_final.svg 輸出用，極淺幾乎只剩數字
+# 讓塗色者畫上去後完全蓋過底色不留痕。視覺感「白底線稿 + 編號」風格
+_OUTPUT_TINT_RATIO = 0.05
 
 
 def _normalize_hex(s: str | None) -> str | None:
