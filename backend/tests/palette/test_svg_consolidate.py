@@ -208,6 +208,45 @@ def test_polygon_with_unknown_fill_skipped():
     assert len(paths) == 1   # 只有第一個被處理
 
 
+def test_z_order_paths_before_texts():
+    """SVG element 順序：所有 <path> 必須在所有 <text> 之前，
+    否則後續 path 會蓋住前面 output_label 已放的 text。
+
+    Regression：先前 path/text 交錯（一個 output_label 一組），密集區的數字被
+    後續 output_label 的色塊蓋住。修法：兩 pass 渲染，全部 path 寫完才寫 text。
+    """
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(0, 0), (40, 0), (0, 40)]),
+        (_tint(100, 50, 200),  [(60, 0), (100, 0), (60, 40)]),
+        (_tint(50, 200, 100),  [(0, 60), (40, 60), (0, 100)]),
+    ])
+    palette_final = [
+        {"output_label": 1, "rgb": [247, 167, 132]},
+        {"output_label": 2, "rgb": [100, 50, 200]},
+        {"output_label": 3, "rgb": [50, 200, 100]},
+    ]
+    out = regenerate_merged_svg(svg, {1: 1, 2: 2, 3: 3}, _PALETTE_JSON, palette_final)
+    root = ET.fromstring(out)
+
+    # 走訪 root 的直接子 element 收順序
+    children_tags = [c.tag.split("}")[-1] for c in root]
+    # 第一個 text 出現的 index
+    first_text_idx = next(
+        (i for i, t in enumerate(children_tags) if t == "text"), None,
+    )
+    # 最後一個 path 出現的 index
+    last_path_idx = max(
+        (i for i, t in enumerate(children_tags) if t == "path"),
+        default=-1,
+    )
+    assert first_text_idx is not None, "expected at least one <text>"
+    assert last_path_idx >= 0, "expected at least one <path>"
+    assert last_path_idx < first_text_idx, (
+        f"path must precede all texts to avoid z-order coverage: "
+        f"last_path_idx={last_path_idx}, first_text_idx={first_text_idx}"
+    )
+
+
 def test_text_elements_have_light_font_weight():
     """每個 <text> 都應該有 font-weight=300（Light）讓塗色者讀起來不刺眼。"""
     svg = _make_svg([

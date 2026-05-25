@@ -38,6 +38,20 @@ _INPUT_TINT_RATIO = 0.25
 # 讓塗色者畫上去後完全蓋過底色不留痕。視覺感「白底線稿 + 編號」風格
 _OUTPUT_TINT_RATIO = 0.05
 
+# 數字標籤大小限制（SVG userspace 單位，等同 pbn_gen viewBox 內的像素）
+# 上限 14：避免大面積區域的標籤被放大到佔據整個畫面
+# 下限 5：再小就糊掉看不清
+_MIN_FONT_SIZE = 5.0
+_MAX_FONT_SIZE = 14.0
+
+# 同一 output_label 的小碎片，bbox 短邊 < 此值且不是該色最大塊 → 不放標籤
+# （太細長的區域硬塞標籤會超出邊界；最大塊永遠標，確保每色 ≥ 1 個 label）
+_MIN_EXTRA_PART_BBOX = 6.0
+
+# 碰撞偵測：跨 output_label 之間，新 label 中心與任何既有 label 距離
+# 若 < (size_a + size_b) × _COLLISION_TOLERANCE → 略過（保留較大那一個）
+_COLLISION_TOLERANCE = 0.7
+
 
 def _normalize_hex(s: str | None) -> str | None:
     if not s:
@@ -208,9 +222,17 @@ def regenerate_merged_svg(
     bg.set("width", bg_w); bg.set("height", bg_h)
     bg.set("fill", "white")
 
-    # ── Step 5：每個 output_label 做 union → 渲染 path + label
+    # ── Step 5：兩 pass 渲染避免 z-order bug
+    # 先 pass A 把每個 output_label 的 path + label 候選蒐集起來；
+    # 再 pass B 寫所有 path（色塊）；最後 pass C 寫所有 text（編號在最上面）。
+    # 重點：所有 path 必須先寫完，text 才能疊在最上面不被後續 path 蓋住。
+
     merged_count = 0
     parts_count = 0
+    # (output_label, tint, path_d, [(geom, ...)]) 給 pass B/C 用
+    render_items: list[dict] = []
+
+    # Pass A：蒐集每個 output_label 的渲染資料
     for output_label, polys in polygons_by_label.items():
         try:
             merged = unary_union(polys)
@@ -231,10 +253,9 @@ def regenerate_merged_svg(
 
         pf = palette_by_label.get(output_label, {})
         rgb = pf.get("rgb", [200, 200, 200])
-        # 輸出 fill 用較淺的濃度（10%），讓塗色者畫上去後能蓋過淡底色
         tint = _tint_hex(rgb, ratio=_OUTPUT_TINT_RATIO)
 
-        # 把所有 part 與洞合成一個 path d（fill-rule=evenodd 自動處理洞）
+        # 組 path d（含 evenodd 處理洞）
         path_d_parts: list[str] = []
         for geom in geom_list:
             if not geom.exterior:
@@ -248,19 +269,47 @@ def regenerate_merged_svg(
         if not path_d_parts:
             continue
 
+        render_items.append({
+            "output_label": output_label,
+            "tint": tint,
+            "path_d": " ".join(path_d_parts),
+            "geom_list": geom_list,
+        })
+
+    # Pass B：先寫所有 <path>（色塊）
+    for item in render_items:
         path_el = ET.SubElement(new_root, f"{{{_SVG_NS}}}path")
-        path_el.set("d", " ".join(path_d_parts))
-        path_el.set("fill", tint)
+        path_el.set("d", item["path_d"])
+        path_el.set("fill", item["tint"])
         path_el.set("fill-rule", "evenodd")
         path_el.set("stroke", "#AAAAAA")
         path_el.set("stroke-width", sample_stroke_width)
         path_el.set("stroke-linejoin", "round")
-        path_el.set("id", f"o{output_label}")
+        path_el.set("id", f"o{item['output_label']}")
         merged_count += 1
 
-        # 每個獨立 part 各放一個編號（多個分離區域都需要標）
-        for geom in geom_list:
-            # polylabel 比 centroid 穩，凹形也保證在內部
+    # Pass C：所有 path 都寫完後，把 <text> 標籤疊上去
+    # 全局已放置標籤位置（跨 output_label） — 給碰撞偵測用
+    placed_labels: list[tuple[float, float, float]] = []  # (cx, cy, font_size)
+    for item in render_items:
+        output_label = item["output_label"]
+        # 每個獨立 part 各放一個編號，三層篩選：
+        #  1. font size 上限 _MAX_FONT_SIZE（避免大塊區域寫超大）
+        #  2. bbox 短邊太小且不是最大塊 → skip（細長碎片標籤超出邊界）
+        #  3. 碰撞偵測：與既有標籤太近 → skip（密集區不互相打架）
+        # 例外：每個 output_label 至少保留 1 個 label（最大塊強制放）
+        geom_list_by_area = sorted(item["geom_list"], key=lambda g: -g.area)
+        labeled_this_color = False
+        for idx, geom in enumerate(geom_list_by_area):
+            is_largest = (idx == 0)
+
+            # 篩選 2：bbox 短邊太小且非最大塊 → skip
+            minx, miny, maxx, maxy = geom.bounds
+            short_edge = min(maxx - minx, maxy - miny)
+            if not is_largest and short_edge < _MIN_EXTRA_PART_BBOX:
+                continue
+
+            # polylabel 找穩定的內部點
             try:
                 tol = max(1.0, (geom.area ** 0.5) / 100.0)
                 pt = polylabel(geom, tolerance=tol)
@@ -269,9 +318,20 @@ def regenerate_merged_svg(
                 centroid = geom.centroid
                 cx, cy = centroid.x, centroid.y
 
-            # font size 根據 part 面積，sqrt(area)/8 clip 在 [6, 32]
+            # 篩選 1：font size cap
             area_sqrt = max(geom.area, 1.0) ** 0.5
-            font_size = max(6.0, min(area_sqrt / 8.0, 32.0))
+            font_size = max(_MIN_FONT_SIZE, min(area_sqrt / 8.0, _MAX_FONT_SIZE))
+
+            # 篩選 3：碰撞偵測（最大塊「首次」放可強制放；已放過了就要檢查）
+            if not is_largest or labeled_this_color:
+                too_close = False
+                for px, py, pfs in placed_labels:
+                    min_dist = (font_size + pfs) * _COLLISION_TOLERANCE
+                    if (cx - px) ** 2 + (cy - py) ** 2 < min_dist ** 2:
+                        too_close = True
+                        break
+                if too_close:
+                    continue
 
             text_el = ET.SubElement(new_root, f"{{{_SVG_NS}}}text")
             text_el.set("x", f"{cx:.1f}")
@@ -283,7 +343,9 @@ def regenerate_merged_svg(
             text_el.set("font-family", _LABEL_FONT_FAMILY)
             text_el.set("fill", "black")
             text_el.text = str(output_label)
+            placed_labels.append((cx, cy, font_size))
             parts_count += 1
+            labeled_this_color = True
 
     logger.info(
         "svg consolidate: %d unique colors merged into %d label groups, "
