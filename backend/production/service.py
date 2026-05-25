@@ -760,6 +760,45 @@ def _run_sam_predict(image_url: str, sam_points: list[dict]):
 # 規格：admin_production.md §6 — 匯出 PDF 時 SVG viewBox 四周各擴展 5cm（裝訂留白）
 _PDF_MARGIN_CM = 5.0
 
+# Inter-Light 字體：給模板數字標籤 + legend 表內 ASCII（hex / ml）用，比 Helvetica 細
+# CJK 字（色名）仍用 ReportLab 內建 HeiseiMin-W3（Regular）
+_INTER_FONT_NAME = "Inter"  # 在 _register_thin_font() 內 register 用此名稱
+_FONT_REGISTERED = False
+
+
+def _register_thin_font() -> str | None:
+    """idempotent 註冊 Inter-Light TTF。
+
+    回傳 ReportLab font 名稱（成功時 "Inter"）或 None（檔案缺 / register fail）。
+
+    呼叫時機：export_job_pdf 在 svglib 渲染 template_final.svg 之前。svglib 解析
+    SVG 內 `font-family="Inter"` 會用 ReportLab 已 register 的 font；未 register
+    時 svglib fallback Helvetica Regular（PDF 變粗體但不會 crash）。
+    """
+    global _FONT_REGISTERED
+    if _FONT_REGISTERED:
+        return _INTER_FONT_NAME
+    from pathlib import Path  # noqa: PLC0415
+
+    from reportlab.pdfbase import pdfmetrics  # noqa: PLC0415
+    from reportlab.pdfbase.ttfonts import TTFont  # noqa: PLC0415
+
+    font_path = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Inter-Light.ttf"
+    if not font_path.exists():
+        logger.warning(
+            "Inter-Light.ttf not found at %s; PDF labels will fallback to Helvetica Regular",
+            font_path,
+        )
+        return None
+    try:
+        pdfmetrics.registerFont(TTFont(_INTER_FONT_NAME, str(font_path)))
+        _FONT_REGISTERED = True
+        logger.info("registered thin font: %s", _INTER_FONT_NAME)
+        return _INTER_FONT_NAME
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Inter-Light register failed: %s", e)
+        return None
+
 
 async def export_job_pdf(db: AsyncSession, job_id: UUID) -> bytes:
     """SVG → 多頁 PDF（第 1 頁模板四周 5cm 邊框，第 2 頁色號對照表）。
@@ -792,6 +831,9 @@ async def export_job_pdf(db: AsyncSession, job_id: UUID) -> bytes:
             "PDF 引擎未就緒（缺 reportlab/svglib/cairosvg）。"
             "請執行 pip install svglib reportlab Pillow cairosvg"
         ) from e
+
+    # 先 register Inter-Light，svglib 解析 SVG 內 font-family="Inter" 才能命中
+    _register_thin_font()
 
     w_cm = float(job.canvas_w_cm)
     h_cm = float(job.canvas_h_cm)
@@ -863,36 +905,42 @@ def _draw_palette_legend_page(canvas, palette_final: list[dict], page_w_cm: floa
 
     每 row：output_label / 色票方塊 / 色號 / 名稱 / hex / 預估油料 ml。
     用 ReportLab 原生繪圖（不重建 Drawing），避免另一條 SVG dependency。
+
+    字體策略：
+    - CJK 字（標題 / 表頭中文 / 色名）→ HeiseiMin-W3（Regular，CID font）
+    - ASCII 字（數字 / hex / ml）→ Inter-Light（Light 300）若已 register，否則 Helvetica
     """
     from reportlab.lib import colors as rl_colors  # noqa: PLC0415
     from reportlab.lib.units import cm  # noqa: PLC0415
     from reportlab.pdfbase import pdfmetrics  # noqa: PLC0415
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont  # noqa: PLC0415
 
-    # 註冊 CJK 字型（ReportLab 原生附 HeiseiMin-W3）— 為了顯示中文色名
-    font_name = "Helvetica"
+    # CJK 字型（中文色名 / 表頭）
+    cjk_font = "Helvetica"
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
-        font_name = "HeiseiMin-W3"
+        cjk_font = "HeiseiMin-W3"
     except Exception:  # noqa: BLE001
-        # 註冊失敗就用 Helvetica；中文可能顯示為空白方塊，但至少數字與英文 ASCII 正確
-        font_name = "Helvetica"
+        cjk_font = "Helvetica"
+
+    # ASCII 細體字型（數字 / hex / ml）— 若 _register_thin_font() 已成功就用 Inter，否則 Helvetica
+    thin_font = _register_thin_font() or "Helvetica"
 
     margin = 2.0 * cm
     y = (page_h_cm - 2.0) * cm  # 從頁面頂端往下畫
 
     # 標題
-    canvas.setFont(font_name, 18)
+    canvas.setFont(cjk_font, 18)
     canvas.drawString(margin, y, "色號對照表 / Palette Legend")
     y -= 0.6 * cm
-    canvas.setFont(font_name, 9)
+    canvas.setFont(cjk_font, 9)
     canvas.setFillColor(rl_colors.grey)
     canvas.drawString(margin, y, "依塗色面積由大至小排序；同編號的所有區域使用同一個顏料")
     canvas.setFillColor(rl_colors.black)
     y -= 1.2 * cm
 
-    # 表頭
-    canvas.setFont(font_name, 10)
+    # 表頭（中文 + 英文混合）— 用 CJK font 確保中文不亂
+    canvas.setFont(cjk_font, 10)
     col_x = {
         "label": margin,
         "swatch": margin + 1.5 * cm,
@@ -922,7 +970,6 @@ def _draw_palette_legend_page(canvas, palette_final: list[dict], page_w_cm: floa
             # 換頁（超過 N 色情境）
             canvas.showPage()
             y = (page_h_cm - 2.0) * cm
-            canvas.setFont(font_name, 10)
 
         rgb = item.get("rgb", [0, 0, 0])
         # 色票方塊 1cm × 0.6cm
@@ -933,12 +980,16 @@ def _draw_palette_legend_page(canvas, palette_final: list[dict], page_w_cm: floa
         )
         canvas.setFillColor(rl_colors.black)
 
+        # ASCII 用細體（label / code / hex / ml）
+        canvas.setFont(thin_font, 10)
         canvas.drawString(col_x["label"], y, str(item.get("output_label", "")))
         canvas.drawString(col_x["code"], y, str(item.get("code", "")))
-        canvas.drawString(col_x["name"], y, str(item.get("name", "")))
         canvas.drawString(col_x["hex"], y, str(item.get("hex", "")))
         ml = item.get("total_ml", 0)
         canvas.drawString(col_x["ml"], y, f"{ml:.1f}" if isinstance(ml, (int, float)) else str(ml))
+        # 名稱欄可能含中文 → 用 CJK font
+        canvas.setFont(cjk_font, 10)
+        canvas.drawString(col_x["name"], y, str(item.get("name", "")))
         y -= row_h
 
 

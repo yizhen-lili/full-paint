@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 _SVG_NS = "http://www.w3.org/2000/svg"
 
+# 數字標籤字體：Light (300) 細體 + Inter 字體（PDF 端會 register；瀏覽器有 fallback chain）
+_LABEL_FONT_WEIGHT = "300"
+_LABEL_FONT_FAMILY = "Inter, Helvetica, Arial, sans-serif"
+
 
 def _normalize_hex(s: str | None) -> str | None:
     if not s:
@@ -267,6 +271,8 @@ def regenerate_merged_svg(
             text_el.set("text-anchor", "middle")
             text_el.set("dominant-baseline", "central")
             text_el.set("font-size", f"{font_size:.1f}")
+            text_el.set("font-weight", _LABEL_FONT_WEIGHT)
+            text_el.set("font-family", _LABEL_FONT_FAMILY)
             text_el.set("fill", "black")
             text_el.text = str(output_label)
             parts_count += 1

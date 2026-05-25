@@ -186,6 +186,26 @@ def test_polygon_with_unknown_fill_skipped():
     assert len(paths) == 1   # 只有第一個被處理
 
 
+def test_text_elements_have_light_font_weight():
+    """每個 <text> 都應該有 font-weight=300（Light）讓塗色者讀起來不刺眼。"""
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(0, 0), (10, 0), (0, 10)]),
+    ])
+    out = regenerate_merged_svg(
+        svg, {1: 1}, _PALETTE_JSON,
+        [{"output_label": 1, "rgb": [247, 167, 132]}],
+    )
+    root = ET.fromstring(out)
+    texts = root.findall(f"{{{_NS}}}text")
+    assert len(texts) >= 1
+    for t in texts:
+        assert t.get("font-weight") == "300", \
+            f"expected font-weight=300 (Light), got {t.get('font-weight')!r}"
+        # font-family chain 必須含 "Inter"，後端 register Inter-Light 後 svglib 才命中
+        family = t.get("font-family") or ""
+        assert "Inter" in family, f"expected font-family to include 'Inter', got: {family!r}"
+
+
 def test_empty_label_map_raises():
     svg = _make_svg([(_tint(247, 167, 132), [(0, 0), (10, 0), (0, 10)])])
     with pytest.raises(ValueError, match="label_map 不可為空"):
