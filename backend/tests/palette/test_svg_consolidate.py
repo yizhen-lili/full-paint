@@ -158,7 +158,10 @@ def test_path_has_fill_rule_evenodd():
 
 def test_path_uses_physical_color_tint():
     """合併後的 path fill 應該是 palette_final 的 RGB 算出的 tint，
-    而非原 polygon 的 algorithm tint（finalize 後可能 RGB 已改）。"""
+    而非原 polygon 的 algorithm tint（finalize 後可能 RGB 已改）。
+    輸出用 _OUTPUT_TINT_RATIO (0.10)，比 input 的 0.25 更淺。"""
+    from palette.svg_consolidate import _OUTPUT_TINT_RATIO
+
     svg = _make_svg([
         (_tint(247, 167, 132), [(0, 0), (10, 0), (0, 10)]),
     ])
@@ -168,8 +171,27 @@ def test_path_uses_physical_color_tint():
         [{"output_label": 1, "rgb": [10, 20, 30]}],
     )
     paths = _parse_paths(out)
-    expected_tint = _tint(10, 20, 30)
+    # output 用 10% 濃度，不是 _tint() 預設的 25%
+    expected_tint = _tint_hex([10, 20, 30])  # ratio defaults to 0.25... 改用顯式
+    expected_tint = _tint_hex([10, 20, 30], ratio=_OUTPUT_TINT_RATIO)
     assert paths[0].get("fill") == expected_tint
+
+
+def test_output_tint_is_lighter_than_input_tint():
+    """確認 output fill 比 input lookup tint 更淺（10% vs 25%），讓塗色者畫上去能蓋過。"""
+    from palette.svg_consolidate import _INPUT_TINT_RATIO, _OUTPUT_TINT_RATIO
+
+    assert _OUTPUT_TINT_RATIO < _INPUT_TINT_RATIO, \
+        f"output tint ({_OUTPUT_TINT_RATIO}) should be lighter than input ({_INPUT_TINT_RATIO})"
+
+    # 同一個 vivid color，output tint 應該更接近 #FFFFFF
+    color = [200, 50, 30]
+    input_tint = _tint_hex(color, ratio=_INPUT_TINT_RATIO)
+    output_tint = _tint_hex(color, ratio=_OUTPUT_TINT_RATIO)
+    # output 每個 channel 都該更高（更白）
+    def _hex_to_rgb(h):
+        return [int(h[i:i+2], 16) for i in (1, 3, 5)]
+    assert all(o >= i for o, i in zip(_hex_to_rgb(output_tint), _hex_to_rgb(input_tint)))
 
 
 def test_polygon_with_unknown_fill_skipped():

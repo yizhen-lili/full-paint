@@ -30,6 +30,14 @@ _SVG_NS = "http://www.w3.org/2000/svg"
 _LABEL_FONT_WEIGHT = "300"
 _LABEL_FONT_FAMILY = "Inter, Helvetica, Arial, sans-serif"
 
+# 色彩濃度（25% 原色 + 75% 白）— **pbn_gen 寫死的值**，用來反查 template.svg 內
+# 的 polygon fill → template_id。不可改動，會破壞 input lookup。
+_INPUT_TINT_RATIO = 0.25
+
+# 色彩濃度（10% 原色 + 90% 白）— template_final.svg 輸出用，比 pbn_gen 原版淺
+# 讓塗色者畫上去後完全蓋過。視覺感「淺色線稿」，重點在數字
+_OUTPUT_TINT_RATIO = 0.10
+
 
 def _normalize_hex(s: str | None) -> str | None:
     if not s:
@@ -40,21 +48,20 @@ def _normalize_hex(s: str | None) -> str | None:
     return s if len(s) == 7 else None
 
 
-def _tint_hex(rgb) -> str:
-    """pbn_gen 寫 polygon fill 的計算：25% 原色 + 75% 白 → #RRGGBB 大寫。
+def _tint_hex(rgb, ratio: float = _INPUT_TINT_RATIO) -> str:
+    """色彩 25%/75% 混白後的 #RRGGBB hex（大寫）。
 
-    對應 pbn_gen.py output_to_svg 內：
-        r = int(color[0] * 0.25 + 255 * 0.75)
-        g = int(color[1] * 0.25 + 255 * 0.75)
-        b = int(color[2] * 0.25 + 255 * 0.75)
+    預設 ratio = _INPUT_TINT_RATIO (0.25) 對應 pbn_gen 寫的 polygon fill，
+    供反查 template_id 用。輸出 path 用 _OUTPUT_TINT_RATIO 顯式傳入。
     """
     if isinstance(rgb, dict):
         r, g, b = int(rgb.get("r", 0)), int(rgb.get("g", 0)), int(rgb.get("b", 0))
     else:
         r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
-    tr = int(r * 0.25 + 255 * 0.75)
-    tg = int(g * 0.25 + 255 * 0.75)
-    tb = int(b * 0.25 + 255 * 0.75)
+    inv = 1.0 - ratio
+    tr = int(r * ratio + 255 * inv)
+    tg = int(g * ratio + 255 * inv)
+    tb = int(b * ratio + 255 * inv)
     return f"#{tr:02X}{tg:02X}{tb:02X}"
 
 
@@ -224,7 +231,8 @@ def regenerate_merged_svg(
 
         pf = palette_by_label.get(output_label, {})
         rgb = pf.get("rgb", [200, 200, 200])
-        tint = _tint_hex(rgb)
+        # 輸出 fill 用較淺的濃度（10%），讓塗色者畫上去後能蓋過淡底色
+        tint = _tint_hex(rgb, ratio=_OUTPUT_TINT_RATIO)
 
         # 把所有 part 與洞合成一個 path d（fill-rule=evenodd 自動處理洞）
         path_d_parts: list[str] = []
