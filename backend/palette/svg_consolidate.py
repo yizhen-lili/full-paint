@@ -34,9 +34,9 @@ _LABEL_FONT_FAMILY = "Inter, Helvetica, Arial, sans-serif"
 # 的 polygon fill → template_id。不可改動，會破壞 input lookup。
 _INPUT_TINT_RATIO = 0.25
 
-# 色彩濃度（5% 原色 + 95% 白）— template_final.svg 輸出用，極淺幾乎只剩數字
-# 讓塗色者畫上去後完全蓋過底色不留痕。視覺感「白底線稿 + 編號」風格
-_OUTPUT_TINT_RATIO = 0.05
+# 色彩濃度（10% 原色 + 90% 白）— template_final.svg 輸出用，淺色但仍可辨識
+# 5% 太淺幾乎看不出色塊位置，調回 10% 留一點視覺引導
+_OUTPUT_TINT_RATIO = 0.10
 
 # 數字標籤大小限制（SVG userspace 單位，等同 pbn_gen viewBox 內的像素）
 # 上限 14：避免大面積區域的標籤被放大到佔據整個畫面
