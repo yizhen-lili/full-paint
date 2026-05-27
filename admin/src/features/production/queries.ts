@@ -137,7 +137,12 @@ export function useBatchPostProcessMutation(id: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: BatchPostProcessPayload) => batchPostProcess(id, payload),
-    onSuccess: () => invalidate(qc, id),
+    onSuccess: () => {
+      invalidate(qc, id)
+      // 跨 feature：post-process 重產 palette → palette-mappings 也要 refetch
+      // （key 結構與 colors/queries_mapping.ts 一致）
+      qc.invalidateQueries({ queryKey: ['admin', 'palette-mappings', id] })
+    },
   })
 }
 

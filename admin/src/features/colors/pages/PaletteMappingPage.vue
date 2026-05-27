@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import {
   ChevronLeft,
+  ChevronDown,
   Loader2,
   CheckCircle2,
   Copy,
   AlertTriangle,
   Sparkles,
   Pipette,
+  Wrench,
 } from 'lucide-vue-next'
 
 import Card from '@/shared/ui/Card.vue'
@@ -31,7 +33,9 @@ import CopyMappingsDialog from '../components/CopyMappingsDialog.vue'
 import PalettePreviewCanvas from '../components/PalettePreviewCanvas.vue'
 import RgbCalibrationDialog from '../components/RgbCalibrationDialog.vue'
 
-import { useJobQuery } from '@/features/production/queries'
+import { useBatchPostProcessMutation, useJobQuery } from '@/features/production/queries'
+import { getJobSignedUrl, type BatchOperation } from '@/features/production/api'
+import PostProcessPanel from '@/features/production/components/PostProcessPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -154,6 +158,53 @@ async function complete() {
     completeResult.value = r
   } catch (e) {
     apiError.value = (e as { message?: string }).message || '完成對應失敗'
+  }
+}
+
+// ── 模板格子調整（合併色塊 / 消邊界）────────────────────────────────────
+// 整合 PostProcessPanel：admin 不必跳回 production detail 即可微調模板，
+// Celery 完成後 jobQuery 自動刷新 → mappings query 同步 invalidate。
+const postProcessExpanded = ref(false)
+const batchPostProcessMut = useBatchPostProcessMutation(jobId.value)
+const svgUrl = ref<string | null>(null)
+const svgUrlLoading = ref(false)
+
+async function fetchSvgUrl() {
+  if (!jobId.value || !jobData.value || jobData.value.status !== 'completed') return
+  svgUrlLoading.value = true
+  try {
+    const r = await getJobSignedUrl(jobId.value, 'svg')
+    svgUrl.value = r.url
+  } catch {
+    svgUrl.value = null
+  } finally {
+    svgUrlLoading.value = false
+  }
+}
+
+// 進入頁面 / status 變回 completed（post-process 跑完）→ 重抓新 SVG signed URL
+watch(
+  () => jobData.value?.status,
+  (s, prev) => {
+    if (s === 'completed') {
+      fetchSvgUrl()
+      // 從 processing 變回 completed = Celery 完成；mapping query 也需 refresh
+      // （post-process 重產 palette/svg → 部分 template_id 可能被合併消失）
+      if (prev === 'processing' && jobId.value) {
+        qc.invalidateQueries({ queryKey: PM_KEYS.mappings(jobId.value) })
+      }
+    }
+  },
+  { immediate: true },
+)
+
+async function onPostProcessSubmit(operations: BatchOperation[]) {
+  apiError.value = null
+  try {
+    await batchPostProcessMut.mutateAsync({ operations })
+    postProcessExpanded.value = false  // 送出後自動收合，admin 等 Celery 完成
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '模板調整送出失敗'
   }
 }
 </script>
@@ -339,6 +390,80 @@ async function complete() {
       </div>
     </Card>
   </div>
+
+  <!-- 模板格子調整（合併色塊 / 消邊界）-->
+  <section
+    v-if="mappings.length > 0"
+    class="mt-6"
+  >
+    <button
+      type="button"
+      class="w-full flex items-center gap-2 px-4 py-3 border border-line-hairline rounded-[var(--radius-sm)] bg-paper-surface hover:bg-paper-subtle transition-colors"
+      @click="postProcessExpanded = !postProcessExpanded"
+    >
+      <ChevronDown
+        :size="16"
+        :stroke-width="1.5"
+        class="transition-transform text-ink-muted"
+        :class="postProcessExpanded ? '' : '-rotate-90'"
+      />
+      <Wrench :size="14" :stroke-width="1.5" class="text-ink-muted" />
+      <h2 class="font-display text-ink-strong text-[16px] leading-[22px]">模板格子調整</h2>
+      <span class="ml-auto text-[11px] text-ink-muted hidden sm:inline">
+        合併色塊 / 消邊界 — 微調後預覽與對應表會自動更新
+      </span>
+    </button>
+
+    <div
+      v-if="postProcessExpanded"
+      class="mt-3 p-4 border border-line-hairline rounded-[var(--radius-sm)] bg-paper-surface"
+    >
+      <!-- 執行前警告 -->
+      <div class="px-3 py-2 mb-3 border border-state-warning/40 bg-[var(--color-state-warning)]/[0.06] text-state-warning text-[12px] rounded-[var(--radius-xs)] flex items-start gap-2 leading-[1.5]">
+        <AlertTriangle :size="12" :stroke-width="1.5" class="mt-0.5 shrink-0" />
+        <span>
+          模板格子調整會把 job 退回 processing 狀態、重新產出 SVG 與調色盤；
+          原本已對應的色號可能因色塊合併而消失。
+          建議完成後再檢查對應表一次。
+        </span>
+      </div>
+
+      <!-- 處理中 banner -->
+      <div
+        v-if="jobData?.status === 'processing'"
+        class="px-3 py-2 mb-3 border border-state-info/40 bg-[var(--color-state-info)]/[0.06] text-state-info text-[12px] rounded-[var(--radius-xs)] flex items-center gap-2"
+      >
+        <Loader2 :size="12" :stroke-width="1.5" class="animate-spin" />
+        模板處理中（Celery）— 5-15 秒內完成，自動刷新預覽與對應表。
+      </div>
+
+      <!-- Job 不在 completed 狀態 → 不能編輯 -->
+      <div
+        v-if="jobData && jobData.status !== 'completed'"
+        class="p-3 text-[12px] text-ink-muted bg-paper-subtle rounded-[var(--radius-xs)]"
+      >
+        Job 當前狀態為 <span class="font-mono">{{ jobData.status }}</span>，僅 completed 狀態可調整模板。
+      </div>
+
+      <!-- SVG 簽章 URL 載入中 -->
+      <div
+        v-else-if="svgUrlLoading"
+        class="py-6 flex items-center justify-center text-ink-muted"
+      >
+        <Loader2 :size="16" :stroke-width="1.5" class="animate-spin" />
+      </div>
+
+      <!-- Panel -->
+      <PostProcessPanel
+        v-else-if="jobData && svgUrl"
+        :palette="jobData.palette_json ?? []"
+        :svg-url="svgUrl"
+        :pending="batchPostProcessMut.isPending.value"
+        :type-filter="null"
+        @confirm-batch="onPostProcessSubmit"
+      />
+    </div>
+  </section>
 
   <!-- Dialogs -->
   <PhysicalColorPickerDialog
