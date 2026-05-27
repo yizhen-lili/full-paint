@@ -232,8 +232,10 @@ function refreshHighlights() {
       el.style.strokeDasharray = '4 3'
       el.style.opacity = '1'
     } else {
-      el.style.stroke = '#AAAAAA'
-      el.style.strokeWidth = '1'
+      // 閒置態：不畫 outline 避免與 SVG 既有的黑色邊界 path 疊成雙線；
+      // 黑色邊界 pbn_gen 已用獨立 <path> 畫過，格界辨識度足夠
+      el.style.stroke = ''
+      el.style.strokeWidth = ''
       el.style.strokeDasharray = ''
       el.style.opacity = (active.size || queued.size) ? '0.65' : '1'
     }
