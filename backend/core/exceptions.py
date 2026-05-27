@@ -1,13 +1,27 @@
 class AppError(Exception):
-    def __init__(self, status_code: int, detail: str, code: str | None = None):
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        code: str | None = None,
+        extra: dict | None = None,
+    ):
         self.status_code = status_code
         self.detail = detail
         self.code = code
+        # extra：附加結構化資料（如刪除受阻時的引用清單），由 exception handler
+        # merge 進 JSON response。預設 None / 空 dict 不影響現有 endpoint。
+        self.extra = extra or {}
 
 
 class BadRequestError(AppError):
-    def __init__(self, detail: str = "請求無法處理", code: str | None = None):
-        super().__init__(400, detail, code)
+    def __init__(
+        self,
+        detail: str = "請求無法處理",
+        code: str | None = None,
+        extra: dict | None = None,
+    ):
+        super().__init__(400, detail, code, extra)
 
 
 class UnauthorizedError(AppError):

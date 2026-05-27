@@ -194,11 +194,27 @@ class BatchStartResponse(BaseModel):
     skipped: list[BatchStartSkippedItem]
 
 
+class JobReferenceItem(BaseModel):
+    """單筆引用該 job 的具體 row（給 UI 顯示）."""
+    id: str
+    display: str
+
+
+class JobReferenceGroup(BaseModel):
+    """引用 job 的某一類資料群（product_variant / print_batch_item / order_item）."""
+    type: str                          # "product_variant" / "print_batch_item" / "order_item"
+    label: str                         # UI 顯示中文
+    cascadeable: bool                  # cascade=true 時能否連帶刪
+    blocking_reason: str | None = None # cascadeable=False 才有
+    items: list[JobReferenceItem]
+
+
 class BatchDeleteJobResult(BaseModel):
     """批次刪除單筆結果（成功 or 失敗）."""
     job_id: UUID
     ok: bool
     error: str | None = None  # 失敗時填原因（中文，給 admin 看）
+    references: list[JobReferenceGroup] | None = None  # 被引用受阻時填
 
 
 class BatchDeleteJobsResponse(BaseModel):

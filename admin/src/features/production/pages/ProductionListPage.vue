@@ -16,6 +16,7 @@ import { useDeleteJobsBatchMutation, useJobsQuery } from '../queries'
 import {
   type BatchDeleteJobResult,
   type JobListItem,
+  type JobReferenceGroup,
   type JobStatus,
   DETAIL_LABEL,
   DIFFICULTY_LABEL,
@@ -155,17 +156,56 @@ const selectedJobsForDialog = computed(() =>
   items.value.filter((j) => selectedIds.value.has(j.id)),
 )
 
-async function doBatchDelete() {
+// cascade 重試：找出「失敗 + 全部引用都 cascadeable」的 job_ids
+const cascadeRetryIds = computed(() =>
+  batchResults.value
+    .filter(
+      (r) =>
+        !r.ok &&
+        r.references &&
+        r.references.length > 0 &&
+        r.references.every((g) => g.cascadeable),
+    )
+    .map((r) => r.job_id),
+)
+
+// 訂單擋住的失敗筆 — UI 提示「請先處理訂單」
+const orderBlockedCount = computed(() =>
+  batchResults.value.filter(
+    (r) =>
+      !r.ok && r.references && r.references.some((g) => g.type === 'order_item'),
+  ).length,
+)
+
+const REF_TYPE_BADGE: Record<JobReferenceGroup['type'], string> = {
+  product_variant: 'bg-aux-rice-mid/40 text-ink-default',
+  print_batch_item: 'bg-paper-subtle text-ink-default',
+  order_item: 'bg-state-danger/[0.10] text-state-danger',
+}
+
+async function doBatchDelete(opts: { cascade?: boolean } = {}) {
   batchConfirmOpen.value = false
+  const jobIds = opts.cascade
+    ? cascadeRetryIds.value
+    : Array.from(selectedIds.value)
+  if (jobIds.length === 0) return
   try {
     const res = await batchMut.mutateAsync({
-      jobIds: Array.from(selectedIds.value),
+      jobIds,
       force: forceDelete.value,
+      cascade: opts.cascade ?? false,
     })
-    batchResults.value = res.results
+    // cascade 重試：把這次成功 / 失敗結果 merge 回原本 results（覆蓋同 job_id 的舊紀錄）
+    if (opts.cascade) {
+      const updated = new Map(batchResults.value.map((r) => [r.job_id, r]))
+      for (const r of res.results) updated.set(r.job_id, r)
+      batchResults.value = Array.from(updated.values())
+    } else {
+      batchResults.value = res.results
+      clearSelection()
+      forceDelete.value = false
+    }
     batchResultsOpen.value = true
-    clearSelection()
-    forceDelete.value = false
   } catch (e) {
     const err = e as { message?: string }
     alert(err.message || '批次刪除失敗')
@@ -400,11 +440,25 @@ async function doBatchDelete() {
           失敗 <span class="font-mono">{{ failedCount }}</span>
         </span>
       </div>
-      <ul class="bg-paper-subtle border border-line-hairline rounded-[var(--radius-xs)] p-3 max-h-[400px] overflow-auto text-[12px] space-y-2">
+
+      <!-- order_item 引用提示（永遠不可 cascade）-->
+      <div
+        v-if="orderBlockedCount > 0"
+        class="px-3 py-2 border border-state-danger/40 bg-state-danger/[0.06] text-state-danger text-[12px] rounded-[var(--radius-xs)] leading-[1.6]"
+      >
+        <p class="font-medium">
+          有 <span class="font-mono">{{ orderBlockedCount }}</span> 筆任務被訂單引用，無法刪除（即使連帶刪除也不行）。
+        </p>
+        <p class="text-state-danger/80 mt-0.5">
+          訂單為金流稽核記錄，請先到「訂單管理」頁取消或退款相關訂單，再回來刪除任務。
+        </p>
+      </div>
+
+      <ul class="bg-paper-subtle border border-line-hairline rounded-[var(--radius-xs)] p-3 max-h-[440px] overflow-auto text-[12px] space-y-3">
         <li
           v-for="r in batchResults"
           :key="r.job_id"
-          class="border-b border-line-hairline pb-2 last:border-b-0 last:pb-0"
+          class="border-b border-line-hairline pb-3 last:border-b-0 last:pb-0"
         >
           <div class="flex items-center justify-between">
             <code class="text-ink-strong text-[11px]">{{ r.job_id.slice(0, 8) }}</code>
@@ -417,13 +471,71 @@ async function doBatchDelete() {
               失敗
             </span>
           </div>
-          <p v-if="!r.ok && r.error" class="mt-1 text-ink-muted text-[11px] whitespace-pre-line">{{ r.error }}</p>
+          <!-- 結構化引用清單（後端 cascade 拒絕時帶回）-->
+          <div v-if="!r.ok && r.references && r.references.length > 0" class="mt-2 space-y-2">
+            <div
+              v-for="group in r.references"
+              :key="`${r.job_id}-${group.type}`"
+              class="border border-line-hairline rounded-[var(--radius-xs)] bg-paper-surface px-2.5 py-2"
+            >
+              <div class="flex items-center justify-between mb-1.5">
+                <span
+                  class="inline-flex items-center px-1.5 h-[18px] text-[10px] tracking-[0.04em] rounded-[var(--radius-xs)]"
+                  :class="REF_TYPE_BADGE[group.type]"
+                >{{ group.label }}（{{ group.items.length }} 筆）</span>
+                <span
+                  v-if="group.cascadeable"
+                  class="text-[10px] text-state-success"
+                >可連帶刪除</span>
+                <span
+                  v-else
+                  class="text-[10px] text-state-danger"
+                >不可刪除</span>
+              </div>
+              <p
+                v-if="group.blocking_reason"
+                class="text-[11px] text-state-danger/80 mb-1.5 leading-[1.5]"
+              >{{ group.blocking_reason }}</p>
+              <ul class="space-y-0.5 text-[11px] text-ink-default">
+                <li
+                  v-for="item in group.items"
+                  :key="item.id"
+                  class="leading-[1.5]"
+                >• {{ item.display }}</li>
+              </ul>
+            </div>
+          </div>
+          <!-- 純文字錯誤（非引用問題：processing / 不存在 等）-->
+          <p
+            v-else-if="!r.ok && r.error"
+            class="mt-1 text-ink-muted text-[11px] whitespace-pre-line"
+          >{{ r.error }}</p>
         </li>
       </ul>
     </div>
     <template #footer>
-      <div class="flex justify-end">
-        <Button variant="primary" @click="batchResultsOpen = false">關閉</Button>
+      <div class="flex items-center justify-between gap-2 w-full">
+        <p
+          v-if="cascadeRetryIds.length > 0"
+          class="text-[12px] text-ink-muted leading-[1.5]"
+        >
+          有 <span class="font-mono text-ink-strong">{{ cascadeRetryIds.length }}</span> 筆可連帶刪除引用後重試。
+        </p>
+        <span v-else />
+        <div class="flex items-center gap-2">
+          <Button variant="secondary" @click="batchResultsOpen = false">關閉</Button>
+          <Button
+            v-if="cascadeRetryIds.length > 0"
+            variant="primary"
+            :disabled="batchMut.isPending.value"
+            class="bg-state-danger hover:bg-state-danger/90"
+            @click="doBatchDelete({ cascade: true })"
+          >
+            <Loader2 v-if="batchMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+            <Trash2 v-else :size="14" :stroke-width="1.5" />
+            連帶刪除引用後重試（{{ cascadeRetryIds.length }} 筆）
+          </Button>
+        </div>
       </div>
     </template>
   </Dialog>

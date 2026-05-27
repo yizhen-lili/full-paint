@@ -743,7 +743,7 @@ async def test_delete_processing_job_with_force_ok(client: AsyncClient, db):
 
 @pytest.mark.asyncio
 async def test_delete_job_referenced_by_product_rejected(client: AsyncClient, db):
-    """job 被 product_variants 引用 → 拒絕 400 + 提示具體引用。"""
+    """job 被 product_variants 引用 → 拒絕 400 + 回傳結構化 references。"""
     from sqlalchemy import update
     from product.models import Product, ProductVariant
     from production.models import ProductionJob
@@ -752,8 +752,7 @@ async def test_delete_job_referenced_by_product_rejected(client: AsyncClient, db
     await db.execute(
         update(ProductionJob).where(ProductionJob.id == job_id).values(status="completed")
     )
-    # 建一個 product + variant 引用該 job
-    prod = Product(title="T", cover_image_url="gs://b/cover.png")
+    prod = Product(title="玫瑰花束", cover_image_url="gs://b/cover.png")
     db.add(prod)
     await db.flush()
     db.add(ProductVariant(
@@ -766,7 +765,216 @@ async def test_delete_job_referenced_by_product_rejected(client: AsyncClient, db
 
     res = await client.delete(f"{JOBS_URL}/{job_id}")
     assert res.status_code == 400
-    assert "商品 variant" in res.json()["detail"]
+    body = res.json()
+    assert body["code"] == "JOB_REFERENCED"
+    assert "references" in body
+    refs = body["references"]
+    assert len(refs) == 1
+    assert refs[0]["type"] == "product_variant"
+    assert refs[0]["cascadeable"] is True
+    assert len(refs[0]["items"]) == 1
+    assert "玫瑰花束" in refs[0]["items"][0]["display"]
+
+
+@pytest.mark.asyncio
+async def test_delete_job_cascade_removes_variant_and_offsales_orphan_product(client: AsyncClient, db):
+    """cascade=true → 刪 variant；若為 product 唯一 variant → product 自動 off_sale。"""
+    from sqlalchemy import select, update
+    from product.models import Product, ProductStatusEnum, ProductVariant
+    from production.models import ProductionJob
+
+    job_id = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id).values(status="completed")
+    )
+    prod = Product(
+        title="玫瑰", cover_image_url="gs://b/c.png",
+        status=ProductStatusEnum.on_sale,
+    )
+    db.add(prod)
+    await db.flush()
+    variant = ProductVariant(
+        product_id=prod.id, production_job_id=job_id, price=100, price_formula_base=80,
+    )
+    db.add(variant)
+    await db.commit()
+    product_id = prod.id
+
+    with patch("production.service.get_bucket"):
+        res = await client.delete(f"{JOBS_URL}/{job_id}?cascade=true")
+    assert res.status_code == 204
+
+    # variant 應該被刪
+    v = (await db.execute(
+        select(ProductVariant).where(ProductVariant.production_job_id == job_id)
+    )).scalar_one_or_none()
+    assert v is None
+
+    # product 仍存在但 status 變成 off_sale
+    p = (await db.execute(select(Product).where(Product.id == product_id))).scalar_one()
+    assert p.status == ProductStatusEnum.off_sale
+
+
+@pytest.mark.asyncio
+async def test_delete_job_cascade_keeps_product_active_with_other_variants(client: AsyncClient, db):
+    """product 有其他 variant 時 cascade 刪一個 variant → product 仍 on_sale。"""
+    from sqlalchemy import select, update
+    from product.models import Product, ProductStatusEnum, ProductVariant
+    from production.models import ProductionJob, JobStatusEnum
+
+    # 兩個 job → 兩個 variant 共用同一個 product
+    job_id_1 = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id_1).values(status="completed")
+    )
+    # 直接建第二個 job（不走 _create_pending_job 避免重複 mock）
+    image = await _create_image(client, db)
+    job2 = ProductionJob(
+        detail="standard", difficulty="beginner", mode="standard",
+        canvas_w_cm=30, canvas_h_cm=40, image_id=image["id"],
+        status=JobStatusEnum.completed,
+    )
+    db.add(job2)
+    await db.flush()
+    prod = Product(
+        title="多規格商品", cover_image_url="gs://b/c.png",
+        status=ProductStatusEnum.on_sale,
+    )
+    db.add(prod)
+    await db.flush()
+    db.add_all([
+        ProductVariant(product_id=prod.id, production_job_id=job_id_1, price=100, price_formula_base=80),
+        ProductVariant(product_id=prod.id, production_job_id=job2.id, price=200, price_formula_base=150),
+    ])
+    await db.commit()
+    product_id = prod.id
+
+    with patch("production.service.get_bucket"):
+        res = await client.delete(f"{JOBS_URL}/{job_id_1}?cascade=true")
+    assert res.status_code == 204
+
+    # 還剩另一個 variant → product 仍 on_sale
+    p = (await db.execute(select(Product).where(Product.id == product_id))).scalar_one()
+    assert p.status == ProductStatusEnum.on_sale
+    remaining = (await db.execute(
+        select(ProductVariant).where(ProductVariant.product_id == product_id)
+    )).scalars().all()
+    assert len(remaining) == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_job_blocked_by_order_even_with_cascade(client: AsyncClient, db):
+    """job 被 order_item 引用 → 即使 cascade=true 也拒絕（code=JOB_BLOCKED_BY_ORDER）。"""
+    from sqlalchemy import update
+    from orders.models import Order, OrderItem, OrderStatusEnum
+    from production.models import ProductionJob
+
+    # 建用戶（order 需要 user_id）
+    await _make_customer(client, db)
+    from auth.models import User
+    user = (await db.execute(
+        select(User).where(User.email == CUSTOMER_USER["email"])
+    )).scalar_one()
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+
+    job_id = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id == job_id).values(status="completed")
+    )
+    # 建一筆 paid order + order_item 引用 job
+    from orders.models import ShippingTypeEnum
+    order = Order(
+        user_id=user.id,
+        order_number="ORD-TEST-001",
+        status=OrderStatusEnum.paid,
+        subtotal=100, total=100,
+        shipping_type=ShippingTypeEnum.home,
+        shipping_snapshot={"recipient": "Test", "phone": "0900", "address": "Test"},
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, production_job_id=job_id,
+        product_title_snapshot="Test Product",
+        variant_spec_snapshot={"size": "30x40"},
+        unit_price=100, quantity=1,
+    ))
+    await db.commit()
+
+    res = await client.delete(f"{JOBS_URL}/{job_id}?cascade=true")
+    assert res.status_code == 400
+    body = res.json()
+    assert body["code"] == "JOB_BLOCKED_BY_ORDER"
+    refs = body["references"]
+    order_refs = [r for r in refs if r["type"] == "order_item"]
+    assert len(order_refs) == 1
+    assert order_refs[0]["cascadeable"] is False
+    assert "ORD-TEST-001" in order_refs[0]["items"][0]["display"]
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_cascade_succeeds(client: AsyncClient, db):
+    """批次刪除帶 cascade=true → 被 variant 引用的 job 也能成功刪。"""
+    from sqlalchemy import select, update
+    from product.models import Product, ProductStatusEnum, ProductVariant
+    from production.models import ProductionJob
+
+    j1 = await _create_pending_job(client, db)
+    j2 = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id.in_([j1, j2])).values(status="completed")
+    )
+    prod = Product(title="P", cover_image_url="gs://b/c.png", status=ProductStatusEnum.on_sale)
+    db.add(prod)
+    await db.flush()
+    db.add(ProductVariant(product_id=prod.id, production_job_id=j1, price=100, price_formula_base=80))
+    await db.commit()
+
+    with patch("production.service.get_bucket"):
+        res = await client.post(
+            f"{JOBS_URL}/batch-delete",
+            json={"job_ids": [j1, j2], "cascade": True},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] == 2
+    assert body["failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_jobs_partial_with_references(client: AsyncClient, db):
+    """批次刪除無 cascade → 被引用的 job 失敗，response.references 帶回結構化清單。"""
+    from sqlalchemy import update
+    from product.models import Product, ProductVariant
+    from production.models import ProductionJob
+
+    j1 = await _create_pending_job(client, db)
+    j2 = await _create_pending_job(client, db)
+    await db.execute(
+        update(ProductionJob).where(ProductionJob.id.in_([j1, j2])).values(status="completed")
+    )
+    prod = Product(title="P", cover_image_url="gs://b/c.png")
+    db.add(prod)
+    await db.flush()
+    db.add(ProductVariant(product_id=prod.id, production_job_id=j2, price=100, price_formula_base=80))
+    await db.commit()
+
+    with patch("production.service.get_bucket"):
+        res = await client.post(
+            f"{JOBS_URL}/batch-delete",
+            json={"job_ids": [j1, j2]},   # cascade=false (default)
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] == 1
+    assert body["failed"] == 1
+    by_id = {r["job_id"]: r for r in body["results"]}
+    assert by_id[j1]["ok"] is True
+    assert by_id[j2]["ok"] is False
+    assert by_id[j2]["references"] is not None
+    assert by_id[j2]["references"][0]["type"] == "product_variant"
 
 
 @pytest.mark.asyncio

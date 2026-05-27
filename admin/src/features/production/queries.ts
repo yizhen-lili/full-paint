@@ -89,8 +89,12 @@ export function useUnapproveJobMutation(id: string) {
 export function useDeleteJobMutation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, force = false }: { id: string; force?: boolean }) =>
-      deleteJob(id, { force }),
+    mutationFn: ({
+      id,
+      force = false,
+      cascade = false,
+    }: { id: string; force?: boolean; cascade?: boolean }) =>
+      deleteJob(id, { force, cascade }),
     onSuccess: (_, vars) => invalidate(qc, vars.id),
   })
 }
@@ -101,8 +105,12 @@ export function useDeleteJobMutation() {
 export function useDeleteJobsBatchMutation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ jobIds, force = false }: { jobIds: string[]; force?: boolean }) =>
-      deleteJobsBatch(jobIds, { force }),
+    mutationFn: ({
+      jobIds,
+      force = false,
+      cascade = false,
+    }: { jobIds: string[]; force?: boolean; cascade?: boolean }) =>
+      deleteJobsBatch(jobIds, { force, cascade }),
     onSuccess: () => invalidate(qc),
   })
 }

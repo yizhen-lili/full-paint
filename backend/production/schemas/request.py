@@ -100,9 +100,13 @@ class BatchDeleteJobsRequest(BaseModel):
       失敗筆不影響其他筆，結果逐筆回報於 response.results
     - force=True 用於整批中包含 processing 卡死的 zombie job
       （慎用：產生 Firebase orphan 物件，sweep 任務會延後 90s 清）
+    - cascade=True：被 product_variant / print_batch_item 引用時連帶刪除引用
+      （variant 變孤兒時 product 自動 off_sale）。
+      被 order_item 引用永遠拒絕，cascade=true 也不繞過（金流稽核紅線）。
     """
     job_ids: list[UUID] = Field(min_length=1, max_length=50)
     force: bool = False
+    cascade: bool = False
 
     @field_validator("job_ids")
     @classmethod

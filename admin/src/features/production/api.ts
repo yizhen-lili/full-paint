@@ -7,10 +7,25 @@
 
 const API = '/api/v1'
 
-interface ApiError {
+export interface JobReferenceItem {
+  id: string
+  display: string
+}
+
+export interface JobReferenceGroup {
+  type: 'product_variant' | 'print_batch_item' | 'order_item'
+  label: string
+  cascadeable: boolean
+  blocking_reason?: string | null
+  items: JobReferenceItem[]
+}
+
+export interface ApiError {
   message: string
   code?: string
   status: number
+  /** AppError.extra 透傳：cascade 拒絕時帶結構化引用清單 */
+  references?: JobReferenceGroup[]
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -31,6 +46,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       message: body.message || body.detail || `HTTP ${res.status}`,
       code: body.code,
       status: res.status,
+      references: body.references,
     }
     throw err
   }
@@ -221,11 +237,18 @@ export function unapproveJob(id: string) {
  * 硬刪除 job — 連帶刪 palette_color_mappings 子資料 + Firebase svg/filled/snapped/mask 物件。
  * Backend 拒絕情況：status=processing（worker 在跑）或被 product/batch/order 引用。
  *
- * @param force 為 true 時繞過 processing 檢查，用於 worker 卡死的 zombie task
- *   （注意：產生的 Firebase 物件可能成 orphan，需手動清理）
+ * @param force 為 true 時繞過 processing 檢查（zombie task）
+ * @param cascade 為 true 時連帶刪掉 product_variant / print_batch_item 引用
+ *   （variant 變孤兒 → product.status=off_sale；order_item 引用永遠拒絕）
  */
-export function deleteJob(id: string, options: { force?: boolean } = {}) {
-  const qs = options.force ? '?force=true' : ''
+export function deleteJob(
+  id: string,
+  options: { force?: boolean; cascade?: boolean } = {},
+) {
+  const params = new URLSearchParams()
+  if (options.force) params.set('force', 'true')
+  if (options.cascade) params.set('cascade', 'true')
+  const qs = params.toString() ? `?${params}` : ''
   return request<null>(`/admin/production/jobs/${id}${qs}`, {
     method: 'DELETE',
   })
@@ -235,6 +258,8 @@ export interface BatchDeleteJobResult {
   job_id: string
   ok: boolean
   error: string | null
+  /** 該筆被引用受阻時的結構化清單；ok=true 或失敗原因非引用時為 null */
+  references: JobReferenceGroup[] | null
 }
 
 export interface BatchDeleteJobsResponse {
@@ -249,10 +274,17 @@ export interface BatchDeleteJobsResponse {
  * 每筆都會走單筆 deleteJob 的所有檢查（processing 拒絕 / 外部引用拒絕 /
  * Firebase prefix 清檔）。前端拿到 response 後可顯示成功/失敗清單。
  */
-export function deleteJobsBatch(jobIds: string[], options: { force?: boolean } = {}) {
+export function deleteJobsBatch(
+  jobIds: string[],
+  options: { force?: boolean; cascade?: boolean } = {},
+) {
   return request<BatchDeleteJobsResponse>('/admin/production/jobs/batch-delete', {
     method: 'POST',
-    body: JSON.stringify({ job_ids: jobIds, force: options.force ?? false }),
+    body: JSON.stringify({
+      job_ids: jobIds,
+      force: options.force ?? false,
+      cascade: options.cascade ?? false,
+    }),
   })
 }
 

@@ -136,6 +136,7 @@ async def get_job(
 async def delete_job(
     job_id: UUID,
     force: bool = Query(default=False),
+    cascade: bool = Query(default=False),
     operator=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -146,11 +147,15 @@ async def delete_job(
       - 但若帶 ?force=true，允許強制刪除（用於 worker 卡死 / 永遠不結束的 zombie task；
         DB row 直接刪掉，背景 worker 仍會跑但完工後找不到 row 會 silent 失敗，
         產出的 Firebase 物件成 orphan — caller 已知接受此 trade-off）
-    - 被 product_variants / print_batches / order_items 引用 → 400 含計數
+    - 被引用時：
+      - 任何 order_item 引用 → 400（即使 cascade=true 也擋，code=JOB_BLOCKED_BY_ORDER）
+      - cascade=false → 400 + 結構化 references 清單（code=JOB_REFERENCED）
+      - cascade=true → 先刪 product_variant / print_batch_item 引用、product 變孤兒自動
+        off_sale，再刪 job
     - palette_color_mappings 自動連帶刪
     - Firebase svg/filled/snapped_rgb/mask 物件 best-effort 刪
     """
-    await service.delete_job(db, job_id, force=force)
+    await service.delete_job(db, job_id, force=force, cascade=cascade)
     return Response(status_code=204)
 
 
@@ -170,7 +175,9 @@ async def batch_delete_jobs(
 
     刻意用 POST 而非 DELETE：DELETE 帶 body 非標準，部份 proxy / SDK 會剝掉。
     """
-    results = await service.batch_delete_jobs(db, body.job_ids, force=body.force)
+    results = await service.batch_delete_jobs(
+        db, body.job_ids, force=body.force, cascade=body.cascade,
+    )
     success = sum(1 for r in results if r["ok"])
     return BatchDeleteJobsResponse(
         total=len(results),

@@ -18,6 +18,7 @@ import {
 
 import Card from '@/shared/ui/Card.vue'
 import Button from '@/shared/ui/Button.vue'
+import Dialog from '@/shared/ui/Dialog.vue'
 
 import JobStatusBadge from '../components/JobStatusBadge.vue'
 import PostProcessDialog from '../components/PostProcessDialog.vue'
@@ -28,7 +29,7 @@ import {
   useJobQuery,
   useUnapproveJobMutation,
 } from '../queries'
-import type { BatchOperation } from '../api'
+import type { ApiError, BatchOperation, JobReferenceGroup } from '../api'
 import {
   downloadJobPdf,
   getJobSignedUrl,
@@ -50,21 +51,50 @@ const deleteMut = useDeleteJobMutation()
 // 刪除：2-click 確認（armed 3 秒）防誤觸
 const deleteArmed = ref(false)
 let deleteArmTimer: ReturnType<typeof setTimeout> | null = null
-async function doDelete() {
+// 被引用受阻時的結構化清單（dialog 顯示用）
+const deleteRefs = ref<JobReferenceGroup[] | null>(null)
+const deleteRefsErrorCode = ref<string | null>(null)
+const deleteRefsMessage = ref<string>('')
+
+const deleteCascadeable = computed(() =>
+  !!deleteRefs.value &&
+  deleteRefs.value.length > 0 &&
+  deleteRefs.value.every((g) => g.cascadeable),
+)
+
+const REF_TYPE_BADGE: Record<JobReferenceGroup['type'], string> = {
+  product_variant: 'bg-aux-rice-mid/40 text-ink-default',
+  print_batch_item: 'bg-paper-subtle text-ink-default',
+  order_item: 'bg-state-danger/[0.10] text-state-danger',
+}
+
+async function doDelete(opts: { cascade?: boolean } = {}) {
   apiError.value = null
-  if (!deleteArmed.value) {
-    deleteArmed.value = true
+  // cascade 重試：略過 2-click armed（已透過 dialog 確認）
+  if (!opts.cascade) {
+    if (!deleteArmed.value) {
+      deleteArmed.value = true
+      if (deleteArmTimer) clearTimeout(deleteArmTimer)
+      deleteArmTimer = setTimeout(() => { deleteArmed.value = false }, 3000)
+      return
+    }
     if (deleteArmTimer) clearTimeout(deleteArmTimer)
-    deleteArmTimer = setTimeout(() => { deleteArmed.value = false }, 3000)
-    return
+    deleteArmed.value = false
   }
-  if (deleteArmTimer) clearTimeout(deleteArmTimer)
-  deleteArmed.value = false
   try {
-    await deleteMut.mutateAsync({ id: jobId.value })
+    await deleteMut.mutateAsync({ id: jobId.value, cascade: opts.cascade ?? false })
+    deleteRefs.value = null
     router.push('/admin/production')
   } catch (e) {
-    apiError.value = (e as { message?: string }).message || '刪除失敗'
+    const err = e as ApiError
+    if (err.references && err.references.length > 0) {
+      // 被引用受阻 → 顯示結構化 dialog
+      deleteRefs.value = err.references
+      deleteRefsErrorCode.value = err.code ?? null
+      deleteRefsMessage.value = err.message || '任務被引用，無法刪除'
+    } else {
+      apiError.value = err.message || '刪除失敗'
+    }
   }
 }
 const canDelete = computed(() => job.value && job.value.status !== 'processing')
@@ -487,5 +517,70 @@ function fmtDateTime(iso: string | null): string {
       @close="postProcessOpen = false"
       @confirm-batch="onBatch"
     />
+
+    <!-- 被引用受阻 dialog：顯示結構化清單 + cascade 選項 -->
+    <Dialog
+      :open="!!deleteRefs"
+      title="任務被引用，無法直接刪除"
+      @close="deleteRefs = null"
+    >
+      <div class="space-y-3">
+        <p class="text-[13px] text-ink-default leading-[1.6]">{{ deleteRefsMessage }}</p>
+
+        <div
+          v-if="deleteRefsErrorCode === 'JOB_BLOCKED_BY_ORDER'"
+          class="px-3 py-2 border border-state-danger/40 bg-state-danger/[0.06] text-state-danger text-[12px] rounded-[var(--radius-xs)] leading-[1.6]"
+        >
+          訂單為金流稽核記錄，連帶刪除也不允許。請先到「訂單管理」頁取消或退款相關訂單。
+        </div>
+
+        <ul class="bg-paper-subtle border border-line-hairline rounded-[var(--radius-xs)] p-3 max-h-[400px] overflow-auto space-y-2">
+          <li
+            v-for="group in deleteRefs ?? []"
+            :key="group.type"
+            class="border border-line-hairline rounded-[var(--radius-xs)] bg-paper-surface px-2.5 py-2"
+          >
+            <div class="flex items-center justify-between mb-1.5">
+              <span
+                class="inline-flex items-center px-1.5 h-[18px] text-[10px] tracking-[0.04em] rounded-[var(--radius-xs)]"
+                :class="REF_TYPE_BADGE[group.type]"
+              >{{ group.label }}（{{ group.items.length }} 筆）</span>
+              <span
+                v-if="group.cascadeable"
+                class="text-[10px] text-state-success"
+              >可連帶刪除</span>
+              <span v-else class="text-[10px] text-state-danger">不可刪除</span>
+            </div>
+            <p
+              v-if="group.blocking_reason"
+              class="text-[11px] text-state-danger/80 mb-1.5 leading-[1.5]"
+            >{{ group.blocking_reason }}</p>
+            <ul class="space-y-0.5 text-[11px] text-ink-default">
+              <li
+                v-for="item in group.items"
+                :key="item.id"
+                class="leading-[1.5]"
+              >• {{ item.display }}</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <template #footer>
+        <div class="flex items-center justify-end gap-2">
+          <Button variant="secondary" @click="deleteRefs = null">關閉</Button>
+          <Button
+            v-if="deleteCascadeable"
+            variant="primary"
+            :disabled="deleteMut.isPending.value"
+            class="bg-state-danger hover:bg-state-danger/90"
+            @click="doDelete({ cascade: true })"
+          >
+            <Loader2 v-if="deleteMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+            <Trash2 v-else :size="14" :stroke-width="1.5" />
+            連帶刪除引用後刪除任務
+          </Button>
+        </div>
+      </template>
+    </Dialog>
   </template>
 </template>

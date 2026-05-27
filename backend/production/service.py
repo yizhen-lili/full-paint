@@ -306,16 +306,25 @@ async def get_job(db: AsyncSession, job_id: UUID) -> ProductionJob:
     return job
 
 
-async def delete_job(db: AsyncSession, job_id: UUID, *, force: bool = False) -> None:
+async def delete_job(
+    db: AsyncSession,
+    job_id: UUID,
+    *,
+    force: bool = False,
+    cascade: bool = False,
+) -> None:
     """硬刪除任務 row + palette_color_mappings 子資料 + Firebase 物件。
 
     安全規則：
     - status=processing → BadRequestError（worker 可能還在寫入，刪了會 race）
       - force=True 時繞過此檢查，用於 worker 卡死永不結束的 zombie task
-    - 被 product_variants / print_batches / order_items 引用 → BadRequestError 拒絕
+    - 被其他表引用時的行為：
+      - 任何 order_item 引用 → 永遠拒絕（金流稽核紅線，cascade 也擋）
+      - cascade=False → 拒絕並回傳結構化 references 給 admin 看
+      - cascade=True → 先刪 ProductVariant / PrintBatchItem 引用（變孤兒的
+        product 自動 off_sale），再繼續刪 job
     - palette_color_mappings 連帶刪（FK NOT NULL，不刪 cascade 會 IntegrityError）
-    - Firebase 物件（svg / filled / snapped_rgb / mask）best-effort 刪：
-      失敗只 log warning，不回滾 DB（DB 已 commit）
+    - Firebase 物件 best-effort 刪：失敗只 log warning，不回滾 DB
     """
     from palette.models import PaletteColorMapping  # noqa: PLC0415
 
@@ -327,12 +336,25 @@ async def delete_job(db: AsyncSession, job_id: UUID, *, force: bool = False) -> 
             "若 worker 確認卡死，可改用 force=true 強制刪除（產生的 Firebase 物件可能成 orphan）。"
         )
 
-    # 檢查是否被其他表引用 — 一律拒絕，防止商品/訂單/批次斷鏈
+    # 檢查是否被其他表引用
     refs = await _check_job_references(db, job_id)
     if refs:
-        raise BadRequestError(
-            f"任務被以下資料引用，無法刪除：{'、'.join(refs)}"
-        )
+        # 任何 order_item 引用 → 不論 cascade 都拒絕（金流稽核紅線）
+        if any(group["type"] == "order_item" for group in refs):
+            raise BadRequestError(
+                detail="任務被訂單引用，請先處理該訂單（取消 / 退款）再刪除",
+                code="JOB_BLOCKED_BY_ORDER",
+                extra={"references": refs},
+            )
+        if not cascade:
+            # 有可 cascade 的引用但 admin 沒選 cascade → 拒絕、附引用清單
+            raise BadRequestError(
+                detail="任務被以下資料引用，需確認連帶刪除（cascade）才能繼續",
+                code="JOB_REFERENCED",
+                extra={"references": refs},
+            )
+        # cascade=True → 把引用先刪掉
+        await _cascade_delete_refs(db, refs)
 
     # DB 刪除：先刪子資料再刪 job row（palette_color_mappings FK NOT NULL，
     # 不能 SET NULL；schema 沒 ondelete CASCADE 所以手動 DELETE）
@@ -365,10 +387,12 @@ async def batch_delete_jobs(
     job_ids: list[UUID],
     *,
     force: bool = False,
+    cascade: bool = False,
 ) -> list[dict]:
     """批次硬刪除：逐筆呼叫 delete_job，獨立 try/except，失敗筆不影響成功筆。
 
-    回 list[{"job_id", "ok", "error"}] 給 router 包裝成 BatchDeleteJobsResponse。
+    回 list[{"job_id", "ok", "error", "references"}] — references 在因引用受阻時
+    填入結構化清單給前端展示。
 
     刻意逐筆執行而非一次性 transaction，因為：
     - 每筆 delete_job 都會 commit DB + 觸發 Firebase 清檔（不可逆）
@@ -379,38 +403,160 @@ async def batch_delete_jobs(
     results: list[dict] = []
     for job_id in job_ids:
         try:
-            await delete_job(db, job_id, force=force)
-            results.append({"job_id": job_id, "ok": True, "error": None})
+            await delete_job(db, job_id, force=force, cascade=cascade)
+            results.append({"job_id": job_id, "ok": True, "error": None, "references": None})
         except (BadRequestError, NotFoundError) as e:
-            results.append({"job_id": job_id, "ok": False, "error": e.detail})
+            # 從 AppError.extra 取出結構化 references（若有），讓前端可展示細節
+            refs = (e.extra or {}).get("references") if hasattr(e, "extra") else None
+            results.append({
+                "job_id": job_id, "ok": False, "error": e.detail,
+                "references": refs,
+            })
         except Exception as e:  # noqa: BLE001
             logger.exception("batch_delete_jobs unexpected error for %s", job_id)
-            results.append({"job_id": job_id, "ok": False, "error": f"未預期錯誤：{e}"})
+            results.append({
+                "job_id": job_id, "ok": False, "error": f"未預期錯誤：{e}",
+                "references": None,
+            })
     return results
 
 
-async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[str]:
-    """回傳所有引用此 job_id 的表標籤（中文），空 list 代表沒引用可安全刪。"""
-    from orders.models import OrderItem  # noqa: PLC0415
-    from print_batch.models import PrintBatchItem  # noqa: PLC0415
-    from product.models import ProductVariant  # noqa: PLC0415
+async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[dict]:
+    """回傳結構化引用清單：
 
-    refs = []
-    for model, label in (
-        (ProductVariant, "商品 variant"),
-        (PrintBatchItem, "列印批次"),
-        (OrderItem, "訂單項目"),
-    ):
-        cnt = (
-            await db.execute(
-                select(func.count()).select_from(model).where(
-                    model.production_job_id == job_id
-                )
-            )
-        ).scalar() or 0
-        if cnt > 0:
-            refs.append(f"{label}（{cnt} 筆）")
+    [
+      {
+        "type": "product_variant" | "print_batch_item" | "order_item",
+        "label": str,                       # UI 顯示用中文
+        "cascadeable": bool,                # cascade=True 時能否刪
+        "blocking_reason": str | None,      # cascadeable=False 才有，解釋為何不能刪
+        "items": [
+          {"id": str, "display": str},      # 具體 row + 給人看的標示
+          ...
+        ],
+      },
+      ...
+    ]
+
+    空 list 代表沒引用，可安全刪。"""
+    from orders.models import Order, OrderItem  # noqa: PLC0415
+    from print_batch.models import PrintBatch, PrintBatchItem  # noqa: PLC0415
+    from product.models import Product, ProductVariant  # noqa: PLC0415
+
+    refs: list[dict] = []
+
+    # ── product_variant：join product 拿 title ──
+    pv_rows = (await db.execute(
+        select(ProductVariant, Product)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .where(ProductVariant.production_job_id == job_id)
+    )).all()
+    if pv_rows:
+        refs.append({
+            "type": "product_variant",
+            "label": "商品規格",
+            "cascadeable": True,
+            "blocking_reason": None,
+            "items": [
+                {
+                    "id": str(v.id),
+                    "display": f"{p.title}（${int(v.price)}）",
+                }
+                for v, p in pv_rows
+            ],
+        })
+
+    # ── print_batch_item：join batch 拿 status ──
+    pbi_rows = (await db.execute(
+        select(PrintBatchItem, PrintBatch)
+        .join(PrintBatch, PrintBatchItem.print_batch_id == PrintBatch.id)
+        .where(PrintBatchItem.production_job_id == job_id)
+    )).all()
+    if pbi_rows:
+        refs.append({
+            "type": "print_batch_item",
+            "label": "列印批次",
+            "cascadeable": True,
+            "blocking_reason": None,
+            "items": [
+                {
+                    "id": str(bi.id),
+                    "display": f"批次 #{str(b.id)[:8]}（{b.status}）",
+                }
+                for bi, b in pbi_rows
+            ],
+        })
+
+    # ── order_item：join order 拿 order_number + status（永遠 blocking）──
+    oi_rows = (await db.execute(
+        select(OrderItem, Order)
+        .join(Order, OrderItem.order_id == Order.id)
+        .where(OrderItem.production_job_id == job_id)
+    )).all()
+    if oi_rows:
+        refs.append({
+            "type": "order_item",
+            "label": "訂單項目",
+            "cascadeable": False,
+            "blocking_reason": "訂單金流記錄不可破壞稽核，請先取消 / 退款該訂單再刪",
+            "items": [
+                {
+                    "id": str(oi.id),
+                    "display": f"訂單 {o.order_number}（{o.status}）",
+                }
+                for oi, o in oi_rows
+            ],
+        })
+
     return refs
+
+
+async def _cascade_delete_refs(db: AsyncSession, refs: list[dict]) -> None:
+    """處理可 cascade 的引用：
+
+    - product_variant: 刪 variant；若是 product 唯一 variant → product.status=off_sale
+    - print_batch_item: 刪 row（batch 總額重算為已知限制，admin 需手動處理）
+    - order_item: 不可能到這（上層 delete_job 已過濾，order 引用永遠拒絕）
+
+    不 commit，呼叫端統一 commit。
+    """
+    from print_batch.models import PrintBatchItem  # noqa: PLC0415
+    from product.models import Product, ProductStatusEnum, ProductVariant  # noqa: PLC0415
+
+    for group in refs:
+        if group["type"] == "product_variant":
+            affected_product_ids: set[UUID] = set()
+            for item in group["items"]:
+                variant_id = UUID(item["id"])
+                variant = await db.get(ProductVariant, variant_id)
+                if not variant:
+                    continue
+                affected_product_ids.add(variant.product_id)
+                await db.delete(variant)
+            # 把要 cascade 的 variant 都刪後，逐一檢查 product 是否需要 off_sale
+            await db.flush()
+            for product_id in affected_product_ids:
+                remaining = (await db.execute(
+                    select(func.count()).select_from(ProductVariant).where(
+                        ProductVariant.product_id == product_id
+                    )
+                )).scalar() or 0
+                if remaining == 0:
+                    product = await db.get(Product, product_id)
+                    if product:
+                        product.status = ProductStatusEnum.off_sale
+                        logger.info(
+                            "cascade: product %s 因失去所有 variant 自動 off_sale",
+                            product_id,
+                        )
+        elif group["type"] == "print_batch_item":
+            for item in group["items"]:
+                bi = await db.get(PrintBatchItem, UUID(item["id"]))
+                if bi:
+                    await db.delete(bi)
+            # NOTE: print_batch 的 total_inch_count / billable_inch_count / cost
+            # 不會自動重算（散落在 print_batch service）。已知限制，admin 需手動處理。
+        # order_item: skip — 上層 delete_job 已過濾
 
 
 def _delete_firebase_job_prefix(job_id: UUID) -> None:
