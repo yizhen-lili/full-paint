@@ -1,4 +1,9 @@
+from datetime import datetime
+
 from pydantic import BaseModel
+
+
+# ── 顏料需求查詢 response ──────────────────────────────────────────────
 
 
 class PaintRequirementItem(BaseModel):
@@ -25,10 +30,55 @@ class PaintRequirementsSummary(BaseModel):
 
 
 class PaintRequirementsResponse(BaseModel):
-    variant_id: str
     production_job_id: str
     quantity: int
     canvas_w_cm: float
     canvas_h_cm: float
     items: list[PaintRequirementItem]
     summary: PaintRequirementsSummary
+
+
+# ── Sources（picker）response ──────────────────────────────────────────
+
+
+class SourceVariantInfo(BaseModel):
+    variant_id: str
+    production_job_id: str
+    canvas_w_cm: float
+    canvas_h_cm: float
+    price: float
+    is_finalized: bool
+
+
+class SourceProductGroup(BaseModel):
+    id: str
+    title: str
+    status: str
+    variants: list[SourceVariantInfo]
+
+
+class SourceCustomRequest(BaseModel):
+    custom_request_id: str
+    production_job_id: str
+    label: str
+    status: str
+    canvas_w_cm: float
+    canvas_h_cm: float
+    is_finalized: bool
+
+
+class SourceStandaloneJob(BaseModel):
+    production_job_id: str
+    label: str
+    canvas_w_cm: float
+    canvas_h_cm: float
+    detail: str
+    difficulty: str
+    created_at: datetime
+    is_finalized: bool
+
+
+class PaintRequirementSourcesResponse(BaseModel):
+    products: list[SourceProductGroup]
+    custom_requests: list[SourceCustomRequest]
+    standalone_jobs: list[SourceStandaloneJob]

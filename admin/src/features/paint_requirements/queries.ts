@@ -1,12 +1,20 @@
-import { useMutation } from '@tanstack/vue-query'
+import { useMutation, useQuery } from '@tanstack/vue-query'
 
-import { getPaintRequirements } from './api'
+import { getPaintRequirementSources, getPaintRequirements } from './api'
 
-/** lazy 查詢：用 mutation（按按鈕觸發）而非 useQuery（reactive auto-run），
- *  避免使用者打字選規格時就頻繁戳後端。 */
+/** 列出三類來源 — picker 用，初次進頁面就抓。 */
+export function useSourcesQuery() {
+  return useQuery({
+    queryKey: ['admin', 'paint-requirements', 'sources'] as const,
+    queryFn: () => getPaintRequirementSources(),
+    staleTime: 30_000,
+  })
+}
+
+/** lazy 查詢：按「查詢」按鈕觸發 mutation；不用 useQuery 避免 input 變化頻繁戳後端。 */
 export function usePaintRequirementsMutation() {
   return useMutation({
-    mutationFn: (params: { variantId: string; quantity: number }) =>
-      getPaintRequirements(params.variantId, params.quantity),
+    mutationFn: (params: { productionJobId: string; quantity: number }) =>
+      getPaintRequirements(params.productionJobId, params.quantity),
   })
 }

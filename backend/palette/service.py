@@ -109,7 +109,7 @@ async def get_mappings(db: AsyncSession, job_id: UUID) -> list[dict]:
 async def update_mapping(
     db: AsyncSession, job_id: UUID, template_id: int, physical_color_id: UUID
 ) -> dict:
-    await _get_job_or_404(db, job_id)
+    job = await _get_job_or_404(db, job_id)
 
     color = await db.execute(
         select(PhysicalColor).where(
@@ -130,9 +130,23 @@ async def update_mapping(
     if not mapping:
         raise NotFoundError("調色板對應不存在")
 
+    old_pid = mapping.physical_color_id
+    is_color_change = old_pid != physical_color_id
+
     mapping.physical_color_id = physical_color_id
     mapping.mapped_by = MappedByEnum.manual
     mapping.required_ml = None
+
+    # 物理色實際變動 + job 已 finalize → 清 finalized_at（保留 template_final_url
+    # 讓前端能區分「曾 finalize 過 stale」vs「從未 finalize」兩種狀態）
+    # 同色 no-op 不觸發失效，避免 admin 誤點不變色就被迫重產
+    if is_color_change and job.finalized_at is not None:
+        job.finalized_at = None
+        logger.info(
+            "update_mapping: job %s finalized_at 已清空（template_id=%s 換色）",
+            job_id, template_id,
+        )
+
     await db.commit()
     await db.refresh(mapping)
 

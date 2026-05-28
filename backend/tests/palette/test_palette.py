@@ -899,3 +899,114 @@ async def test_complete_mappings_finalize_failure_does_not_break(db, client: Asy
     await client.get(_palette_url(job.id))   # 自動 mapping
     res = await client.post(f"{_palette_url(job.id)}/complete")
     assert res.status_code == 200
+
+
+# ── 對應變動 → finalize 失效（stale）─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_update_mapping_after_finalize_clears_finalized_at(client: AsyncClient, db):
+    """finalized job 改 physical_color_id → finalized_at 被清，URL 欄位保留。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    color_a = await _create_color(db, COLOR_A)
+    color_b = await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+    await db.refresh(job)
+    assert job.finalized_at is not None
+    assert job.template_final_url is not None
+    template_final_before = job.template_final_url
+
+    # 改 template_id=1 從 COLOR_A 換成 COLOR_B
+    res = await client.put(
+        f"{_palette_url(job.id)}/1",
+        json={"physical_color_id": str(color_b.id)},
+    )
+    assert res.status_code == 200, res.text
+
+    await db.refresh(job)
+    # finalized_at 被清掉
+    assert job.finalized_at is None
+    # template_final_url 保留（讓前端區分 stale vs pristine）
+    assert job.template_final_url == template_final_before
+
+
+@pytest.mark.asyncio
+async def test_update_mapping_with_same_color_is_noop(client: AsyncClient, db):
+    """改成同色（no-op）→ finalized_at 不被清。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    color_a = await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+    await db.refresh(job)
+    finalized_before = job.finalized_at
+    assert finalized_before is not None
+
+    # 改 template_id=1 對應，但 physical_color_id 仍是 COLOR_A（同色）
+    res = await client.put(
+        f"{_palette_url(job.id)}/1",
+        json={"physical_color_id": str(color_a.id)},
+    )
+    assert res.status_code == 200
+
+    await db.refresh(job)
+    # 同色 no-op：finalized_at 不變
+    assert job.finalized_at == finalized_before
+
+
+@pytest.mark.asyncio
+async def test_complete_mappings_after_change_reassigns_output_label(
+    client: AsyncClient, db,
+):
+    """改 mapping 後重跑 complete → output_label 依新 mapping 重排。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    from palette.models import PaletteColorMapping
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    color_a = await _create_color(db, COLOR_A)
+    color_b = await _create_color(db, COLOR_B)
+    await _seed_settings(db)
+    # 初始：template 1+3 → COLOR_A（pixels 4000+2500=6500，label 1），
+    # template 2 → COLOR_B（3500，label 2）
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    # 改 template_id=2 從 COLOR_B 換成 COLOR_A → 現在 template 1+2+3 全是 COLOR_A
+    res = await client.put(
+        f"{_palette_url(job.id)}/2",
+        json={"physical_color_id": str(color_a.id)},
+    )
+    assert res.status_code == 200
+
+    # 重跑 finalize（complete_mappings 內部會做，這裡直接 call finalize_template）
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    # 現在只剩一個物理色 → 所有 template 共用 output_label=1
+    rows = list((await db.execute(
+        select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+    )).scalars().all())
+    by_tid = {m.template_id: m.output_label for m in rows}
+    assert by_tid[1] == 1
+    assert by_tid[2] == 1  # 之前是 2，重排後變 1
+    assert by_tid[3] == 1
+    assert set(by_tid.values()) == {1}  # 只有一個 label

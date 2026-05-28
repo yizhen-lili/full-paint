@@ -1,7 +1,8 @@
 /**
  * Paint Requirements API — F22 顏料準備清單查詢（admin）。
  *
- * 取得單一規格（ProductVariant） × N 件需要的物理顏料用量清單。
+ * 取得任意 production_job × N 件需要的物理顏料用量清單，
+ * 支援三類來源：商品 variant / 客製訂單 / 試驗任務（standalone job）。
  */
 
 const API = '/api/v1'
@@ -10,8 +11,7 @@ export interface ApiError {
   message: string
   code?: string
   status: number
-  /** 未 finalize 時 backend 帶回 variant_id / production_job_id 給前端跳轉用 */
-  variant_id?: string
+  /** 未 finalize 時 backend 帶回 production_job_id 給前端跳轉 mapping 頁 */
   production_job_id?: string
 }
 
@@ -28,12 +28,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       message: body.message || body.detail || `HTTP ${res.status}`,
       code: body.code,
       status: res.status,
-      variant_id: body.variant_id,
       production_job_id: body.production_job_id,
     } as ApiError
   }
   return body
 }
+
+// ── Result schemas ───────────────────────────────────────────────────────
 
 export interface PaintRequirementItem {
   physical_color_id: string
@@ -55,7 +56,6 @@ export interface PaintRequirementsSummary {
 }
 
 export interface PaintRequirementsResponse {
-  variant_id: string
   production_job_id: string
   quantity: number
   canvas_w_cm: number
@@ -64,9 +64,60 @@ export interface PaintRequirementsResponse {
   summary: PaintRequirementsSummary
 }
 
-export function getPaintRequirements(variantId: string, quantity: number) {
+// ── Sources schemas（picker）────────────────────────────────────────────
+
+export interface SourceVariantInfo {
+  variant_id: string
+  production_job_id: string
+  canvas_w_cm: number
+  canvas_h_cm: number
+  price: number
+  is_finalized: boolean
+}
+
+export interface SourceProductGroup {
+  id: string
+  title: string
+  status: 'draft' | 'on_sale' | 'off_sale'
+  variants: SourceVariantInfo[]
+}
+
+export interface SourceCustomRequest {
+  custom_request_id: string
+  production_job_id: string
+  label: string
+  status: string
+  canvas_w_cm: number
+  canvas_h_cm: number
+  is_finalized: boolean
+}
+
+export interface SourceStandaloneJob {
+  production_job_id: string
+  label: string
+  canvas_w_cm: number
+  canvas_h_cm: number
+  detail: string
+  difficulty: string
+  created_at: string
+  is_finalized: boolean
+}
+
+export interface PaintRequirementSourcesResponse {
+  products: SourceProductGroup[]
+  custom_requests: SourceCustomRequest[]
+  standalone_jobs: SourceStandaloneJob[]
+}
+
+// ── Endpoints ─────────────────────────────────────────────────────────
+
+export function getPaintRequirements(productionJobId: string, quantity: number) {
   const q = new URLSearchParams()
-  q.set('variant_id', variantId)
+  q.set('production_job_id', productionJobId)
   q.set('quantity', String(quantity))
   return request<PaintRequirementsResponse>(`/admin/paint-requirements?${q.toString()}`)
+}
+
+export function getPaintRequirementSources() {
+  return request<PaintRequirementSourcesResponse>('/admin/paint-requirements/sources')
 }

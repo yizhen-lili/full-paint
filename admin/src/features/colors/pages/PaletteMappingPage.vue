@@ -161,6 +161,14 @@ async function complete() {
   }
 }
 
+// 「stale finalize」偵測：曾 finalize 過（有 template_final_url）但 mapping 後來
+// 變動使 backend 清掉 finalized_at → 即時 banner 提示 admin 重按完成對應
+const isFinalizeStale = computed(
+  () => !!jobData.value
+    && !!jobData.value.template_final_url
+    && jobData.value.finalized_at === null,
+)
+
 // ── 模板格子調整（合併色塊 / 消邊界）────────────────────────────────────
 // 整合 PostProcessPanel：admin 不必跳回 production detail 即可微調模板，
 // Celery 完成後 jobQuery 自動刷新 → mappings query 同步 invalidate。
@@ -255,6 +263,24 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
     <AlertTriangle :size="14" :stroke-width="1.5" class="mt-0.5" />
     <span class="flex-1">{{ apiError }}</span>
     <button class="text-[12px] underline" @click="apiError = null">關閉</button>
+  </div>
+
+  <!-- stale finalize 提示：曾 finalize 過、但 mapping 已變動 -->
+  <div
+    v-if="isFinalizeStale"
+    class="mb-5 p-4 border border-state-warning/40 bg-[var(--color-state-warning)]/[0.06]
+           text-state-warning text-[13px] rounded-[var(--radius-xs)]
+           flex items-start gap-2"
+  >
+    <AlertTriangle :size="14" :stroke-width="1.5" class="mt-0.5 shrink-0" />
+    <div class="flex-1">
+      <p class="font-medium mb-0.5">最終模板已過期</p>
+      <p class="text-state-warning/80 leading-[1.5]">
+        你修改了顏色對應，但「最終模板」（template_final.svg）與色號編號
+        尚未更新到最新狀態。請按頁面右上方的「完成對應」重新產出 —
+        系統會重新計算用量、重排色號、覆蓋最終模板檔。
+      </p>
+    </div>
   </div>
 
   <div
