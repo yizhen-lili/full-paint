@@ -158,6 +158,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/features/colors/pages/PaletteMappingPage.vue'),
       },
       {
+        path: 'paint-requirements',
+        name: 'admin-paint-requirements',
+        component: () => import('@/features/paint_requirements/pages/PaintRequirementsPage.vue'),
+      },
+      {
         path: 'print-batches',
         name: 'admin-print-batches',
         component: () => import('@/features/print_batches/pages/PrintBatchesListPage.vue'),
