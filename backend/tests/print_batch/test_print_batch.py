@@ -1028,3 +1028,96 @@ async def test_cascade_keeps_batch_when_other_items_remain(client, db):
     )).scalars().all()
     assert len(remaining) == 1
     assert remaining[0].production_job_id == j2.id
+
+
+@pytest.mark.asyncio
+async def test_generate_pdf_prefers_template_final_url(db):
+    """regression：finalize 過的 job 有 template_final_url，PDF 應 fetch 該 URL
+    而非原始 svg_url（否則印出來會是演算法版 1/2/3 分開，不是合併編號）。"""
+    from print_batch.models import PrintBatchItem, PrintBatchItemSourceEnum
+    from print_batch.service import _generate_pdf
+
+    valid_svg = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'width="30mm" height="40mm" viewBox="0 0 30 40">'
+        '<rect width="30" height="40" fill="none" stroke="black"/>'
+        '</svg>'
+    )
+
+    # job 同時有 svg_url 與 template_final_url（finalize 過）
+    j = await _make_job(db, w=30, h=40, svg_url="https://example.com/raw_template.svg")
+    j.template_final_url = "https://example.com/template_final.svg"
+    await db.commit()
+
+    item = PrintBatchItem(
+        print_batch_id=uuid.uuid4(),
+        source_type=PrintBatchItemSourceEnum.standalone,
+        production_job_id=j.id,
+        quantity=1,
+        inch_per_unit=Decimal("2.2222"),
+        canvas_w_cm=Decimal("30.0"),
+        canvas_h_cm=Decimal("40.0"),
+    )
+
+    fetched_urls: list[str] = []
+
+    class _RecordingClient(_MockHttpClient):
+        async def get(self, url):
+            fetched_urls.append(url)
+            return _MockHttpResponse(valid_svg)
+
+    def mock_client_factory(*args, **kwargs):
+        return _RecordingClient(valid_svg)
+
+    with patch("print_batch.service.httpx.AsyncClient", mock_client_factory):
+        await _generate_pdf([(item, j)])
+
+    assert fetched_urls == ["https://example.com/template_final.svg"], (
+        f"應該 fetch template_final_url，實際 fetch 的是 {fetched_urls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_pdf_falls_back_to_svg_url_when_no_template_final(db):
+    """job 未 finalize（無 template_final_url）→ 退回用 svg_url。"""
+    from print_batch.models import PrintBatchItem, PrintBatchItemSourceEnum
+    from print_batch.service import _generate_pdf
+
+    valid_svg = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'width="30mm" height="40mm" viewBox="0 0 30 40">'
+        '<rect width="30" height="40" fill="none" stroke="black"/>'
+        '</svg>'
+    )
+
+    j = await _make_job(db, w=30, h=40, svg_url="https://example.com/raw_template.svg")
+    # template_final_url 維持 None（未 finalize）
+    assert j.template_final_url is None
+    await db.commit()
+
+    item = PrintBatchItem(
+        print_batch_id=uuid.uuid4(),
+        source_type=PrintBatchItemSourceEnum.standalone,
+        production_job_id=j.id,
+        quantity=1,
+        inch_per_unit=Decimal("2.2222"),
+        canvas_w_cm=Decimal("30.0"),
+        canvas_h_cm=Decimal("40.0"),
+    )
+
+    fetched_urls: list[str] = []
+
+    class _RecordingClient(_MockHttpClient):
+        async def get(self, url):
+            fetched_urls.append(url)
+            return _MockHttpResponse(valid_svg)
+
+    def mock_client_factory(*args, **kwargs):
+        return _RecordingClient(valid_svg)
+
+    with patch("print_batch.service.httpx.AsyncClient", mock_client_factory):
+        await _generate_pdf([(item, j)])
+
+    assert fetched_urls == ["https://example.com/raw_template.svg"]

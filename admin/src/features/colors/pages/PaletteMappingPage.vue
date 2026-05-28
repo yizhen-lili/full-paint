@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Copy,
   AlertTriangle,
+  FileImage,
   Sparkles,
   Pipette,
   Wrench,
@@ -49,9 +50,15 @@ const completeMut = useCompleteMappingsMutation(jobId.value)
 
 const mappings = computed(() => data.value?.mappings ?? [])
 
-// 抓 filled_template_url 給 canvas 預覽用
+// 抓 job 細節給 canvas 預覽 + finalize 後的最終模板 preview 用
 const { data: jobData } = useJobQuery(jobId)
-const filledTemplateUrl = computed(() => jobData.value?.filled_template_url ?? null)
+// post-finalize 優先顯示「實體色版」(filled_template_final.png：同色合併、實物色 RGB)
+// fallback 到演算法版 filled_template_url（未 finalize / 生成失敗時）
+const filledTemplateUrl = computed(() =>
+  jobData.value?.filled_template_final_url
+    ?? jobData.value?.filled_template_url
+    ?? null,
+)
 
 function onCanvasPick(templateId: number) {
   const m = mappings.value.find((x) => x.template_id === templateId)
@@ -168,6 +175,9 @@ const isFinalizeStale = computed(
     && !!jobData.value.template_final_url
     && jobData.value.finalized_at === null,
 )
+
+// 「實體色版最終模板」內聯預覽收合（finalize 完成後才出現）
+const finalSvgExpanded = ref(false)
 
 // ── 模板格子調整（合併色塊 / 消邊界）────────────────────────────────────
 // 整合 PostProcessPanel：admin 不必跳回 production detail 即可微調模板，
@@ -416,6 +426,63 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
       </div>
     </Card>
   </div>
+
+  <!-- 實體色版最終模板（finalize 後才出現；點開內聯看合併編號 + 物理色填色）-->
+  <section
+    v-if="jobData?.template_final_url"
+    class="mt-6"
+  >
+    <button
+      type="button"
+      class="w-full flex items-center gap-2 px-4 py-3 border border-line-hairline rounded-[var(--radius-sm)] bg-paper-surface hover:bg-paper-subtle transition-colors"
+      @click="finalSvgExpanded = !finalSvgExpanded"
+    >
+      <ChevronDown
+        :size="16" :stroke-width="1.5"
+        class="transition-transform text-ink-muted"
+        :class="finalSvgExpanded ? '' : '-rotate-90'"
+      />
+      <FileImage :size="14" :stroke-width="1.5" class="text-ink-muted" />
+      <h2 class="font-display text-ink-strong text-[16px] leading-[22px]">實體色版最終模板</h2>
+      <span class="ml-auto text-[11px] text-ink-muted hidden sm:inline">
+        同色合併、output_label 重編號 — finalize 完成後產出
+      </span>
+    </button>
+
+    <div
+      v-if="finalSvgExpanded"
+      class="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4"
+    >
+      <Card>
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-[13px] font-medium text-ink-strong">線圖（output_label 重編號）</h3>
+          <a
+            :href="jobData.template_final_url"
+            target="_blank" rel="noopener"
+            class="text-[12px] text-accent hover:text-accent-hover underline"
+          >另開分頁</a>
+        </div>
+        <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-auto flex items-center justify-center">
+          <img
+            :src="jobData.template_final_url"
+            alt="template_final.svg"
+            class="max-w-full max-h-full object-contain"
+          />
+        </div>
+      </Card>
+
+      <Card v-if="jobData?.filled_template_final_url">
+        <h3 class="text-[13px] font-medium text-ink-strong mb-2">實體色填色預覽</h3>
+        <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center">
+          <img
+            :src="jobData.filled_template_final_url"
+            alt="filled_template_final.png"
+            class="max-w-full max-h-full object-contain"
+          />
+        </div>
+      </Card>
+    </div>
+  </section>
 
   <!-- 模板格子調整（合併色塊 / 消邊界）-->
   <section

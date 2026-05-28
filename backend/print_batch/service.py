@@ -731,9 +731,14 @@ async def _generate_pdf(items: list, *, batch_id: UUID | None = None) -> str:
         # NUMERIC → float for reportlab unit math
         w_cm = float(item.canvas_w_cm)
         h_cm = float(item.canvas_h_cm)
+        # 優先用「實體色版最終模板」(template_final.svg) — 同色 polygon 已用
+        # Shapely 幾何合併 + output_label 重編號，admin 印出來的 PDF 是合併後的
+        # 編號（例如同色都是 #1 不是 #1 #2 分開）。
+        # fallback：job 未 finalize → 退回原始 template.svg（演算法版）
+        svg_source_url = job.template_final_url or job.svg_url
         # SVG 存的是 gs:// URL（私有），httpx 不認識；要先轉 https signed URL，
         # 否則 fetch 會失敗 → 全部走佔位框 → finalize 後 PDF 全是白框。
-        svg_fetch_url = job.svg_url
+        svg_fetch_url = svg_source_url
         if svg_fetch_url and svg_fetch_url.startswith("gs://"):
             from production.service import _make_signed_url
             svg_fetch_url = _make_signed_url(svg_fetch_url)
