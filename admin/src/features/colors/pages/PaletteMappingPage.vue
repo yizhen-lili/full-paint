@@ -311,14 +311,9 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
         <AlertTriangle :size="14" :stroke-width="1.5" />
         <span>
           對應完成，但 {{ completeResult.shortage_colors.length }} 色庫存不足。
-          商品可上架，前台會顯示「預購」狀態。
+          商品可上架，前台會顯示「預購」狀態。詳細缺料色號請至「顏料準備清單」查詢。
         </span>
       </p>
-      <ul class="mt-2 text-[12px] space-y-0.5">
-        <li v-for="s in completeResult.shortage_colors" :key="s.physical_color_id">
-          · 色號 {{ s.code }} {{ s.name }}（template #{{ s.template_id }}）
-        </li>
-      </ul>
     </div>
     <!-- finalize 完成後給 admin 看最終模板的連結 -->
     <p
