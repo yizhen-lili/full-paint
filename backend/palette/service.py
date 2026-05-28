@@ -264,9 +264,13 @@ async def complete_mappings(db: AsyncSession, job_id: UUID) -> dict:
     shortage_colors = []
     for mapping in mappings:
         entry = palette_by_id.get(mapping.template_id, {})
-        percent = float(entry.get("percent", 0.0))
+        # pbn_gen 在 production/engine.py 寫 percent 是 0~100 形式（百分比，
+        # e.g. 47.5 表示 47.5%）— 用前要除 100 轉成 0~1 ratio，否則 required_ml
+        # 會大 100 倍（曾發生 30×40 cm 一張畫單色需 2933 ml 的 bug）。
+        percent_pct = float(entry.get("percent", 0.0))
+        percent_ratio = percent_pct / 100.0
         required = max(
-            area * percent * paint_ml_per_cm2 * paint_buffer_ratio,
+            area * percent_ratio * paint_ml_per_cm2 * paint_buffer_ratio,
             paint_min_ml,
         )
         required = math.ceil(required * 100) / 100

@@ -20,8 +20,9 @@ CUSTOMER_USER = {
 }
 
 PALETTE_JSON = [
-    {"template_id": 1, "rgb": {"r": 247, "g": 167, "b": 132}, "percent": 0.40},
-    {"template_id": 2, "rgb": {"r": 100, "g": 50, "b": 200}, "percent": 0.35},
+    # percent 是 0-100 形式（與 production/engine.py:623 的寫入格式一致）
+    {"template_id": 1, "rgb": {"r": 247, "g": 167, "b": 132}, "percent": 40.0},
+    {"template_id": 2, "rgb": {"r": 100, "g": 50, "b": 200}, "percent": 35.0},
 ]
 
 VALID_JOB = {
@@ -436,6 +437,35 @@ async def test_complete_all_stocked(client: AsyncClient, db):
 
 
 @pytest.mark.asyncio
+async def test_complete_required_ml_math_correctness(client: AsyncClient, db):
+    """Regression：percent 是 0-100 形式，service 必須除 100；否則 required_ml 大 100 倍。
+
+    30×40 canvas、percent=40（40%）、paint_ml=0.05、buffer=1.2、min=5.0 →
+    required = max(1200 × 0.40 × 0.05 × 1.2, 5.0) = 28.8 ml（正常數量）
+    若 service 把 40.0 當 0-1 ratio → 算成 2880 ml（爆量），這個 test 會 fail。
+    """
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    await _seed_settings(db)
+    job = await _create_job_with_palette(db)
+
+    await client.get(_palette_url(job.id))  # 自動 mapping
+    res = await client.post(f"{_palette_url(job.id)}/complete")
+    assert res.status_code == 200
+
+    rows = list((await db.execute(
+        select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+    )).scalars().all())
+    by_tid = {m.template_id: float(m.required_ml or 0) for m in rows}
+    # template 1：30×40 × 0.40 × 0.05 × 1.2 = 28.8 ml
+    assert 28 <= by_tid[1] <= 30, f"got {by_tid[1]} for template 1 (expected ~28.8)"
+    # template 2：30×40 × 0.35 × 0.05 × 1.2 = 25.2 ml
+    assert 25 <= by_tid[2] <= 26, f"got {by_tid[2]} for template 2 (expected ~25.2)"
+
+
+@pytest.mark.asyncio
 async def test_complete_with_shortage(client: AsyncClient, db):
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
@@ -513,9 +543,10 @@ async def test_complete_unauthenticated(client: AsyncClient, db):
 
 # palette_json 帶 pixels，模擬 pbn_gen 的真實輸出
 _PALETTE_FOR_FINALIZE = [
-    {"template_id": 1, "rgb": [247, 167, 132], "percent": 0.40, "pixels": 4000},
-    {"template_id": 2, "rgb": [100, 50, 200],  "percent": 0.35, "pixels": 3500},
-    {"template_id": 3, "rgb": [50, 200, 100],  "percent": 0.25, "pixels": 2500},
+    # percent 是 0-100 形式
+    {"template_id": 1, "rgb": [247, 167, 132], "percent": 40.0, "pixels": 4000},
+    {"template_id": 2, "rgb": [100, 50, 200],  "percent": 35.0, "pixels": 3500},
+    {"template_id": 3, "rgb": [50, 200, 100],  "percent": 25.0, "pixels": 2500},
 ]
 
 # pbn_gen 的 polygon fill = 25% 原色 + 75% 白；mock 必須對得起來才能讓
