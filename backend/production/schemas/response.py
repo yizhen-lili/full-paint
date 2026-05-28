@@ -121,6 +121,12 @@ class JobDetailResponse(BaseModel):
     palette_final_url: str | None = None
     filled_template_final_url: str | None = None
     finalized_at: datetime | None = None
+    # 「原始版」備份（第二次以上 finalize 時把當前 latest 搬到 archive/ 留著）
+    # NULL = 從未 archive 過（第一次 finalize / 從未 finalize）
+    original_template_final_url: str | None = None
+    original_palette_final_url: str | None = None
+    original_filled_template_final_url: str | None = None
+    original_finalized_at: datetime | None = None
     created_at: datetime
     approved_at: datetime | None
 
@@ -140,9 +146,29 @@ class JobDetailResponse(BaseModel):
         # gs:// → 15-min signed https URL（admin 預覽用）
         return _resolve_filled_url(v)
 
+    @field_validator("palette_final_url", mode="before")
+    @classmethod
+    def _convert_palette_final(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
     @field_validator("filled_template_final_url", mode="before")
     @classmethod
     def _convert_filled_final(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
+    @field_validator("original_template_final_url", mode="before")
+    @classmethod
+    def _convert_orig_template_final(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
+    @field_validator("original_palette_final_url", mode="before")
+    @classmethod
+    def _convert_orig_palette_final(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
+    @field_validator("original_filled_template_final_url", mode="before")
+    @classmethod
+    def _convert_orig_filled_final(cls, v: Any) -> Any:
         return _resolve_filled_url(v)
 
 

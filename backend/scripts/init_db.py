@@ -134,6 +134,24 @@ async def init_schema() -> None:
                 "ALTER TABLE production_jobs "
                 "ADD COLUMN IF NOT EXISTS filled_template_final_url VARCHAR"
             ))
+            # 「原始版」finalize 備份：第二次 finalize 起把當前 latest 搬到 archive/，
+            # 原始版欄位保留指向 archive 檔案（admin 比對用，不還原）
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS original_template_final_url VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS original_palette_final_url VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS original_filled_template_final_url VARCHAR"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS original_finalized_at TIMESTAMP WITH TIME ZONE"
+            ))
 
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)

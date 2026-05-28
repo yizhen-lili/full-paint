@@ -601,16 +601,34 @@ async def _setup_job_for_finalize(db, mappings_spec: list[tuple[int, str]]):
 
 
 def _mock_bucket_for_finalize(svg_bytes: bytes = _SVG_TEMPLATE):
-    """產生 mock bucket：download_as_bytes 回 svg_bytes；upload_from_string 收 capture。"""
+    """產生 mock bucket：download_as_bytes 回 svg_bytes；upload_from_string 收 capture。
+
+    額外支援 archive 流程的 blob.exists() / blob.rewrite()，讓 finalize_template
+    第二次以上呼叫時的 _copy_to_archive 可以在測試裡跑通：
+    - exists()：檢查 captured 內是否有該 path
+    - rewrite(src)：把 captured[src.path] 複製到 captured[self.path]
+    """
     from unittest.mock import MagicMock
     captured: dict[str, bytes] = {}
 
     def make_blob(path: str):
         b = MagicMock(name=f"blob:{path}")
-        b.download_as_bytes = MagicMock(return_value=svg_bytes)
+        b._path = path  # 暴露讓 rewrite 取得來源 path
+        b.download_as_bytes = MagicMock(side_effect=lambda: captured.get(path, svg_bytes))
+
         def _upload(data, content_type=None):  # noqa: ARG001
             captured[path] = data if isinstance(data, bytes) else data.encode("utf-8")
         b.upload_from_string = MagicMock(side_effect=_upload)
+
+        def _exists():
+            return path in captured
+        b.exists = MagicMock(side_effect=_exists)
+
+        def _rewrite(src_blob):
+            captured[path] = captured[src_blob._path]
+            return None, 0, 0  # GCS rewrite() returns (token, rewritten, total)
+        b.rewrite = MagicMock(side_effect=_rewrite)
+
         return b
 
     bucket = MagicMock()
@@ -1041,3 +1059,112 @@ async def test_complete_mappings_after_change_reassigns_output_label(
     assert by_tid[2] == 1  # 之前是 2，重排後變 1
     assert by_tid[3] == 1
     assert set(by_tid.values()) == {1}  # 只有一個 label
+
+
+# ── 「原始版」備份（archive）─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_finalize_first_time_no_archive(db):
+    """全新 job 第一次 finalize → original_* 全部仍是 None；latest URLs 已寫。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    await db.refresh(job)
+    assert job.template_final_url is not None
+    assert job.finalized_at is not None
+    # 第一次 finalize：originals 全空
+    assert job.original_template_final_url is None
+    assert job.original_palette_final_url is None
+    assert job.original_filled_template_final_url is None
+    assert job.original_finalized_at is None
+
+
+@pytest.mark.asyncio
+async def test_finalize_second_time_archives_original(db):
+    """第二次 finalize → 把上一次的 latest 搬到 archive；original_* 寫入。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, captured = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        # 第一次
+        await finalize_template(db, job.id)
+        await db.refresh(job)
+        first_finalized_at = job.finalized_at
+
+        # 模擬「first finalize 留下的 latest 內容」
+        first_template_bytes = captured.get(
+            f"production_jobs/{job.id}/template_final.svg"
+        )
+        assert first_template_bytes is not None
+
+        # 第二次（沒改 mapping 也會跑、冪等）
+        await finalize_template(db, job.id)
+        await db.refresh(job)
+
+    # original_* 全部寫入
+    assert job.original_template_final_url == (
+        f"gs://test-bucket/production_jobs/{job.id}/archive/template_final_v0.svg"
+    )
+    assert job.original_palette_final_url == (
+        f"gs://test-bucket/production_jobs/{job.id}/archive/palette_final_v0.json"
+    )
+    assert job.original_filled_template_final_url == (
+        f"gs://test-bucket/production_jobs/{job.id}/archive/filled_template_final_v0.png"
+    )
+    assert job.original_finalized_at == first_finalized_at
+
+    # archive 路徑確實存了第一次的內容（rewrite 從 latest 複製過去）
+    archive_key = f"production_jobs/{job.id}/archive/template_final_v0.svg"
+    assert archive_key in captured
+    assert captured[archive_key] == first_template_bytes
+
+
+@pytest.mark.asyncio
+async def test_finalize_third_time_keeps_original_untouched(db):
+    """第三次 finalize → original 仍是「第一次」的內容、不被覆蓋。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+
+    bucket, captured = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        # 第一次 finalize
+        await finalize_template(db, job.id)
+        first_template_bytes = captured[
+            f"production_jobs/{job.id}/template_final.svg"
+        ]
+
+        # 第二次 → archive 觸發
+        await finalize_template(db, job.id)
+        await db.refresh(job)
+        archived_after_second = captured[
+            f"production_jobs/{job.id}/archive/template_final_v0.svg"
+        ]
+        original_finalized_at_after_second = job.original_finalized_at
+
+        # 第三次 → archive 不該再觸發（original_template_final_url 已有值）
+        await finalize_template(db, job.id)
+        await db.refresh(job)
+
+    archived_after_third = captured[
+        f"production_jobs/{job.id}/archive/template_final_v0.svg"
+    ]
+    # archive 路徑內容跟第一次的 latest 一致、不變
+    assert archived_after_third == first_template_bytes
+    assert archived_after_third == archived_after_second
+    # original_finalized_at 不變
+    assert job.original_finalized_at == original_finalized_at_after_second

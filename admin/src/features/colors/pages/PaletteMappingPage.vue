@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Copy,
   AlertTriangle,
+  Archive,
   FileImage,
   Sparkles,
   Pipette,
@@ -178,6 +179,13 @@ const isFinalizeStale = computed(
 
 // 「實體色版最終模板」內聯預覽收合（finalize 完成後才出現）
 const finalSvgExpanded = ref(false)
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 // ── 模板格子調整（合併色塊 / 消邊界）────────────────────────────────────
 // 整合 PostProcessPanel：admin 不必跳回 production detail 即可微調模板，
@@ -448,34 +456,98 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
       v-if="finalSvgExpanded"
       class="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4"
     >
-      <Card>
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="text-[13px] font-medium text-ink-strong">線圖（output_label 重編號）</h3>
-          <a
-            :href="jobData.template_final_url"
-            target="_blank" rel="noopener"
-            class="text-[12px] text-accent hover:text-accent-hover underline"
-          >另開分頁</a>
+      <!-- 左：原始版（第二次 finalize 起才有）-->
+      <div class="space-y-2">
+        <div class="flex items-center gap-2 px-1">
+          <Archive :size="14" :stroke-width="1.5" class="text-ink-muted" />
+          <h3 class="text-[14px] font-medium text-ink-strong">原始版</h3>
+          <span
+            v-if="jobData.original_finalized_at"
+            class="text-[11px] text-ink-muted font-normal"
+          >
+            {{ fmtDateTime(jobData.original_finalized_at) }} 第一次完成對應
+          </span>
         </div>
-        <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-auto flex items-center justify-center">
-          <img
-            :src="jobData.template_final_url"
-            alt="template_final.svg"
-            class="max-w-full max-h-full object-contain"
-          />
-        </div>
-      </Card>
 
-      <Card v-if="jobData?.filled_template_final_url">
-        <h3 class="text-[13px] font-medium text-ink-strong mb-2">實體色填色預覽</h3>
-        <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center">
-          <img
-            :src="jobData.filled_template_final_url"
-            alt="filled_template_final.png"
-            class="max-w-full max-h-full object-contain"
-          />
+        <template v-if="jobData.original_template_final_url">
+          <Card>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[12px] text-ink-muted">線圖（合併編號）</span>
+              <a
+                :href="jobData.original_template_final_url"
+                target="_blank" rel="noopener"
+                class="text-[11px] text-accent hover:text-accent-hover underline"
+              >另開分頁</a>
+            </div>
+            <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-auto flex items-center justify-center">
+              <img
+                :src="jobData.original_template_final_url"
+                alt="原始版 template_final.svg"
+                class="max-w-full max-h-full object-contain"
+              />
+            </div>
+          </Card>
+          <Card v-if="jobData.original_filled_template_final_url">
+            <span class="text-[12px] text-ink-muted block mb-2">實體色填色預覽</span>
+            <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center">
+              <img
+                :src="jobData.original_filled_template_final_url"
+                alt="原始版 filled_template_final.png"
+                class="max-w-full max-h-full object-contain"
+              />
+            </div>
+          </Card>
+        </template>
+        <div
+          v-else
+          class="p-4 border border-dashed border-line-hairline rounded-[var(--radius-xs)] text-[12px] text-ink-muted leading-[1.6]"
+        >
+          目前還沒有原始版備份 — 這是這個任務第一次完成對應的結果。
+          下次再按「完成對應」時，此處會自動保留現在的版本當「原始版」、新版顯示在右邊。
         </div>
-      </Card>
+      </div>
+
+      <!-- 右：最新版 -->
+      <div class="space-y-2">
+        <div class="flex items-center gap-2 px-1">
+          <Sparkles :size="14" :stroke-width="1.5" class="text-accent" />
+          <h3 class="text-[14px] font-medium text-ink-strong">最新版</h3>
+          <span
+            v-if="jobData.finalized_at"
+            class="text-[11px] text-ink-muted font-normal"
+          >
+            {{ fmtDateTime(jobData.finalized_at) }} 完成對應
+          </span>
+        </div>
+
+        <Card>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[12px] text-ink-muted">線圖（合併編號）</span>
+            <a
+              :href="jobData.template_final_url"
+              target="_blank" rel="noopener"
+              class="text-[11px] text-accent hover:text-accent-hover underline"
+            >另開分頁</a>
+          </div>
+          <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-auto flex items-center justify-center">
+            <img
+              :src="jobData.template_final_url"
+              alt="最新版 template_final.svg"
+              class="max-w-full max-h-full object-contain"
+            />
+          </div>
+        </Card>
+        <Card v-if="jobData.filled_template_final_url">
+          <span class="text-[12px] text-ink-muted block mb-2">實體色填色預覽</span>
+          <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center">
+            <img
+              :src="jobData.filled_template_final_url"
+              alt="最新版 filled_template_final.png"
+              class="max-w-full max-h-full object-contain"
+            />
+          </div>
+        </Card>
+      </div>
     </div>
   </section>
 

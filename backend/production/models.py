@@ -104,6 +104,13 @@ class ProductionJob(Base):
     # 是演算法量化色預覽）。
     filled_template_final_url = Column(String, nullable=True)
     finalized_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # 「原始版」備份（第一次成功 finalize 後被搬到 archive/ 路徑保留）。
+    # 之後 admin 再按完成對應、覆蓋 latest 的同時，原始版欄位不被觸碰 — 給 admin
+    # 比對「我這次調得比上次好還是更糟」。NULL = 從未 archive 過。
+    original_template_final_url = Column(String, nullable=True)
+    original_palette_final_url = Column(String, nullable=True)
+    original_filled_template_final_url = Column(String, nullable=True)
+    original_finalized_at = Column(TIMESTAMP(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
     batch_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

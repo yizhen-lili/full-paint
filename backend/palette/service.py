@@ -326,6 +326,34 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     if not job.palette_json:
         raise BadRequestError("job 尚無 palette_json，無法統計面積")
 
+    # ── 「原始版」保留 ─────────────────────────────────────────────────────
+    # 第二次以上 finalize 時把當前 latest 搬到 archive/ 路徑，給 admin 比對用
+    # 條件：曾經 finalize 過（template_final_url 已存在）+ 尚未 archive 過
+    if job.template_final_url and not job.original_template_final_url:
+        try:
+            archive_bucket = get_bucket()
+            _copy_to_archive(archive_bucket, job_id, "template_final.svg")
+            _copy_to_archive(archive_bucket, job_id, "palette_final.json")
+            _copy_to_archive(archive_bucket, job_id, "filled_template_final.png")
+            job.original_template_final_url = (
+                f"gs://{archive_bucket.name}/production_jobs/{job_id}/"
+                f"archive/template_final_v0.svg"
+            )
+            job.original_palette_final_url = (
+                f"gs://{archive_bucket.name}/production_jobs/{job_id}/"
+                f"archive/palette_final_v0.json"
+            )
+            job.original_filled_template_final_url = (
+                f"gs://{archive_bucket.name}/production_jobs/{job_id}/"
+                f"archive/filled_template_final_v0.png"
+            )
+            job.original_finalized_at = job.finalized_at
+            await db.flush()
+            logger.info("finalize: archived original version for job %s", job_id)
+        except Exception as e:  # noqa: BLE001
+            # best-effort：archive 失敗不阻擋當次 finalize 流程
+            logger.warning("finalize: archive original failed for %s: %s", job_id, e)
+
     mapping_rows = list(
         (
             await db.execute(
@@ -531,6 +559,22 @@ def _gs_path(url: str, bucket_name: str) -> str:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+def _copy_to_archive(bucket, job_id: UUID, filename: str) -> None:
+    """把當前 finalize 檔（latest）server-side rewrite 到 archive/ 路徑當原始版。
+
+    filename 例如 "template_final.svg" → "archive/template_final_v0.svg"。
+    用 GCS rewrite 不下載原檔，效率最高。原始檔不存在（finalize 失敗過？）就 skip。
+    """
+    base, ext = filename.rsplit(".", 1)
+    src_path = f"production_jobs/{job_id}/{filename}"
+    dst_path = f"production_jobs/{job_id}/archive/{base}_v0.{ext}"
+    src_blob = bucket.blob(src_path)
+    if not src_blob.exists():
+        return
+    dst_blob = bucket.blob(dst_path)
+    dst_blob.rewrite(src_blob)
+
 
 async def _get_job_or_404(db: AsyncSession, job_id: UUID) -> ProductionJob:
     result = await db.execute(
