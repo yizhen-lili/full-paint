@@ -72,6 +72,8 @@ export interface SourceVariantInfo {
   canvas_w_cm: number
   canvas_h_cm: number
   price: number
+  /** filled_template 短期 signed URL（15-min TTL）— picker 縮圖用 */
+  preview_url: string | null
   is_finalized: boolean
 }
 
@@ -89,6 +91,7 @@ export interface SourceCustomRequest {
   status: string
   canvas_w_cm: number
   canvas_h_cm: number
+  preview_url: string | null
   is_finalized: boolean
 }
 
@@ -100,6 +103,7 @@ export interface SourceStandaloneJob {
   detail: string
   difficulty: string
   created_at: string
+  preview_url: string | null
   is_finalized: boolean
 }
 

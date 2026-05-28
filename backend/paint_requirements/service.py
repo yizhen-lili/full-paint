@@ -121,18 +121,21 @@ async def calculate_for_job(
 
 
 async def list_sources(db: AsyncSession) -> dict:
-    """列出顏料查詢可選的三類來源。
+    """列出顏料查詢可選的三類來源（含 filled_template 縮圖讓 admin 視覺辨識）。
 
     所有 source 都需 status=completed 才有意義（mapping 才可能存在）；
     finalized 與否各自帶 flag，admin 可看到「未對應」項目並知道要先去 mapping 頁。
 
     回傳結構：
     {
-      products: [{id, title, status, variants: [{...}]}],
-      custom_requests: [{custom_request_id, job_id, label, status, canvas, is_finalized}],
-      standalone_jobs: [{job_id, label, canvas, is_finalized, created_at}],
+      products: [{id, title, status, variants: [{..., preview_url}]}],
+      custom_requests: [{custom_request_id, job_id, label, ..., preview_url, is_finalized}],
+      standalone_jobs: [{job_id, label, ..., preview_url, is_finalized, created_at}],
     }
     """
+    # preview_url 沿用 product.service 的 _public_filled_url（gs:// → 15min signed URL）
+    from product.service import _public_filled_url  # noqa: PLC0415
+
     # ── 商品（含 variants）──────────────────────────────────────────────
     # 把每個 product 帶它的 variants（不論 product 狀態都列：on_sale / draft / off_sale）
     products_rows = (await db.execute(
@@ -161,6 +164,7 @@ async def list_sources(db: AsyncSession) -> dict:
                     "canvas_w_cm": float(j.canvas_w_cm),
                     "canvas_h_cm": float(j.canvas_h_cm),
                     "price": float(v.price),
+                    "preview_url": _public_filled_url(j.filled_template_url),
                     "is_finalized": j.finalized_at is not None,
                 }
                 for v, j in variant_rows
@@ -188,6 +192,7 @@ async def list_sources(db: AsyncSession) -> dict:
             "status": cr.status.value if hasattr(cr.status, "value") else str(cr.status),
             "canvas_w_cm": float(j.canvas_w_cm),
             "canvas_h_cm": float(j.canvas_h_cm),
+            "preview_url": _public_filled_url(j.filled_template_url),
             "is_finalized": j.finalized_at is not None,
         }
         for cr, u, j in custom_rows
@@ -219,6 +224,7 @@ async def list_sources(db: AsyncSession) -> dict:
             "detail": j.detail.value if hasattr(j.detail, "value") else str(j.detail),
             "difficulty": j.difficulty.value if hasattr(j.difficulty, "value") else str(j.difficulty),
             "created_at": j.created_at,
+            "preview_url": _public_filled_url(j.filled_template_url),
             "is_finalized": j.finalized_at is not None,
         }
         for j in standalone_rows

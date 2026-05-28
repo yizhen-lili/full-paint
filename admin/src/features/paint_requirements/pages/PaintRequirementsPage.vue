@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Beaker,
   CheckCircle2,
+  ImageOff,
   Loader2,
   Package,
   Search,
@@ -17,7 +18,6 @@ import Card from '@/shared/ui/Card.vue'
 import Button from '@/shared/ui/Button.vue'
 import Input from '@/shared/ui/Input.vue'
 import Label from '@/shared/ui/Label.vue'
-import Select from '@/shared/ui/Select.vue'
 
 import { usePaintRequirementsMutation, useSourcesQuery } from '../queries'
 import type {
@@ -26,6 +26,7 @@ import type {
   SourceCustomRequest,
   SourceProductGroup,
   SourceStandaloneJob,
+  SourceVariantInfo,
 } from '../api'
 
 const router = useRouter()
@@ -49,52 +50,33 @@ const tabCounts = computed(() => ({
   standalone_jobs: sources.value?.standalone_jobs.length ?? 0,
 }))
 
-// ── Tab 1: 商品 → variant ───────────────────────────────────────────
-const selectedProductId = ref<string>('')
-const selectedProductVariantId = ref<string>('')
-
-const productOptions = computed(() => {
-  const items = sources.value?.products ?? []
-  return [
-    { value: '', label: '— 請選商品 —' },
-    ...items.map((p: SourceProductGroup) => ({
-      value: p.id,
-      label: `${p.title}（${p.variants.length} 規格${p.status === 'draft' ? ' · 草稿' : p.status === 'off_sale' ? ' · 下架' : ''}）`,
-    })),
-  ]
-})
+// ── 各 tab 的選中項（用 production_job_id 統一表達）──────────────────
+// 商品 tab 需額外記 variant_id 以便顯示；客製 / 試驗只用 job_id
+const selectedProductId = ref<string>('')  // 用來篩變體；不直接用於送 API
+const selectedVariantId = ref<string>('')
+const selectedCustomJobId = ref<string>('')
+const selectedStandaloneJobId = ref<string>('')
 
 const selectedProduct = computed(() =>
   sources.value?.products.find((p) => p.id === selectedProductId.value) ?? null,
 )
 
-const productVariantOptions = computed(() => {
-  if (!selectedProduct.value) return [{ value: '', label: '— 先選商品 —' }]
-  return [
-    { value: '', label: '— 請選規格 —' },
-    ...selectedProduct.value.variants.map((v) => ({
-      value: v.variant_id,
-      label: `${v.canvas_w_cm} × ${v.canvas_h_cm} cm · NT$ ${v.price.toLocaleString()}${v.is_finalized ? '' : ' · 未對應'}`,
-    })),
-  ]
+// 解析當前 tab 選到的 job_id + finalized 狀態（送 API 用）
+const selectedJob = computed<{ jobId: string; isFinalized: boolean } | null>(() => {
+  if (activeTab.value === 'products') {
+    if (!selectedProduct.value || !selectedVariantId.value) return null
+    const v = selectedProduct.value.variants.find((x) => x.variant_id === selectedVariantId.value)
+    return v ? { jobId: v.production_job_id, isFinalized: v.is_finalized } : null
+  }
+  if (activeTab.value === 'custom_requests') {
+    if (!selectedCustomJobId.value) return null
+    const c = sources.value?.custom_requests.find((x) => x.production_job_id === selectedCustomJobId.value)
+    return c ? { jobId: c.production_job_id, isFinalized: c.is_finalized } : null
+  }
+  if (!selectedStandaloneJobId.value) return null
+  const j = sources.value?.standalone_jobs.find((x) => x.production_job_id === selectedStandaloneJobId.value)
+  return j ? { jobId: j.production_job_id, isFinalized: j.is_finalized } : null
 })
-
-// ── Tab 2: 客製訂單 ────────────────────────────────────────────────
-const selectedCustomRequestId = ref<string>('')
-
-const customOptions = computed(() => {
-  const items = sources.value?.custom_requests ?? []
-  return [
-    { value: '', label: '— 請選客製訂單 —' },
-    ...items.map((c: SourceCustomRequest) => ({
-      value: c.custom_request_id,
-      label: `${c.label} · ${c.canvas_w_cm} × ${c.canvas_h_cm} cm${c.is_finalized ? '' : ' · 未對應'}`,
-    })),
-  ]
-})
-
-// ── Tab 3: 試驗任務 ────────────────────────────────────────────────
-const selectedStandaloneJobId = ref<string>('')
 
 function fmtDate(iso: string): string {
   const d = new Date(iso)
@@ -102,40 +84,29 @@ function fmtDate(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-const standaloneOptions = computed(() => {
-  const items = sources.value?.standalone_jobs ?? []
-  return [
-    { value: '', label: '— 請選試驗任務 —' },
-    ...items.map((j: SourceStandaloneJob) => ({
-      value: j.production_job_id,
-      label: `${j.label} · ${j.canvas_w_cm} × ${j.canvas_h_cm} cm · ${fmtDate(j.created_at)}${j.is_finalized ? '' : ' · 未對應'}`,
-    })),
-  ]
-})
+function setTab(t: TabType) {
+  activeTab.value = t
+  result.value = null
+  failure.value = null
+}
 
-// ── 共用：解析當前 tab 選到的 job_id + finalized 狀態 ───────────────
-const selectedJob = computed<{ jobId: string; isFinalized: boolean } | null>(() => {
-  if (activeTab.value === 'products') {
-    if (!selectedProduct.value || !selectedProductVariantId.value) return null
-    const v = selectedProduct.value.variants.find(
-      (vv) => vv.variant_id === selectedProductVariantId.value,
-    )
-    return v ? { jobId: v.production_job_id, isFinalized: v.is_finalized } : null
-  }
-  if (activeTab.value === 'custom_requests') {
-    if (!selectedCustomRequestId.value) return null
-    const c = sources.value?.custom_requests.find(
-      (cc) => cc.custom_request_id === selectedCustomRequestId.value,
-    )
-    return c ? { jobId: c.production_job_id, isFinalized: c.is_finalized } : null
-  }
-  // standalone_jobs
-  if (!selectedStandaloneJobId.value) return null
-  const j = sources.value?.standalone_jobs.find(
-    (jj) => jj.production_job_id === selectedStandaloneJobId.value,
-  )
-  return j ? { jobId: j.production_job_id, isFinalized: j.is_finalized } : null
-})
+function pickProduct(p: SourceProductGroup) {
+  if (selectedProductId.value === p.id) return  // 已選不變
+  selectedProductId.value = p.id
+  selectedVariantId.value = ''  // 換商品要重選變體
+}
+
+function pickVariant(v: SourceVariantInfo) {
+  selectedVariantId.value = v.variant_id
+}
+
+function pickCustom(c: SourceCustomRequest) {
+  selectedCustomJobId.value = c.production_job_id
+}
+
+function pickStandalone(j: SourceStandaloneJob) {
+  selectedStandaloneJobId.value = j.production_job_id
+}
 
 // ── quantity + 查詢 ──────────────────────────────────────────────────
 const quantity = ref<number>(1)
@@ -170,13 +141,6 @@ function goToColorMapping() {
   const jobId = failure.value?.production_job_id ?? selectedJob.value?.jobId
   if (jobId) router.push(`/admin/colors/mapping/${jobId}`)
 }
-
-// 切 tab 時清掉當前 tab 之外的選擇 + 結果（避免狀態混淆）
-function setTab(t: TabType) {
-  activeTab.value = t
-  result.value = null
-  failure.value = null
-}
 </script>
 
 <template>
@@ -209,68 +173,177 @@ function setTab(t: TabType) {
     </div>
 
     <template v-else>
-      <!-- Tab 1: 商品 → variant cascade -->
-      <div v-if="activeTab === 'products'" class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-        <div class="md:col-span-5">
+      <!-- Tab 1: 商品 → variant cascade（卡片式）-->
+      <div v-if="activeTab === 'products'">
+        <p
+          v-if="!sources?.products.length"
+          class="py-8 text-center text-[13px] text-ink-muted"
+        >
+          尚無商品 — 請先到「商品管理」建立
+        </p>
+        <template v-else>
           <Label>商品</Label>
-          <Select
-            v-model="selectedProductId"
-            :options="productOptions"
-            class="mt-1"
-          />
-        </div>
-        <div class="md:col-span-5">
-          <Label>規格</Label>
-          <Select
-            v-model="selectedProductVariantId"
-            :options="productVariantOptions"
-            :disabled="!selectedProductId"
-            class="mt-1"
-          />
-        </div>
-        <div class="md:col-span-2 text-[11px] text-ink-muted">
-          <p v-if="!sources?.products.length" class="text-state-warning">
-            尚無商品 — 請先到「商品管理」建立
-          </p>
-        </div>
+          <div class="mt-2 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[280px] overflow-y-auto pr-1">
+            <button
+              v-for="p in sources.products"
+              :key="p.id"
+              type="button"
+              class="relative text-left rounded-[var(--radius-sm)] border bg-paper-surface p-2 transition-all hover:shadow-sm"
+              :class="selectedProductId === p.id
+                ? 'border-accent ring-2 ring-accent/30'
+                : 'border-line-hairline hover:border-ink-muted'"
+              @click="pickProduct(p)"
+            >
+              <!-- 第一個 variant 縮圖代表整個商品（多 variants 才在下方選具體規格）-->
+              <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center mb-1.5">
+                <img
+                  v-if="p.variants[0]?.preview_url"
+                  :src="p.variants[0].preview_url"
+                  :alt="p.title"
+                  class="w-full h-full object-cover"
+                />
+                <ImageOff v-else :size="20" :stroke-width="1.5" class="text-ink-muted" />
+              </div>
+              <p class="text-[12px] text-ink-strong font-medium leading-tight truncate" :title="p.title">
+                {{ p.title }}
+              </p>
+              <p class="text-[10px] text-ink-muted mt-0.5">
+                {{ p.variants.length }} 規格<span v-if="p.status === 'draft'"> · 草稿</span><span v-else-if="p.status === 'off_sale'"> · 下架</span>
+              </p>
+            </button>
+          </div>
+
+          <!-- 變體選擇（選了商品才出現）-->
+          <template v-if="selectedProduct">
+            <Label class="mt-4 block">規格</Label>
+            <div class="mt-2 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              <button
+                v-for="v in selectedProduct.variants"
+                :key="v.variant_id"
+                type="button"
+                class="relative text-left rounded-[var(--radius-sm)] border bg-paper-surface p-2 transition-all hover:shadow-sm"
+                :class="selectedVariantId === v.variant_id
+                  ? 'border-accent ring-2 ring-accent/30'
+                  : 'border-line-hairline hover:border-ink-muted'"
+                @click="pickVariant(v)"
+              >
+                <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center mb-1.5">
+                  <img
+                    v-if="v.preview_url"
+                    :src="v.preview_url"
+                    :alt="`${v.canvas_w_cm}x${v.canvas_h_cm}`"
+                    class="w-full h-full object-cover"
+                  />
+                  <ImageOff v-else :size="20" :stroke-width="1.5" class="text-ink-muted" />
+                </div>
+                <p class="text-[12px] text-ink-strong font-medium">
+                  {{ v.canvas_w_cm }} × {{ v.canvas_h_cm }} cm
+                </p>
+                <p class="text-[10px] text-ink-muted mt-0.5">
+                  NT$ {{ v.price.toLocaleString() }}
+                </p>
+                <span
+                  v-if="!v.is_finalized"
+                  class="absolute top-1 right-1 px-1.5 py-0.5 text-[9px] rounded bg-state-warning/[0.15] text-state-warning"
+                >未對應</span>
+              </button>
+            </div>
+          </template>
+        </template>
       </div>
 
       <!-- Tab 2: 客製訂單 -->
-      <div v-else-if="activeTab === 'custom_requests'" class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-        <div class="md:col-span-10">
-          <Label>客製訂單</Label>
-          <Select
-            v-model="selectedCustomRequestId"
-            :options="customOptions"
-            class="mt-1"
-          />
-        </div>
-        <div class="md:col-span-2 text-[11px] text-ink-muted">
-          <p v-if="!sources?.custom_requests.length" class="text-state-warning">
-            尚無已建任務的客製訂單
-          </p>
+      <div v-else-if="activeTab === 'custom_requests'">
+        <p
+          v-if="!sources?.custom_requests.length"
+          class="py-8 text-center text-[13px] text-ink-muted"
+        >
+          尚無已建任務的客製訂單
+        </p>
+        <div
+          v-else
+          class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[420px] overflow-y-auto pr-1"
+        >
+          <button
+            v-for="c in sources.custom_requests"
+            :key="c.custom_request_id"
+            type="button"
+            class="relative text-left rounded-[var(--radius-sm)] border bg-paper-surface p-2 transition-all hover:shadow-sm"
+            :class="selectedCustomJobId === c.production_job_id
+              ? 'border-accent ring-2 ring-accent/30'
+              : 'border-line-hairline hover:border-ink-muted'"
+            @click="pickCustom(c)"
+          >
+            <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center mb-1.5">
+              <img
+                v-if="c.preview_url"
+                :src="c.preview_url"
+                :alt="c.label"
+                class="w-full h-full object-cover"
+              />
+              <ImageOff v-else :size="20" :stroke-width="1.5" class="text-ink-muted" />
+            </div>
+            <p class="text-[12px] text-ink-strong font-medium leading-tight truncate" :title="c.label">
+              {{ c.label }}
+            </p>
+            <p class="text-[10px] text-ink-muted mt-0.5">
+              {{ c.canvas_w_cm }} × {{ c.canvas_h_cm }} cm
+            </p>
+            <span
+              v-if="!c.is_finalized"
+              class="absolute top-1 right-1 px-1.5 py-0.5 text-[9px] rounded bg-state-warning/[0.15] text-state-warning"
+            >未對應</span>
+          </button>
         </div>
       </div>
 
       <!-- Tab 3: 試驗任務 -->
-      <div v-else class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-        <div class="md:col-span-10">
-          <Label>試驗任務（未綁商品、未綁客製單）</Label>
-          <Select
-            v-model="selectedStandaloneJobId"
-            :options="standaloneOptions"
-            class="mt-1"
-          />
-        </div>
-        <div class="md:col-span-2 text-[11px] text-ink-muted">
-          <p v-if="!sources?.standalone_jobs.length" class="text-state-warning">
-            尚無 standalone job
-          </p>
+      <div v-else>
+        <p
+          v-if="!sources?.standalone_jobs.length"
+          class="py-8 text-center text-[13px] text-ink-muted"
+        >
+          尚無 standalone job（未綁商品、未綁客製單）
+        </p>
+        <div
+          v-else
+          class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[420px] overflow-y-auto pr-1"
+        >
+          <button
+            v-for="j in sources.standalone_jobs"
+            :key="j.production_job_id"
+            type="button"
+            class="relative text-left rounded-[var(--radius-sm)] border bg-paper-surface p-2 transition-all hover:shadow-sm"
+            :class="selectedStandaloneJobId === j.production_job_id
+              ? 'border-accent ring-2 ring-accent/30'
+              : 'border-line-hairline hover:border-ink-muted'"
+            @click="pickStandalone(j)"
+          >
+            <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-hidden flex items-center justify-center mb-1.5">
+              <img
+                v-if="j.preview_url"
+                :src="j.preview_url"
+                :alt="j.label"
+                class="w-full h-full object-cover"
+              />
+              <ImageOff v-else :size="20" :stroke-width="1.5" class="text-ink-muted" />
+            </div>
+            <p class="text-[12px] text-ink-strong font-medium font-mono leading-tight truncate" :title="j.label">
+              {{ j.label }}
+            </p>
+            <p class="text-[10px] text-ink-muted mt-0.5">
+              {{ j.canvas_w_cm }} × {{ j.canvas_h_cm }} cm · {{ fmtDate(j.created_at) }}
+            </p>
+            <span
+              v-if="!j.is_finalized"
+              class="absolute top-1 right-1 px-1.5 py-0.5 text-[9px] rounded bg-state-warning/[0.15] text-state-warning"
+            >未對應</span>
+          </button>
         </div>
       </div>
 
       <!-- 共用 quantity + 查詢 -->
-      <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end mt-3 pt-3 border-t border-line-hairline">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end mt-4 pt-4 border-t border-line-hairline">
         <div class="md:col-span-3">
           <Label>製作件數</Label>
           <Input
@@ -295,17 +368,13 @@ function setTab(t: TabType) {
         </div>
       </div>
 
-      <!-- 選到「未對應」項目時的提示 -->
       <p
         v-if="selectedJob && !selectedJob.isFinalized"
         class="mt-3 text-[12px] text-state-warning inline-flex items-center gap-1"
       >
         <AlertTriangle :size="12" :stroke-width="1.5" />
         該項目尚未完成顏色對應，無法查詢。
-        <button
-          class="underline ml-1"
-          @click="goToColorMapping"
-        >前往對應 →</button>
+        <button class="underline ml-1" @click="goToColorMapping">前往對應 →</button>
       </p>
     </template>
   </Card>
@@ -313,7 +382,7 @@ function setTab(t: TabType) {
   <!-- 結果 / 錯誤展示 -->
 
   <Card
-    v-if="failure && (failure.code === 'JOB_NOT_FINALIZED' || failure.code === 'VARIANT_NOT_FINALIZED')"
+    v-if="failure && failure.code === 'JOB_NOT_FINALIZED'"
     class="border-state-warning/40 bg-[var(--color-state-warning)]/[0.06]"
   >
     <div class="flex items-start gap-3">
@@ -452,7 +521,7 @@ function setTab(t: TabType) {
   <Card v-else class="text-center py-10">
     <Beaker :size="32" :stroke-width="1.25" class="mx-auto mb-3 text-aux-rice-mid" />
     <p class="text-[13px] text-ink-muted">
-      切到對應 tab、選來源（商品 / 客製訂單 / 試驗任務）、輸入製作件數，按「查詢顏料需求」即可看到該任務需要哪些物理顏料。
+      切到對應 tab、點縮圖選來源、輸入製作件數，按「查詢顏料需求」即可看到該任務需要哪些物理顏料。
     </p>
   </Card>
 </template>

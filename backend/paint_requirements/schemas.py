@@ -47,6 +47,8 @@ class SourceVariantInfo(BaseModel):
     canvas_w_cm: float
     canvas_h_cm: float
     price: float
+    # filled_template 短期 signed URL（15-min TTL）— picker 視覺辨識用
+    preview_url: str | None
     is_finalized: bool
 
 
@@ -64,6 +66,7 @@ class SourceCustomRequest(BaseModel):
     status: str
     canvas_w_cm: float
     canvas_h_cm: float
+    preview_url: str | None
     is_finalized: bool
 
 
@@ -75,6 +78,7 @@ class SourceStandaloneJob(BaseModel):
     detail: str
     difficulty: str
     created_at: datetime
+    preview_url: str | None
     is_finalized: bool
 
 
