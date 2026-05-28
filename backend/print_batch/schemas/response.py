@@ -98,3 +98,35 @@ class PrintBatchListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ── 批次刪除（含結構化引用回報，沿用 production 模式）──────────────────────
+
+class BatchReferenceItem(BaseModel):
+    """單筆引用該 batch 的具體 row（給 UI 顯示）."""
+    id: str
+    display: str
+
+
+class BatchReferenceGroup(BaseModel):
+    """引用 batch 的某一類資料群（目前只有 order_item）."""
+    type: str                          # "order_item"
+    label: str                         # UI 顯示中文
+    cascadeable: bool                  # 永遠 False（訂單不可繞過）
+    blocking_reason: str | None = None
+    items: list[BatchReferenceItem]
+
+
+class BatchDeleteBatchResult(BaseModel):
+    """批次刪除單筆結果（成功 or 失敗）."""
+    batch_id: UUID
+    ok: bool
+    error: str | None = None
+    references: list[BatchReferenceGroup] | None = None
+
+
+class BatchDeleteBatchesResponse(BaseModel):
+    total: int
+    success: int
+    failed: int
+    results: list[BatchDeleteBatchResult]

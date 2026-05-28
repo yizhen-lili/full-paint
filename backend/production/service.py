@@ -550,12 +550,34 @@ async def _cascade_delete_refs(db: AsyncSession, refs: list[dict]) -> None:
                             product_id,
                         )
         elif group["type"] == "print_batch_item":
+            from print_batch.models import PrintBatch  # noqa: PLC0415
+            from print_batch.service import _delete_firebase_pdf  # noqa: PLC0415
+
+            affected_batch_ids: set[UUID] = set()
             for item in group["items"]:
                 bi = await db.get(PrintBatchItem, UUID(item["id"]))
                 if bi:
+                    affected_batch_ids.add(bi.print_batch_id)
                     await db.delete(bi)
-            # NOTE: print_batch 的 total_inch_count / billable_inch_count / cost
-            # 不會自動重算（散落在 print_batch service）。已知限制，admin 需手動處理。
+            # 孤兒清除：刪完 items 後檢查每個受影響 batch 是否變空
+            # → 空 batch 連 row 一起刪（含 Firebase PDF best-effort 清掉）
+            await db.flush()
+            for bid in affected_batch_ids:
+                remaining = (await db.execute(
+                    select(func.count()).select_from(PrintBatchItem).where(
+                        PrintBatchItem.print_batch_id == bid
+                    )
+                )).scalar() or 0
+                if remaining == 0:
+                    batch = await db.get(PrintBatch, bid)
+                    if batch:
+                        pdf_url = batch.pdf_url
+                        await db.delete(batch)
+                        _delete_firebase_pdf(pdf_url)
+                        logger.info(
+                            "cascade: print_batch %s 因失去所有 items 自動刪除", bid,
+                        )
+            # NOTE: 還有 items 的 batch 其 cost / inch_count 不會自動重算（已知限制）。
         # order_item: skip — 上層 delete_job 已過濾
 
 

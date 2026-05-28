@@ -4,9 +4,25 @@
 
 const API = '/api/v1'
 
-interface ApiError {
+export interface BatchReferenceItem {
+  id: string
+  display: string
+}
+
+export interface BatchReferenceGroup {
+  type: 'order_item'
+  label: string
+  cascadeable: false
+  blocking_reason?: string | null
+  items: BatchReferenceItem[]
+}
+
+export interface ApiError {
   message: string
+  code?: string
   status: number
+  /** AppError.extra 透傳：批次被訂單擋時帶回引用清單 */
+  references?: BatchReferenceGroup[]
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -20,7 +36,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     throw {
       message: body.message || body.detail || `HTTP ${res.status}`,
+      code: body.code,
       status: res.status,
+      references: body.references,
     } as ApiError
   }
   return body
@@ -167,6 +185,39 @@ export function getBatch(id: string) {
 export function finalizeBatch(id: string) {
   return request<PrintBatchDetail>(`/admin/print-batches/${id}/finalize`, {
     method: 'POST',
+  })
+}
+
+/**
+ * 硬刪除列印批次 — items 因 FK CASCADE 自動連動、Firebase PDF best-effort 刪。
+ * 後端拒絕情況：批次內含 order_item（金流稽核紅線，無 cascade 繞過）。
+ */
+export function deletePrintBatch(id: string) {
+  return request<null>(`/admin/print-batches/${id}`, { method: 'DELETE' })
+}
+
+export interface BatchDeleteBatchResult {
+  batch_id: string
+  ok: boolean
+  error: string | null
+  references: BatchReferenceGroup[] | null
+}
+
+export interface BatchDeleteBatchesResponse {
+  total: number
+  success: number
+  failed: number
+  results: BatchDeleteBatchResult[]
+}
+
+/**
+ * 批次硬刪除列印批次（一次最多 50 筆）— 失敗筆獨立、不影響成功筆。
+ * 失敗回 results[].references 給前端展示細節。
+ */
+export function deletePrintBatchesBatch(batchIds: string[]) {
+  return request<BatchDeleteBatchesResponse>('/admin/print-batches/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ batch_ids: batchIds }),
   })
 }
 

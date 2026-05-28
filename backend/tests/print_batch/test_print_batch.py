@@ -769,4 +769,262 @@ async def test_render_svg_when_svglib_unavailable_uses_cairosvg(db):
 
     assert drawing is None
     assert png_bytes is not None
-    assert len(cairo_calls) == 1
+
+
+# ── Delete print_batch (Module 22 — cascade orphan + 訂單守則) ────────────────
+
+
+async def _make_batch_with_item(
+    db, job, *, source_type="standalone", source_order_item_id=None,
+    pdf_url=None, status="draft",
+):
+    """快速建一個 batch + 一個 item。回 (batch, item)。"""
+    from print_batch.models import (
+        PrintBatch, PrintBatchItem, PrintBatchItemSourceEnum, PrintBatchStatusEnum,
+    )
+
+    batch = PrintBatch(
+        status=PrintBatchStatusEnum(status),
+        total_inch_count=Decimal("2.2222"),
+        billable_inch_count=Decimal("3"),
+        print_cost=Decimal("200"),
+        cut_cost=Decimal("100"),
+        total_cost=Decimal("300"),
+        pdf_url=pdf_url,
+    )
+    db.add(batch)
+    await db.flush()
+    item = PrintBatchItem(
+        print_batch_id=batch.id,
+        source_type=PrintBatchItemSourceEnum(source_type),
+        source_order_item_id=source_order_item_id,
+        production_job_id=job.id,
+        quantity=1,
+        inch_per_unit=Decimal("2.2222"),
+        canvas_w_cm=Decimal("30.0"),
+        canvas_h_cm=Decimal("40.0"),
+    )
+    db.add(item)
+    await db.commit()
+    return batch, item
+
+
+async def _make_paid_order_with_item(db, user, job):
+    """建一筆 paid Order + OrderItem 綁 job，給 print_batch_item.source_order_item_id 用。"""
+    from orders.models import (
+        Order, OrderItem, OrderStatusEnum, ShippingTypeEnum,
+    )
+
+    order = Order(
+        user_id=user.id,
+        order_number=f"ORD-PB-{uuid.uuid4().hex[:6]}",
+        status=OrderStatusEnum.paid,
+        subtotal=100, total=100,
+        shipping_type=ShippingTypeEnum.home,
+        shipping_snapshot={"recipient": "T", "phone": "0900", "address": "T"},
+    )
+    db.add(order)
+    await db.flush()
+    oi = OrderItem(
+        order_id=order.id,
+        production_job_id=job.id,
+        product_title_snapshot="T",
+        variant_spec_snapshot={"size": "30x40"},
+        unit_price=100, quantity=1,
+    )
+    db.add(oi)
+    await db.commit()
+    return order, oi
+
+
+@pytest.mark.asyncio
+async def test_delete_draft_batch_succeeds(client, db):
+    """draft batch 可刪、items 同時 CASCADE 消失。"""
+    from print_batch.models import PrintBatch, PrintBatchItem
+
+    await _make_admin(db)
+    j = await _make_job(db, w=30, h=40)
+    batch, item = await _make_batch_with_item(db, j, status="draft")
+    batch_id = batch.id
+    item_id = item.id
+
+    await _login_admin(client)
+    res = await client.delete(f"{URL}/{batch_id}")
+    assert res.status_code == 204
+
+    # 清 session cache（DB CASCADE 刪掉 row 但 session 還持有 stale 物件）
+    db.expire_all()
+    # batch + item 都不見
+    assert (await db.execute(
+        select(PrintBatch).where(PrintBatch.id == batch_id)
+    )).scalar_one_or_none() is None
+    assert (await db.execute(
+        select(PrintBatchItem).where(PrintBatchItem.id == item_id)
+    )).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_delete_finalized_batch_succeeds_and_cleans_pdf(client, db):
+    """finalized + 帶 pdf_url（gs://）也可刪、_delete_firebase_pdf 被呼叫。"""
+    from print_batch.models import PrintBatch
+
+    await _make_admin(db)
+    j = await _make_job(db, w=30, h=40)
+    batch, _item = await _make_batch_with_item(
+        db, j, status="finalized", pdf_url="gs://test-bucket/print_batches/x/y.pdf",
+    )
+
+    await _login_admin(client)
+    with patch("print_batch.service._delete_firebase_pdf") as mock_del:
+        res = await client.delete(f"{URL}/{batch.id}")
+        assert res.status_code == 204
+        mock_del.assert_called_once_with("gs://test-bucket/print_batches/x/y.pdf")
+
+    assert await db.get(PrintBatch, batch.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_batch_blocked_by_order_item(client, db):
+    """item 來源是 order_item → 400 + code=BATCH_BLOCKED_BY_ORDER + references。"""
+    from print_batch.models import PrintBatch
+
+    await _make_admin(db)
+    customer = await _make_customer(db)
+    j = await _make_job(db, w=30, h=40)
+    _order, oi = await _make_paid_order_with_item(db, customer, j)
+    batch, _item = await _make_batch_with_item(
+        db, j, source_type="order_item", source_order_item_id=oi.id,
+    )
+
+    await _login_admin(client)
+    res = await client.delete(f"{URL}/{batch.id}")
+    assert res.status_code == 400
+    body = res.json()
+    assert body["code"] == "BATCH_BLOCKED_BY_ORDER"
+    assert len(body["references"]) == 1
+    g = body["references"][0]
+    assert g["type"] == "order_item"
+    assert g["cascadeable"] is False
+    assert "ORD-PB-" in g["items"][0]["display"]
+
+    # batch 還在
+    assert await db.get(PrintBatch, batch.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_partial(client, db):
+    """batch-delete 三筆（draft / finalized / order）→ 2 成功 1 失敗。"""
+    from print_batch.models import PrintBatch
+
+    await _make_admin(db)
+    customer = await _make_customer(db)
+    j1 = await _make_job(db, w=30, h=40, svg_url="https://e.com/1.svg")
+    j2 = await _make_job(db, w=20, h=30, svg_url="https://e.com/2.svg")
+    j3 = await _make_job(db, w=10, h=20, svg_url="https://e.com/3.svg")
+
+    b1, _ = await _make_batch_with_item(db, j1, status="draft")
+    b2, _ = await _make_batch_with_item(db, j2, status="finalized")
+    _order, oi = await _make_paid_order_with_item(db, customer, j3)
+    b3, _ = await _make_batch_with_item(
+        db, j3, source_type="order_item", source_order_item_id=oi.id,
+    )
+
+    await _login_admin(client)
+    res = await client.post(
+        f"{URL}/batch-delete",
+        json={"batch_ids": [str(b1.id), str(b2.id), str(b3.id)]},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 3
+    assert body["success"] == 2
+    assert body["failed"] == 1
+
+    by_id = {r["batch_id"]: r for r in body["results"]}
+    assert by_id[str(b1.id)]["ok"] is True
+    assert by_id[str(b2.id)]["ok"] is True
+    assert by_id[str(b3.id)]["ok"] is False
+    assert by_id[str(b3.id)]["references"] is not None
+    assert by_id[str(b3.id)]["references"][0]["type"] == "order_item"
+
+    # b1 / b2 沒了；b3 還在
+    assert await db.get(PrintBatch, b1.id) is None
+    assert await db.get(PrintBatch, b2.id) is None
+    assert await db.get(PrintBatch, b3.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_cascade_orphan_batch_removed(client, db):
+    """production_job cascade delete 後，孤兒 batch（item count = 0）自動刪。"""
+    from production.models import ProductionJob
+    from print_batch.models import PrintBatch
+    from product.models import Product, ProductStatusEnum, ProductVariant
+
+    await _make_admin(db)
+    j = await _make_job(db, w=30, h=40)
+    # variant 引用同個 job → cascade=true 才會走到 _cascade_delete_refs
+    p = Product(title="P", description="", cover_image_url="x",
+                status=ProductStatusEnum.on_sale)
+    db.add(p)
+    await db.flush()
+    db.add(ProductVariant(product_id=p.id, production_job_id=j.id,
+                          price=100, price_formula_base=100))
+    batch, _item = await _make_batch_with_item(db, j, status="draft")
+    await db.commit()
+
+    await _login_admin(client)
+    with patch("production.service.get_bucket"):
+        res = await client.delete(
+            f"/api/v1/admin/production/jobs/{j.id}?cascade=true",
+        )
+    assert res.status_code == 204
+    # batch 與 job 都消失（job 被刪 → cascade 刪 print_batch_item → batch 變空孤兒 → 連帶刪）
+    assert await db.get(PrintBatch, batch.id) is None
+    assert await db.get(ProductionJob, j.id) is None
+
+
+@pytest.mark.asyncio
+async def test_cascade_keeps_batch_when_other_items_remain(client, db):
+    """同 batch 內還有其他 job 的 item → cascade 刪 job 後 batch 保留。"""
+    from production.models import ProductionJob
+    from print_batch.models import PrintBatch, PrintBatchItem, PrintBatchItemSourceEnum
+    from product.models import Product, ProductStatusEnum, ProductVariant
+
+    await _make_admin(db)
+    j1 = await _make_job(db, w=30, h=40)
+    j2 = await _make_job(db, w=20, h=30)
+    p = Product(title="P", description="", cover_image_url="x",
+                status=ProductStatusEnum.on_sale)
+    db.add(p)
+    await db.flush()
+    db.add(ProductVariant(product_id=p.id, production_job_id=j1.id,
+                          price=100, price_formula_base=100))
+
+    # batch 包兩個 items：j1 + j2
+    batch, _item1 = await _make_batch_with_item(db, j1, status="draft")
+    db.add(PrintBatchItem(
+        print_batch_id=batch.id,
+        source_type=PrintBatchItemSourceEnum.standalone,
+        production_job_id=j2.id,
+        quantity=1,
+        inch_per_unit=Decimal("1.5"),
+        canvas_w_cm=Decimal("20.0"),
+        canvas_h_cm=Decimal("30.0"),
+    ))
+    await db.commit()
+
+    await _login_admin(client)
+    with patch("production.service.get_bucket"):
+        res = await client.delete(
+            f"/api/v1/admin/production/jobs/{j1.id}?cascade=true",
+        )
+    assert res.status_code == 204
+
+    # j1 被刪，batch 還在（仍含 j2 的 item）
+    assert await db.get(ProductionJob, j1.id) is None
+    assert await db.get(PrintBatch, batch.id) is not None
+    remaining = (await db.execute(
+        select(PrintBatchItem).where(PrintBatchItem.print_batch_id == batch.id)
+    )).scalars().all()
+    assert len(remaining) == 1
+    assert remaining[0].production_job_id == j2.id

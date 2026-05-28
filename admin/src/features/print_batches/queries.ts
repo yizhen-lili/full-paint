@@ -4,6 +4,8 @@ import { toValue } from 'vue'
 
 import {
   createBatch,
+  deletePrintBatch,
+  deletePrintBatchesBatch,
   finalizeBatch,
   getBatch,
   getCandidates,
@@ -72,6 +74,22 @@ export function useFinalizeBatchMutation() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => finalizeBatch(id),
+    onSuccess: () => inv(qc),
+  })
+}
+
+export function useDeleteBatchMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deletePrintBatch(id),
+    onSuccess: () => inv(qc),
+  })
+}
+
+export function useDeleteBatchesBatchMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (batchIds: string[]) => deletePrintBatchesBatch(batchIds),
     onSuccess: () => inv(qc),
   })
 }

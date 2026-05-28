@@ -445,6 +445,123 @@ async def finalize(db: AsyncSession, batch_id: UUID) -> PrintBatch:
     return batch
 
 
+async def _check_batch_references(db: AsyncSession, batch_id: UUID) -> list[dict]:
+    """檢查 batch 內有沒有 source_type=order_item 的 items。
+
+    回傳結構同 production._check_job_references — list[group dict]：
+    [{"type":"order_item","label":...,"cascadeable":False,"blocking_reason":...,
+      "items":[{"id":..., "display":...}]}]
+
+    沒有訂單引用回 []，呼叫端據此放行刪除。
+    """
+    from orders.models import Order, OrderItem  # noqa: PLC0415
+
+    rows = (await db.execute(
+        select(PrintBatchItem, OrderItem, Order)
+        .join(OrderItem, PrintBatchItem.source_order_item_id == OrderItem.id)
+        .join(Order, OrderItem.order_id == Order.id)
+        .where(
+            PrintBatchItem.print_batch_id == batch_id,
+            PrintBatchItem.source_type == PrintBatchItemSourceEnum.order_item,
+        )
+    )).all()
+    if not rows:
+        return []
+    return [{
+        "type": "order_item",
+        "label": "訂單項目",
+        "cascadeable": False,
+        "blocking_reason": "批次內含訂單項目，刪除會破壞金流稽核記錄；請先取消 / 退款相關訂單",
+        "items": [
+            {"id": str(item.id), "display": f"訂單 {order.order_number}（{order.status}）"}
+            for item, _oi, order in rows
+        ],
+    }]
+
+
+def _delete_firebase_pdf(pdf_url: str | None) -> None:
+    """best-effort 刪 Firebase 上的 PDF 物件（gs:// 路徑）。
+
+    stub URL / http(s)：直接 skip（沒實體物件可刪）
+    失敗只 log，不阻擋 DB 操作。
+    """
+    if not pdf_url or "stub.firebase" in pdf_url:
+        return
+    if not pdf_url.startswith("gs://"):
+        return
+    try:
+        from core.firebase import get_bucket  # noqa: PLC0415
+
+        bucket = get_bucket()
+        parts = pdf_url.split(f"/{bucket.name}/", 1)
+        if len(parts) != 2:
+            logger.warning("無法解析 Firebase PDF 路徑：%s", pdf_url)
+            return
+        blob_path = parts[1]
+        blob = bucket.blob(blob_path)
+        if blob.exists():
+            blob.delete()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("firebase pdf cleanup failed for %s: %s", pdf_url, e)
+
+
+async def delete_print_batch(db: AsyncSession, batch_id: UUID) -> None:
+    """硬刪除 print_batch — 連帶刪 items（FK ON DELETE CASCADE）+ Firebase PDF。
+
+    安全規則：批次內任何 item 是 order_item 來源 → 拒絕（code=BATCH_BLOCKED_BY_ORDER）。
+    draft / finalized 都可刪。
+
+    不要求 explicit cascade flag — 因為唯一會拒絕的情境是訂單金流稽核紅線，
+    那種情境永遠不該開放繞過。
+    """
+    batch = await _get_batch_or_404(db, batch_id)
+
+    refs = await _check_batch_references(db, batch_id)
+    if refs:
+        raise BadRequestError(
+            detail="批次內含訂單項目，請先處理該訂單（取消 / 退款）再刪除",
+            code="BATCH_BLOCKED_BY_ORDER",
+            extra={"references": refs},
+        )
+
+    pdf_url = batch.pdf_url
+    # FK print_batch_items.print_batch_id ON DELETE CASCADE → items 自動連動
+    await db.delete(batch)
+    await db.commit()
+
+    # Firebase best-effort：刪 PDF；失敗不影響 DB 已刪
+    _delete_firebase_pdf(pdf_url)
+
+
+async def batch_delete_print_batches(
+    db: AsyncSession, batch_ids: list[UUID],
+) -> list[dict]:
+    """批次硬刪除 — 逐筆獨立 try/except，失敗筆不影響成功筆。
+
+    回 list[{"batch_id", "ok", "error", "references"}]。references 在被訂單擋
+    時填結構化清單（給前端展開顯示）。
+    """
+    results: list[dict] = []
+    for bid in batch_ids:
+        try:
+            await delete_print_batch(db, bid)
+            results.append({
+                "batch_id": bid, "ok": True, "error": None, "references": None,
+            })
+        except (BadRequestError, NotFoundError) as e:
+            refs = (getattr(e, "extra", None) or {}).get("references")
+            results.append({
+                "batch_id": bid, "ok": False, "error": e.detail, "references": refs,
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.exception("batch_delete_print_batches unexpected for %s", bid)
+            results.append({
+                "batch_id": bid, "ok": False, "error": f"未預期錯誤：{e}",
+                "references": None,
+            })
+    return results
+
+
 async def list_batches(
     db: AsyncSession, status: str | None, page: int, page_size: int,
 ) -> dict:
