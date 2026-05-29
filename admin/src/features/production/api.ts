@@ -250,6 +250,16 @@ export function unapproveJob(id: string) {
 }
 
 /**
+ * 救援：把卡在 failed 但 svg / filled 都還在的 job 重置為 completed。
+ * 重置後 approved=False，需要 admin 重新審核。
+ */
+export function resetJobToCompleted(id: string) {
+  return request<JobDetail>(`/admin/production/jobs/${id}/reset-to-completed`, {
+    method: 'POST',
+  })
+}
+
+/**
  * 硬刪除 job — 連帶刪 palette_color_mappings 子資料 + Firebase svg/filled/snapped/mask 物件。
  * Backend 拒絕情況：status=processing（worker 在跑）或被 product/batch/order 引用。
  *

@@ -714,6 +714,41 @@ async def unapprove_job(db: AsyncSession, job_id: UUID) -> ProductionJob:
     return job
 
 
+async def reset_failed_to_completed(db: AsyncSession, job_id: UUID) -> ProductionJob:
+    """failed → completed 救援：當 post_process / sam_refine 等 Celery 任務失敗、
+    但 job 的核心檔案（svg_url + filled_template_url）仍存在於 Firebase 時，admin
+    可呼叫此 endpoint 把 status 拉回 completed，免去整個重建任務。
+
+    安全規則：
+    - 只允許 status=failed 的 job 走此路徑（避免誤觸 processing / completed）
+    - 必須有 svg_url + filled_template_url（這是「資料完整」的最低門檻）
+    - 重置後 approved=False（admin 需重新審核）
+    - finalized_at 不動（若曾 finalize 過就維持；前端依然能顯示 template_final）
+    """
+    from production.models import JobStatusEnum  # noqa: PLC0415
+
+    job = await get_job(db, job_id)
+    if job.status != JobStatusEnum.failed:
+        raise BadRequestError(
+            f"只有 status=failed 的任務才能重置，當前 status={job.status.value}",
+        )
+    if not job.svg_url or not job.filled_template_url:
+        raise BadRequestError(
+            "任務缺少 svg_url 或 filled_template_url，資料不完整、無法重置",
+            code="JOB_DATA_MISSING",
+        )
+    job.status = JobStatusEnum.completed
+    job.approved = False
+    job.approved_at = None
+    await db.commit()
+    await db.refresh(job)
+    logger.info(
+        "reset_failed_to_completed: job %s 從 failed → completed（admin 救援）",
+        job_id,
+    )
+    return job
+
+
 # ── SAM mask edit ──────────────────────────────────────────────────────────────
 
 async def update_sam_mask(

@@ -13,6 +13,7 @@ import {
   Palette,
   Combine,
   Eraser,
+  RotateCcw,
   Trash2,
 } from 'lucide-vue-next'
 
@@ -27,6 +28,7 @@ import {
   useBatchPostProcessMutation,
   useDeleteJobMutation,
   useJobQuery,
+  useResetJobToCompletedMutation,
   useUnapproveJobMutation,
 } from '../queries'
 import type { ApiError, BatchOperation, JobReferenceGroup } from '../api'
@@ -47,6 +49,16 @@ const approveMut = useApproveJobMutation(jobId.value)
 const unapproveMut = useUnapproveJobMutation(jobId.value)
 const batchMut = useBatchPostProcessMutation(jobId.value)
 const deleteMut = useDeleteJobMutation()
+const resetMut = useResetJobToCompletedMutation(jobId.value)
+
+async function doResetToCompleted() {
+  apiError.value = null
+  try {
+    await resetMut.mutateAsync()
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '重設失敗'
+  }
+}
 
 // 刪除：2-click 確認（armed 3 秒）防誤觸
 const deleteArmed = ref(false)
@@ -336,11 +348,35 @@ function fmtDateTime(iso: string | null): string {
 
     <div
       v-if="job.status === 'failed' || job.status === 'cancelled'"
-      class="mb-5 px-4 py-3 border border-state-danger/40 bg-[var(--color-state-danger)]/[0.06] text-state-danger text-[13px] rounded-[var(--radius-xs)] flex items-center gap-2"
+      class="mb-5 px-4 py-3 border border-state-danger/40 bg-[var(--color-state-danger)]/[0.06] text-state-danger text-[13px] rounded-[var(--radius-xs)] flex items-start gap-2"
     >
-      <AlertTriangle :size="14" :stroke-width="1.5" />
-      <span v-if="job.status === 'failed'">任務執行失敗，無法繼續處理。請重新建立任務。</span>
-      <span v-else>批次中前一筆失敗導致此任務取消。</span>
+      <AlertTriangle :size="14" :stroke-width="1.5" class="mt-0.5 shrink-0" />
+      <div class="flex-1">
+        <p v-if="job.status === 'failed'">任務執行失敗。</p>
+        <p v-else>批次中前一筆失敗導致此任務取消。</p>
+        <!-- 救援：若 svg + filled 都還在，可重置為 completed 而不用整個重建 -->
+        <div
+          v-if="job.status === 'failed' && job.svg_url && job.filled_template_url"
+          class="mt-2 text-state-danger/80 leading-[1.5]"
+        >
+          但你的 SVG 與成品檔都還在 Firebase（可能是 post-process 等後續任務失敗）— 點下方
+          可把狀態重置為「已完成」、繼續使用，無須重建任務。
+          <div class="mt-2">
+            <Button
+              variant="secondary"
+              :disabled="resetMut.isPending.value"
+              @click="doResetToCompleted"
+            >
+              <Loader2 v-if="resetMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+              <RotateCcw v-else :size="14" :stroke-width="1.5" />
+              重設為「已完成」
+            </Button>
+          </div>
+        </div>
+        <p v-else-if="job.status === 'failed'" class="mt-1 text-state-danger/80">
+          缺少必要檔案（svg / filled_template），請重新建立任務。
+        </p>
+      </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">

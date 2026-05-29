@@ -13,6 +13,7 @@ import {
   listJobs,
   mergeColor,
   startBatch,
+  resetJobToCompleted,
   unapproveJob,
   updateSamMask,
   type BatchPostProcessPayload,
@@ -78,6 +79,14 @@ export function useUnapproveJobMutation(id: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => unapproveJob(id),
+    onSuccess: () => invalidate(qc, id),
+  })
+}
+
+export function useResetJobToCompletedMutation(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => resetJobToCompleted(id),
     onSuccess: () => invalidate(qc, id),
   })
 }

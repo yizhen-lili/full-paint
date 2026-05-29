@@ -1220,6 +1220,78 @@ async def test_unapprove_unauthenticated(client: AsyncClient, db):
     assert res.status_code == 401
 
 
+# ── POST /admin/production/jobs/{id}/reset-to-completed ─────────────────────
+
+RESET_SUFFIX = "/reset-to-completed"
+
+
+async def _set_status(db, job_id, status):
+    from sqlalchemy import update
+    from production.models import JobStatusEnum, ProductionJob
+    await db.execute(
+        update(ProductionJob)
+        .where(ProductionJob.id == job_id)
+        .values(status=JobStatusEnum(status))
+    )
+    await db.commit()
+
+
+async def _set_urls(db, job_id, svg_url=None, filled_url=None):
+    from sqlalchemy import update
+    from production.models import ProductionJob
+    values = {}
+    if svg_url is not None:
+        values["svg_url"] = svg_url
+    if filled_url is not None:
+        values["filled_template_url"] = filled_url
+    if values:
+        await db.execute(
+            update(ProductionJob).where(ProductionJob.id == job_id).values(**values)
+        )
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_to_completed_ok(client: AsyncClient, db):
+    """failed + svg/filled 都還在 → 重置成 completed、approved=False。"""
+    job_id = await _create_pending_job(client, db)
+    await _set_status(db, job_id, "failed")
+    await _set_urls(db, job_id,
+                    svg_url="gs://b/x.svg",
+                    filled_url="https://example.com/f.png")
+
+    res = await client.post(f"{JOBS_URL}/{job_id}{RESET_SUFFIX}")
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["status"] == "completed"
+    assert data["approved"] is False
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_rejects_completed_job(client: AsyncClient, db):
+    """completed status 不能重置（避免誤觸）→ 400。"""
+    job_id = await _create_pending_job(client, db)
+    await _force_complete(db, job_id)
+    await _set_urls(db, job_id,
+                    svg_url="gs://b/x.svg",
+                    filled_url="https://example.com/f.png")
+
+    res = await client.post(f"{JOBS_URL}/{job_id}{RESET_SUFFIX}")
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_rejects_missing_files(client: AsyncClient, db):
+    """failed 但 svg_url 是空的 → 400 + code=JOB_DATA_MISSING（資料真的壞了、不該重置）。"""
+    job_id = await _create_pending_job(client, db)
+    await _set_status(db, job_id, "failed")
+    # 不設 svg_url / filled_url（保持 None）
+
+    res = await client.post(f"{JOBS_URL}/{job_id}{RESET_SUFFIX}")
+    assert res.status_code == 400
+    assert res.json()["code"] == "JOB_DATA_MISSING"
+
+
 # ── POST /admin/production/jobs/{id}/post-process/* ───────────────────────────
 
 MERGE_COLOR_URL_SUFFIX = "/post-process/merge-color"

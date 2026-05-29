@@ -218,6 +218,23 @@ async def unapprove_job(
 
 
 @router.post(
+    "/admin/production/jobs/{job_id}/reset-to-completed",
+    response_model=JobDetailResponse,
+)
+async def reset_failed_to_completed(
+    job_id: UUID,
+    operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """救援：把因 Celery 任務失敗而卡在 failed 狀態、但檔案還在的 job 拉回 completed。
+
+    僅限 status=failed 且 svg_url + filled_template_url 都還存在的 job。
+    重置後 approved=False，admin 需重新審核。
+    """
+    return await service.reset_failed_to_completed(db, job_id)
+
+
+@router.post(
     "/admin/production/jobs/{job_id}/post-process/merge-color",
     response_model=JobDetailResponse,
     status_code=202,
