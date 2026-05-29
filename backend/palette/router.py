@@ -76,3 +76,27 @@ async def complete_mappings(
 ):
     result = await service.complete_mappings(db, job_id)
     return CompleteResponse(**result)
+
+
+@router.post(BASE + "/confirm-merges")
+async def confirm_pending_merges(
+    job_id: UUID,
+    operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """確認 finalize 產生的「自動合併建議」：套用到 palette_color_mappings、
+    重跑 complete_mappings（含 finalize_template）。
+
+    錯誤：400 沒有 pending（job.pending_auto_merges 為空）。
+    """
+    return await service.confirm_pending_merges(db, job_id)
+
+
+@router.post(BASE + "/reject-merges")
+async def reject_pending_merges(
+    job_id: UUID,
+    operator=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """拒絕合併建議：清空 pending_auto_merges 欄位，不動 DB / 不重 finalize。"""
+    return await service.reject_pending_merges(db, job_id)

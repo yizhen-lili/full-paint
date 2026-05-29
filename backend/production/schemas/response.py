@@ -127,6 +127,9 @@ class JobDetailResponse(BaseModel):
     original_palette_final_url: str | None = None
     original_filled_template_final_url: str | None = None
     original_finalized_at: datetime | None = None
+    # finalize 產生的「自動合併建議」清單；admin 確認 / 拒絕後清空
+    # 結構：[{tiny_template_id, target_template_id, tiny_area}, ...]
+    pending_auto_merges: list | None = None
     created_at: datetime
     approved_at: datetime | None
 

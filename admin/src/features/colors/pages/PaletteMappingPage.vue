@@ -22,8 +22,10 @@ import Button from '@/shared/ui/Button.vue'
 import {
   PM_KEYS,
   useCompleteMappingsMutation,
+  useConfirmPendingMergesMutation,
   useCopyMappingsMutation,
   usePaletteMappingsQuery,
+  useRejectPendingMergesMutation,
   useUpdateMappingMutation,
 } from '../queries_mapping'
 import { useRevertRgbMutation, useUpdateRgbMutation } from '../queries'
@@ -48,6 +50,26 @@ const { data, isLoading, isError, error } = usePaletteMappingsQuery(jobId)
 const updateMut = useUpdateMappingMutation(jobId.value)
 const copyMut = useCopyMappingsMutation(jobId.value)
 const completeMut = useCompleteMappingsMutation(jobId.value)
+const confirmMergesMut = useConfirmPendingMergesMutation(jobId.value)
+const rejectMergesMut = useRejectPendingMergesMutation(jobId.value)
+
+async function confirmAutoMerges() {
+  apiError.value = null
+  try {
+    await confirmMergesMut.mutateAsync()
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '確認合併失敗'
+  }
+}
+
+async function rejectAutoMerges() {
+  apiError.value = null
+  try {
+    await rejectMergesMut.mutateAsync()
+  } catch (e) {
+    apiError.value = (e as { message?: string }).message || '拒絕合併失敗'
+  }
+}
 
 const mappings = computed(() => data.value?.mappings ?? [])
 
@@ -547,6 +569,58 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
             />
           </div>
         </Card>
+      </div>
+    </div>
+  </section>
+
+  <!-- 自動合併建議（finalize 偵測到微小色塊建議合進相近鄰居；待 admin 確認）-->
+  <section
+    v-if="jobData?.pending_auto_merges?.length"
+    class="mt-6"
+  >
+    <div class="p-4 border border-state-info/40 bg-state-info/[0.04] rounded-[var(--radius-sm)]">
+      <div class="flex items-start gap-3">
+        <Sparkles :size="18" :stroke-width="1.5" class="text-state-info mt-0.5 shrink-0" />
+        <div class="flex-1 min-w-0">
+          <h3 class="font-display text-ink-strong text-[15px] leading-[22px] mb-1">
+            自動合併建議（{{ jobData.pending_auto_merges.length }} 個小色塊）
+          </h3>
+          <p class="text-[12px] text-ink-muted leading-[1.6]">
+            系統偵測到一些太小、難以辨識色號的色塊，已在上方「最新版」模板**視覺上**合進
+            色差最近的鄰居（這時候 DB 還沒動）。請對照「原始版 vs 最新版」確認 — 滿意就按
+            「確認合併寫入 DB」（會更新 mapping + 重新 finalize 一次）；不滿意就「放棄這次建議」。
+          </p>
+          <ul class="mt-2 text-[12px] space-y-0.5 max-h-[160px] overflow-y-auto pr-1">
+            <li
+              v-for="m in jobData.pending_auto_merges"
+              :key="`${m.tiny_template_id}-${m.target_template_id}`"
+              class="text-ink-default leading-[1.5]"
+            >
+              • template <span class="font-mono">#{{ m.tiny_template_id }}</span>
+              （面積 {{ m.tiny_area.toFixed(1) }}）→ 合併到
+              <span class="font-mono">#{{ m.target_template_id }}</span> 的色組
+            </li>
+          </ul>
+          <div class="mt-3 flex gap-2 flex-wrap">
+            <Button
+              variant="primary"
+              :disabled="confirmMergesMut.isPending.value || rejectMergesMut.isPending.value"
+              @click="confirmAutoMerges"
+            >
+              <Loader2 v-if="confirmMergesMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+              <CheckCircle2 v-else :size="14" :stroke-width="1.5" />
+              確認合併寫入 DB
+            </Button>
+            <Button
+              variant="secondary"
+              :disabled="confirmMergesMut.isPending.value || rejectMergesMut.isPending.value"
+              @click="rejectAutoMerges"
+            >
+              <Loader2 v-if="rejectMergesMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+              放棄這次建議
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   </section>

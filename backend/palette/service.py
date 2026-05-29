@@ -301,6 +301,85 @@ async def complete_mappings(db: AsyncSession, job_id: UUID) -> dict:
     }
 
 
+async def confirm_pending_merges(db: AsyncSession, job_id: UUID) -> dict:
+    """把 pending_auto_merges 真的套用到 palette_color_mappings 並重 finalize。
+
+    流程：
+    1. 取 job.pending_auto_merges（無 → 400）
+    2. 對每個 (tiny_tid, target_tid)：
+       - 從 target 的 mapping 取 physical_color_id
+       - update tiny 的 mapping 改成同個 physical_color_id, mapped_by='system',
+         required_ml=None（待 complete_mappings 重算）
+    3. 清空 pending_auto_merges（避免重 finalize 又把舊的 records 寫回 — 注意：
+       新一輪 svg_consolidate 仍可能偵測新的 tiny，但這次的清單已套用、不該卡舊）
+    4. 重跑 complete_mappings（含 finalize_template）— 會觸發 archive
+       把當前 latest 鎖為「原始版」、產出合併後新版
+    """
+    job = await _get_job_or_404(db, job_id)
+    pending = job.pending_auto_merges or []
+    if not pending:
+        raise BadRequestError("沒有待確認的自動合併建議")
+
+    # 載入該 job 所有 mappings 給後續查 physical_color_id 用
+    mappings = list((await db.execute(
+        select(PaletteColorMapping).where(
+            PaletteColorMapping.production_job_id == job_id,
+        )
+    )).scalars().all())
+    by_tid = {m.template_id: m for m in mappings}
+
+    applied = 0
+    for rec in pending:
+        try:
+            tiny_tid = int(rec["tiny_template_id"])
+            target_tid = int(rec["target_template_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        target_m = by_tid.get(target_tid)
+        tiny_m = by_tid.get(tiny_tid)
+        if target_m is None or tiny_m is None:
+            continue
+        if tiny_m.physical_color_id == target_m.physical_color_id:
+            continue
+        tiny_m.physical_color_id = target_m.physical_color_id
+        tiny_m.mapped_by = MappedByEnum.system
+        tiny_m.required_ml = None
+        applied += 1
+
+    # 清掉 pending（不論 applied 是 0 還是 N，這次的清單已處理完）
+    job.pending_auto_merges = None
+    await db.commit()
+
+    logger.info(
+        "confirm_pending_merges: job=%s applied=%d of %d pending",
+        job_id, applied, len(pending),
+    )
+
+    # 重跑 complete_mappings → 重算 required_ml + finalize_template
+    # 這次 finalize 會把當前 latest archive 為「原始版」、新版反映合併狀態
+    result = await complete_mappings(db, job_id)
+    return {
+        "applied_count": applied,
+        "complete_result": result,
+    }
+
+
+async def reject_pending_merges(db: AsyncSession, job_id: UUID) -> dict:
+    """拒絕自動合併建議：清空 pending_auto_merges、不動 mapping、不重 finalize。
+
+    admin 不喜歡這次的合併建議 → 回頭手動調 mapping 或直接維持現狀。
+    """
+    job = await _get_job_or_404(db, job_id)
+    pending_count = len(job.pending_auto_merges or [])
+    job.pending_auto_merges = None
+    await db.commit()
+    logger.info(
+        "reject_pending_merges: job=%s rejected=%d pending",
+        job_id, pending_count,
+    )
+    return {"rejected_count": pending_count}
+
+
 async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     """產出「實體色版最終模板」：
 
@@ -428,7 +507,7 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     svg_path = _gs_path(job.svg_url, bucket.name)
     svg_blob = bucket.blob(svg_path)
     svg_bytes = svg_blob.download_as_bytes()
-    final_svg_bytes = regenerate_merged_svg(
+    final_svg_bytes, auto_merge_records = regenerate_merged_svg(
         svg_bytes, label_map, job.palette_json, palette_final,
     )
 
@@ -467,6 +546,9 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     if filled_template_final_url:
         job.filled_template_final_url = filled_template_final_url
     job.finalized_at = datetime.now(UTC)
+    # 自動合併建議：svg_consolidate 偵測到的微小色塊建議清單，待 admin 確認後寫 DB
+    # 空清單 → 設 None（NULL）讓前端用 ?.length 判斷無 pending
+    job.pending_auto_merges = auto_merge_records if auto_merge_records else None
     await db.commit()
 
     logger.info(

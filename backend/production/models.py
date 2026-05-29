@@ -111,6 +111,12 @@ class ProductionJob(Base):
     original_palette_final_url = Column(String, nullable=True)
     original_filled_template_final_url = Column(String, nullable=True)
     original_finalized_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # 「待確認的自動合併建議」：finalize 時 svg_consolidate 偵測到微小色塊、視覺上合
+    # 進相近鄰居、產生 (tiny_template_id → target_template_id) 建議清單。
+    # admin 看了滿意才呼叫 confirm 把 mapping 真的改掉、不滿意呼叫 reject 清空。
+    # 結構：[{"tiny_template_id": int, "target_template_id": int, "tiny_area": float}]
+    # NULL = 沒有 pending（從未 finalize / 已 confirm / 已 reject / 沒有 tiny polygons）
+    pending_auto_merges = Column(JSONB, nullable=True)
     notes = Column(Text, nullable=True)
     batch_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

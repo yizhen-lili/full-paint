@@ -125,6 +125,13 @@ export interface JobDetail extends JobListItem {
   original_palette_final_url: string | null
   original_filled_template_final_url: string | null
   original_finalized_at: string | null
+  /** finalize 偵測到的微小色塊自動合併建議；admin 確認 / 拒絕後清空。
+   *  null = 沒有 pending（剛 finalize 沒偵測到 / 已 confirm / 已 reject） */
+  pending_auto_merges: {
+    tiny_template_id: number
+    target_template_id: number
+    tiny_area: number
+  }[] | null
   // F06-B 用：palette_mappings、sam_points、polygons、mask_url 等暫不入型別
 }
 

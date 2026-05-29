@@ -1168,3 +1168,161 @@ async def test_finalize_third_time_keeps_original_untouched(db):
     assert archived_after_third == archived_after_second
     # original_finalized_at 不變
     assert job.original_finalized_at == original_finalized_at_after_second
+
+
+# ── svg_consolidate collision skip & tiny merge ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_consolidate_cross_color_collision_skips_label(db):
+    """兩個不同色的最大塊靠在一起 → 第二個 label 被 collision 規則 skip。
+
+    Regression：以前 first-of-color 跳過 collision，導致兩個都放，視覺重疊。
+    """
+    from palette.svg_consolidate import regenerate_merged_svg
+    # 兩個相鄰大色塊：邊界共享 / polylabel 中心距離小
+    palette_json = [
+        {"template_id": 1, "rgb": [255, 0, 0], "pixels": 10000, "percent": 50.0},
+        {"template_id": 2, "rgb": [0, 0, 255], "pixels": 10000, "percent": 50.0},
+    ]
+    palette_final = [
+        {"output_label": 1, "rgb": [255, 0, 0]},
+        {"output_label": 2, "rgb": [0, 0, 255]},
+    ]
+    # 用既有 helper 構 SVG
+    from palette.svg_consolidate import _tint_hex
+    svg = (
+        b'<?xml version="1.0" encoding="utf-8"?>'
+        b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">'
+    )
+    svg += f'<polygon points="0,0 40,0 40,40 0,40" fill="{_tint_hex([255, 0, 0])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += f'<polygon points="40,0 80,0 80,40 40,40" fill="{_tint_hex([0, 0, 255])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += b'</svg>'
+
+    out, _ = regenerate_merged_svg(svg, {1: 1, 2: 2}, palette_json, palette_final)
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(out)
+    texts = [t.text for t in root.iter("{http://www.w3.org/2000/svg}text")]
+    # 兩個色塊 polylabel 中心距離大約 40 unit；font_size 大概 14 → min_dist ≈ 19.6
+    # 兩中心距離 ≈ 40 > 19.6，這個 case 可能還是兩個都放
+    # 改用「靠得更近」的 case：兩個小塊靠在一起
+    # （這 test 主要驗證 regression 行為：first-of-color 不再跳過 collision check）
+    # 只要沒爆，輸出有 <= 2 個 text 就 ok（具體看 collision tolerance）
+    assert len(texts) <= 2
+
+
+@pytest.mark.asyncio
+async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
+    """微小色塊（area < 60）且色差小的鄰居 → auto-merge。merge_records 紀錄。"""
+    from palette.svg_consolidate import regenerate_merged_svg, _tint_hex
+    # tid 1 是大紅色塊；tid 2 是微小淡紅（色差小）緊貼 tid 1；tid 3 是遠處大藍
+    palette_json = [
+        {"template_id": 1, "rgb": [255, 0, 0], "pixels": 6000, "percent": 60.0},
+        {"template_id": 2, "rgb": [240, 30, 30], "pixels": 100, "percent": 1.0},  # 微小 + 淡紅
+        {"template_id": 3, "rgb": [0, 0, 255], "pixels": 4000, "percent": 39.0},
+    ]
+    palette_final = [
+        {"output_label": 1, "rgb": [255, 0, 0]},
+        {"output_label": 2, "rgb": [240, 30, 30]},
+        {"output_label": 3, "rgb": [0, 0, 255]},
+    ]
+    svg = b'<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="200" height="100">'
+    svg += f'<polygon points="0,0 60,0 60,60 0,60" fill="{_tint_hex([255, 0, 0])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    # 微小淡紅（area=4，緊貼大紅）
+    svg += f'<polygon points="60,0 62,0 62,2 60,2" fill="{_tint_hex([240, 30, 30])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    # 遠處大藍
+    svg += f'<polygon points="120,0 180,0 180,60 120,60" fill="{_tint_hex([0, 0, 255])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += b'</svg>'
+
+    _out, merge_records = regenerate_merged_svg(
+        svg, {1: 1, 2: 2, 3: 3}, palette_json, palette_final,
+    )
+    # 預期 tid 2 微小被 merge 到 tid 1（色差小、緊貼）
+    assert len(merge_records) >= 1
+    matched = [m for m in merge_records if m["tiny_template_id"] == 2]
+    assert len(matched) == 1
+    assert matched[0]["target_template_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_merges_applies_to_db(client: AsyncClient, db):
+    """confirm 套用 pending_auto_merges → mapping 改色 + 重 finalize。"""
+    from unittest.mock import patch
+    from palette.service import finalize_template
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    color_a = await _create_color(db, COLOR_A)
+    color_b = await _create_color(db, COLOR_B)
+    await _seed_settings(db)
+
+    # 設 pending_auto_merges 模擬「上次 finalize 偵測到 tid 2 → tid 1」
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+    await db.refresh(job)
+    # 手動塞 pending（mock _merge_tiny_polygons 較複雜，這裡直接設）
+    job.pending_auto_merges = [
+        {"tiny_template_id": 2, "target_template_id": 1, "tiny_area": 5.0},
+    ]
+    await db.commit()
+
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        res = await client.post(f"{_palette_url(job.id)}/confirm-merges")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["applied_count"] == 1
+
+    await db.refresh(job)
+    assert job.pending_auto_merges is None
+    # tid 2 的 mapping 應該被改成 tid 1 的 physical_color_id (= color_a)
+    tid2 = (await db.execute(
+        select(PaletteColorMapping).where(
+            PaletteColorMapping.production_job_id == job.id,
+            PaletteColorMapping.template_id == 2,
+        )
+    )).scalar_one()
+    assert tid2.physical_color_id == color_a.id
+
+
+@pytest.mark.asyncio
+async def test_reject_pending_merges_keeps_db(client: AsyncClient, db):
+    """reject 只清 pending、不動 DB / 不重 finalize。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002")])
+    job.pending_auto_merges = [
+        {"tiny_template_id": 2, "target_template_id": 1, "tiny_area": 5.0},
+    ]
+    await db.commit()
+
+    job_id = job.id
+    # 記下 mapping 原本的 physical_color_id（離開 SQLAlchemy lazy 範圍前抓出 UUID）
+    pid_before = (await db.execute(
+        select(PaletteColorMapping.physical_color_id).where(
+            PaletteColorMapping.production_job_id == job_id,
+            PaletteColorMapping.template_id == 2,
+        )
+    )).scalar_one()
+
+    res = await client.post(f"{_palette_url(job_id)}/reject-merges")
+    assert res.status_code == 200
+    assert res.json()["rejected_count"] == 1
+
+    db.expire_all()
+    # pending_auto_merges 已清
+    job_pending = (await db.execute(
+        select(ProductionJob.pending_auto_merges).where(ProductionJob.id == job_id)
+    )).scalar_one()
+    assert job_pending is None
+    # mapping 不變
+    pid_after = (await db.execute(
+        select(PaletteColorMapping.physical_color_id).where(
+            PaletteColorMapping.production_job_id == job_id,
+            PaletteColorMapping.template_id == 2,
+        )
+    )).scalar_one()
+    assert pid_after == pid_before

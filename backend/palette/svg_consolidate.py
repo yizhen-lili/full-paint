@@ -52,6 +52,15 @@ _MIN_EXTRA_PART_BBOX = 6.0
 # 若 < (size_a + size_b) × _COLLISION_TOLERANCE → 略過（保留較大那一個）
 _COLLISION_TOLERANCE = 0.7
 
+# 微小色塊偵測：面積 < 此 OR bbox 短邊 < _TINY_POLYGON_SHORT_EDGE 視為微小、
+# 自動合併到色差最近的鄰居（SVG 層級視覺合併，DB 不動）
+_TINY_POLYGON_AREA = 60.0
+_TINY_POLYGON_SHORT_EDGE = 5.0
+# auto-merge 候選鄰居池：取距離最近的 K 個再用 LAB 色差選最佳
+_MERGE_NEIGHBOR_TOPK = 5
+# LAB 色差超過此值 → 不合（差太多就不該被「自動合進去」）
+_MERGE_MAX_LAB_DIST = 30.0
+
 
 def _normalize_hex(s: str | None) -> str | None:
     if not s:
@@ -79,6 +88,111 @@ def _tint_hex(rgb, ratio: float = _INPUT_TINT_RATIO) -> str:
     return f"#{tr:02X}{tg:02X}{tb:02X}"
 
 
+def _rgb_from_palette(palette_json: list[dict], template_id: int) -> list[int] | None:
+    """從 palette_json 找 template_id 對應的 RGB list [r, g, b]。"""
+    for entry in palette_json:
+        try:
+            if int(entry.get("template_id", -1)) != template_id:
+                continue
+        except (TypeError, ValueError):
+            continue
+        rgb = entry.get("rgb")
+        if isinstance(rgb, dict):
+            return [int(rgb.get("r", 0)), int(rgb.get("g", 0)), int(rgb.get("b", 0))]
+        if isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
+            return [int(rgb[0]), int(rgb[1]), int(rgb[2])]
+        return None
+    return None
+
+
+def _merge_tiny_polygons(
+    all_polygons: list[dict],
+) -> list[dict]:
+    """微小色塊找鄰居中色差最近者，改 template_id（in-memory only，DB 不動）。
+
+    Algorithm（O(n²) 對典型 SVG 規模可接受）：
+    1. 收 large_polys = 面積 ≥ _TINY_POLYGON_AREA 且 short_edge ≥ _TINY_POLYGON_SHORT_EDGE
+    2. 對每個 tiny polygon：
+       a. 計算與所有 large 的 shapely distance（0 = 共享邊界）
+       b. 取最近 _MERGE_NEIGHBOR_TOPK 個鄰居
+       c. 在候選池內取與 tiny 色差最小（LAB）的鄰居
+       d. 若色差 < _MERGE_MAX_LAB_DIST → 改 tiny.template_id = neighbor.template_id
+          並紀錄 merge_record
+    3. 回 merge_records list（給 finalize_template 寫進 pending_auto_merges）
+
+    Side effect：直接 mutate all_polygons[i]["template_id"]
+    """
+    try:
+        from color.service import lab_distance  # noqa: PLC0415
+    except ImportError:
+        logger.warning("color.service.lab_distance 不可用 — 跳過 tiny merge")
+        return []
+
+    tiny_indexes = []
+    large_polys = []
+    for i, p in enumerate(all_polygons):
+        shp = p["shp"]
+        minx, miny, maxx, maxy = shp.bounds
+        short_edge = min(maxx - minx, maxy - miny)
+        if shp.area < _TINY_POLYGON_AREA or short_edge < _TINY_POLYGON_SHORT_EDGE:
+            tiny_indexes.append(i)
+        else:
+            large_polys.append(p)
+
+    if not tiny_indexes or not large_polys:
+        return []
+
+    merge_records: list[dict] = []
+    for idx in tiny_indexes:
+        tiny = all_polygons[idx]
+        tiny_rgb = tiny.get("raw_rgb")
+        if tiny_rgb is None:
+            continue
+        # 計算與每個 large 的距離
+        dist_pairs: list[tuple[float, dict]] = []
+        for large in large_polys:
+            try:
+                d = tiny["shp"].distance(large["shp"])
+            except Exception:  # noqa: BLE001
+                continue
+            dist_pairs.append((d, large))
+        if not dist_pairs:
+            continue
+
+        dist_pairs.sort(key=lambda x: x[0])
+        topk = [c for _, c in dist_pairs[:_MERGE_NEIGHBOR_TOPK]]
+
+        best = None
+        best_lab = float("inf")
+        for cand in topk:
+            cand_rgb = cand.get("raw_rgb")
+            if cand_rgb is None:
+                continue
+            lab = lab_distance(tiny_rgb, cand_rgb)
+            if lab < best_lab:
+                best_lab = lab
+                best = cand
+
+        if best is None or best_lab > _MERGE_MAX_LAB_DIST:
+            continue
+        if best["template_id"] == tiny["template_id"]:
+            continue
+
+        merge_records.append({
+            "tiny_template_id": int(tiny["template_id"]),
+            "target_template_id": int(best["template_id"]),
+            "tiny_area": float(tiny["shp"].area),
+        })
+        tiny["template_id"] = best["template_id"]
+
+    if merge_records:
+        logger.info(
+            "svg consolidate: auto-merged %d tiny polygons into nearest similar-color neighbors",
+            len(merge_records),
+        )
+    return merge_records
+
+
 def _parse_points(pts: str) -> list[tuple[float, float]]:
     """SVG polygon points 屬性 "x1,y1 x2,y2 ..." 或 "x1 y1 x2 y2 ..." → [(x, y), ...]"""
     nums: list[float] = []
@@ -97,7 +211,7 @@ def regenerate_merged_svg(
     label_map: dict[int, int],
     palette_json: list[dict],
     palette_final: list[dict],
-) -> bytes:
+) -> tuple[bytes, list[dict]]:
     """把原 template.svg 依 label_map 重新分組合併，產出「實體色版」SVG。
 
     Args:
@@ -107,10 +221,12 @@ def regenerate_merged_svg(
                        用來把 polygon 的 fill 反查回 template_id）
         palette_final: finalize 產出的色號對照表（含 output_label, rgb, hex 等）
 
-    回傳：新 SVG bytes（XML 宣告 + 含合併幾何 + 編號標籤）
+    回傳：(新 SVG bytes, merge_records)
+        merge_records: 微小色塊 auto-merge 建議清單 [{tiny_template_id,
+        target_template_id, tiny_area}, ...]；DB 不動，給上層存 pending_auto_merges。
 
     錯誤處理：shapely 未安裝 → 自動 fallback 到 renumber_svg_labels（純文字替換，
-    但仍可用）；單一 polygon 解析失敗 → skip，整體仍輸出。
+    但仍可用、回 ([], )）；單一 polygon 解析失敗 → skip，整體仍輸出。
     """
     if not label_map:
         raise ValueError("label_map 不可為空")
@@ -123,7 +239,7 @@ def regenerate_merged_svg(
             "shapely not available, falling back to renumber-only: %s", e,
         )
         from palette.svg_renumber import renumber_svg_labels  # noqa: PLC0415
-        return renumber_svg_labels(svg_bytes, label_map)
+        return renumber_svg_labels(svg_bytes, label_map), []
 
     try:
         ET.register_namespace("", _SVG_NS)
@@ -147,8 +263,9 @@ def regenerate_merged_svg(
         int(p["output_label"]): p for p in palette_final
     }
 
-    # ── Step 3：解析 polygon，分組到 output_label
-    polygons_by_label: dict[int, list] = defaultdict(list)
+    # ── Step 3a：解析 polygon → flat list[{shp, template_id, raw_rgb}]
+    # 注意：先不分組，先收集為 flat list 讓 Step 3b 跑微小色塊合併（會改 template_id）
+    all_polygons: list[dict] = []
     polygon_tag = f"{{{_SVG_NS}}}polygon"
     sample_stroke_width = "1"
     skipped_no_fill = 0
@@ -173,7 +290,6 @@ def regenerate_merged_svg(
             continue
         if tid not in label_map:
             continue
-        output_label = int(label_map[tid])
 
         try:
             shp = ShPolygon(coords)
@@ -183,7 +299,11 @@ def regenerate_merged_svg(
             if not shp.is_valid or shp.is_empty:
                 skipped_invalid_geom += 1
                 continue
-            polygons_by_label[output_label].append(shp)
+            all_polygons.append({
+                "shp": shp,
+                "template_id": tid,
+                "raw_rgb": _rgb_from_palette(palette_json, tid),
+            })
         except Exception as e:  # noqa: BLE001
             logger.debug("skip polygon (parse error): %s", e)
             skipped_invalid_geom += 1
@@ -193,6 +313,18 @@ def regenerate_merged_svg(
         if sw:
             sample_stroke_width = sw
 
+    # ── Step 3b：微小色塊 auto-merge（in-memory only）
+    merge_records = _merge_tiny_polygons(all_polygons)
+
+    # ── Step 3c：建 polygons_by_label（已套用 merge 後的 template_id）
+    polygons_by_label: dict[int, list] = defaultdict(list)
+    for p in all_polygons:
+        tid = p["template_id"]
+        if tid not in label_map:
+            continue
+        output_label = int(label_map[tid])
+        polygons_by_label[output_label].append(p["shp"])
+
     if not polygons_by_label:
         logger.warning(
             "no polygons could be grouped (no_fill=%d unknown_tint=%d invalid=%d); "
@@ -200,7 +332,7 @@ def regenerate_merged_svg(
             skipped_no_fill, skipped_unknown_tint, skipped_invalid_geom,
         )
         from palette.svg_renumber import renumber_svg_labels  # noqa: PLC0415
-        return renumber_svg_labels(svg_bytes, label_map)
+        return renumber_svg_labels(svg_bytes, label_map), merge_records
 
     # ── Step 4：建新 SVG 骨架（保留 viewBox、width、height）
     # register_namespace("", _SVG_NS) 會自動加 xmlns，不可再 set("xmlns")（會重複）
@@ -297,9 +429,10 @@ def regenerate_merged_svg(
         #  1. font size 上限 _MAX_FONT_SIZE（避免大塊區域寫超大）
         #  2. bbox 短邊太小且不是最大塊 → skip（細長碎片標籤超出邊界）
         #  3. 碰撞偵測：與既有標籤太近 → skip（密集區不互相打架）
-        # 例外：每個 output_label 至少保留 1 個 label（最大塊強制放）
+        # 注意：collision 一律檢查（包括該色最大塊），重疊就直接 skip。
+        # 這意味某些被夾在 dense 區域的色號可能無 label — admin 對小色塊改靠
+        # palette_final.json 的 legend 對照查詢，不靠 SVG label。
         geom_list_by_area = sorted(item["geom_list"], key=lambda g: -g.area)
-        labeled_this_color = False
         for idx, geom in enumerate(geom_list_by_area):
             is_largest = (idx == 0)
 
@@ -322,16 +455,15 @@ def regenerate_merged_svg(
             area_sqrt = max(geom.area, 1.0) ** 0.5
             font_size = max(_MIN_FONT_SIZE, min(area_sqrt / 8.0, _MAX_FONT_SIZE))
 
-            # 篩選 3：碰撞偵測（最大塊「首次」放可強制放；已放過了就要檢查）
-            if not is_largest or labeled_this_color:
-                too_close = False
-                for px, py, pfs in placed_labels:
-                    min_dist = (font_size + pfs) * _COLLISION_TOLERANCE
-                    if (cx - px) ** 2 + (cy - py) ** 2 < min_dist ** 2:
-                        too_close = True
-                        break
-                if too_close:
-                    continue
+            # 篩選 3：碰撞偵測（一律檢查，包括該色最大塊）
+            too_close = False
+            for px, py, pfs in placed_labels:
+                min_dist = (font_size + pfs) * _COLLISION_TOLERANCE
+                if (cx - px) ** 2 + (cy - py) ** 2 < min_dist ** 2:
+                    too_close = True
+                    break
+            if too_close:
+                continue
 
             text_el = ET.SubElement(new_root, f"{{{_SVG_NS}}}text")
             text_el.set("x", f"{cx:.1f}")
@@ -345,13 +477,14 @@ def regenerate_merged_svg(
             text_el.text = str(output_label)
             placed_labels.append((cx, cy, font_size))
             parts_count += 1
-            labeled_this_color = True
 
     logger.info(
         "svg consolidate: %d unique colors merged into %d label groups, "
-        "%d label texts placed (skipped no_fill=%d unknown_tint=%d invalid=%d)",
+        "%d label texts placed (skipped no_fill=%d unknown_tint=%d invalid=%d), "
+        "%d tiny polygons auto-merged",
         len(polygons_by_label), merged_count, parts_count,
         skipped_no_fill, skipped_unknown_tint, skipped_invalid_geom,
+        len(merge_records),
     )
 
-    return ET.tostring(new_root, encoding="utf-8", xml_declaration=True)
+    return ET.tostring(new_root, encoding="utf-8", xml_declaration=True), merge_records

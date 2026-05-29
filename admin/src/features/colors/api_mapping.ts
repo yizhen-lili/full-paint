@@ -96,6 +96,22 @@ export function completePaletteMappings(jobId: string) {
   )
 }
 
+/** 確認 pending_auto_merges：套用到 DB + 重 finalize（含 archive）。 */
+export function confirmPendingMerges(jobId: string) {
+  return request<{ applied_count: number; complete_result: CompleteResponse }>(
+    `/admin/production/jobs/${jobId}/palette-mappings/confirm-merges`,
+    { method: 'POST' },
+  )
+}
+
+/** 拒絕 pending_auto_merges：清空 job 上的清單，不動 mapping。 */
+export function rejectPendingMerges(jobId: string) {
+  return request<{ rejected_count: number }>(
+    `/admin/production/jobs/${jobId}/palette-mappings/reject-merges`,
+    { method: 'POST' },
+  )
+}
+
 // ── LAB distance (client-side auto-recommend) ─────────────────────────
 
 function rgbToLab(r: number, g: number, b: number): [number, number, number] {

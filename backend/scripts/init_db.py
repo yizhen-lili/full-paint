@@ -152,6 +152,11 @@ async def init_schema() -> None:
                 "ALTER TABLE production_jobs "
                 "ADD COLUMN IF NOT EXISTS original_finalized_at TIMESTAMP WITH TIME ZONE"
             ))
+            # 待確認的自動合併建議（svg_consolidate 偵測到微小色塊建議 → admin 確認後寫 DB）
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS pending_auto_merges JSONB"
+            ))
 
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)

@@ -4,9 +4,11 @@ import { toValue } from 'vue'
 
 import {
   completePaletteMappings,
+  confirmPendingMerges,
   copyMappingsFromJob,
   listCopyCandidates,
   listPaletteMappings,
+  rejectPendingMerges,
   updatePaletteMapping,
 } from './api_mapping'
 
@@ -64,6 +66,27 @@ export function useCompleteMappingsMutation(jobId: string) {
       qc.invalidateQueries({ queryKey: PM_KEYS.mappings(jobId) })
       // finalize_template 在 backend 同步跑 → 寫入 job.template_final_url / palette_final_url。
       // 必須 invalidate production job detail query，前端才能看到「查看 SVG」連結。
+      qc.invalidateQueries({ queryKey: ['admin', 'production', 'detail', jobId] })
+    },
+  })
+}
+
+export function useConfirmPendingMergesMutation(jobId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => confirmPendingMerges(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PM_KEYS.mappings(jobId) })
+      qc.invalidateQueries({ queryKey: ['admin', 'production', 'detail', jobId] })
+    },
+  })
+}
+
+export function useRejectPendingMergesMutation(jobId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => rejectPendingMerges(jobId),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'production', 'detail', jobId] })
     },
   })

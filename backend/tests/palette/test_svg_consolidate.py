@@ -93,7 +93,7 @@ def test_three_polygons_three_colors_three_groups():
         {"output_label": 3, "rgb": [50, 200, 100]},
     ]
     label_map = {1: 1, 2: 2, 3: 3}
-    out = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
     paths = _parse_paths(out)
     texts = _parse_texts(out)
     assert len(paths) == 3
@@ -112,7 +112,7 @@ def test_same_label_disconnected_becomes_multipolygon():
         {"output_label": 1, "rgb": [247, 167, 132]},
         {"output_label": 2, "rgb": [100, 50, 200]},
     ]
-    out = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
     paths = _parse_paths(out)
     texts = _parse_texts(out)
     # 兩個 polygon 都 label 1，分離 → 1 path（MultiPolygon）
@@ -132,7 +132,7 @@ def test_same_label_adjacent_merges_into_single_polygon():
     palette_final = [
         {"output_label": 1, "rgb": [247, 167, 132]},
     ]
-    out = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
     paths = _parse_paths(out)
     texts = _parse_texts(out)
     # 合併成單一 Polygon → 1 path + 1 text
@@ -148,7 +148,7 @@ def test_path_has_fill_rule_evenodd():
     svg = _make_svg([
         (_tint(247, 167, 132), [(0, 0), (50, 0), (0, 50)]),
     ])
-    out = regenerate_merged_svg(
+    out, _ = regenerate_merged_svg(
         svg, {1: 1}, _PALETTE_JSON,
         [{"output_label": 1, "rgb": [247, 167, 132]}],
     )
@@ -166,7 +166,7 @@ def test_path_uses_physical_color_tint():
         (_tint(247, 167, 132), [(0, 0), (10, 0), (0, 10)]),
     ])
     # palette_final 給不同的 RGB（模擬使用者校正過 RGB 後的色）
-    out = regenerate_merged_svg(
+    out, _ = regenerate_merged_svg(
         svg, {1: 1}, _PALETTE_JSON,
         [{"output_label": 1, "rgb": [10, 20, 30]}],
     )
@@ -200,7 +200,7 @@ def test_polygon_with_unknown_fill_skipped():
         (_tint(247, 167, 132), [(0, 0), (10, 0), (0, 10)]),     # 認得，tid 1
         ("#123456",            [(20, 0), (30, 0), (20, 10)]),   # 不認得 fill
     ])
-    out = regenerate_merged_svg(
+    out, _ = regenerate_merged_svg(
         svg, {1: 1}, _PALETTE_JSON,
         [{"output_label": 1, "rgb": [247, 167, 132]}],
     )
@@ -225,7 +225,7 @@ def test_z_order_paths_before_texts():
         {"output_label": 2, "rgb": [100, 50, 200]},
         {"output_label": 3, "rgb": [50, 200, 100]},
     ]
-    out = regenerate_merged_svg(svg, {1: 1, 2: 2, 3: 3}, _PALETTE_JSON, palette_final)
+    out, _ = regenerate_merged_svg(svg, {1: 1, 2: 2, 3: 3}, _PALETTE_JSON, palette_final)
     root = ET.fromstring(out)
 
     # 走訪 root 的直接子 element 收順序
@@ -252,7 +252,7 @@ def test_text_elements_have_light_font_weight():
     svg = _make_svg([
         (_tint(247, 167, 132), [(0, 0), (10, 0), (0, 10)]),
     ])
-    out = regenerate_merged_svg(
+    out, _ = regenerate_merged_svg(
         svg, {1: 1}, _PALETTE_JSON,
         [{"output_label": 1, "rgb": [247, 167, 132]}],
     )
@@ -280,7 +280,7 @@ def test_invalid_svg_raises():
 
 def test_preserves_viewbox():
     svg = _make_svg([(_tint(247, 167, 132), [(0, 0), (10, 0), (0, 10)])])
-    out = regenerate_merged_svg(
+    out, _ = regenerate_merged_svg(
         svg, {1: 1}, _PALETTE_JSON,
         [{"output_label": 1, "rgb": [247, 167, 132]}],
     )
@@ -297,7 +297,7 @@ def test_no_recognizable_polygons_falls_back_to_renumber():
         f'<g id="0"><text x="5" y="5">1</text></g>'
         f'</svg>'
     ).encode("utf-8")
-    out = regenerate_merged_svg(svg, {1: 7}, _PALETTE_JSON, [])
+    out, _ = regenerate_merged_svg(svg, {1: 7}, _PALETTE_JSON, [])
     # fallback: text content 應該變成 "7"
     texts = _parse_texts(out)
     assert "7" in texts
