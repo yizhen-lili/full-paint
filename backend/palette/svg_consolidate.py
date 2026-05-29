@@ -179,6 +179,9 @@ def _merge_tiny_polygons(
             continue
 
         merge_records.append({
+            # polygon_id 是「per-polygon merge」(走既有 post_process merge_color
+            # op) 的關鍵 — 沒有它 confirm 只能 fallback 到 per-template_id 邏輯
+            "polygon_id": tiny.get("polygon_id"),
             "tiny_template_id": int(tiny["template_id"]),
             "target_template_id": int(best["template_id"]),
             "tiny_area": float(tiny["shp"].area),
@@ -303,6 +306,9 @@ def regenerate_merged_svg(
                 "shp": shp,
                 "template_id": tid,
                 "raw_rgb": _rgb_from_palette(palette_json, tid),
+                # polygon_id (pbn_gen 寫的 r{N}) — auto-merge confirm 走 post_process
+                # 的 merge_color op 時 per-polygon 需要這個值
+                "polygon_id": poly.get("id"),
             })
         except Exception as e:  # noqa: BLE001
             logger.debug("skip polygon (parse error): %s", e)

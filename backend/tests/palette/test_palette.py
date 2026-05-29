@@ -1227,11 +1227,11 @@ async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
         {"output_label": 3, "rgb": [0, 0, 255]},
     ]
     svg = b'<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="200" height="100">'
-    svg += f'<polygon points="0,0 60,0 60,60 0,60" fill="{_tint_hex([255, 0, 0])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += f'<polygon id="r1" points="0,0 60,0 60,60 0,60" fill="{_tint_hex([255, 0, 0])}" stroke="#AAA" stroke-width="1"/>'.encode()
     # 微小淡紅（area=4，緊貼大紅）
-    svg += f'<polygon points="60,0 62,0 62,2 60,2" fill="{_tint_hex([240, 30, 30])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += f'<polygon id="r2" points="60,0 62,0 62,2 60,2" fill="{_tint_hex([240, 30, 30])}" stroke="#AAA" stroke-width="1"/>'.encode()
     # 遠處大藍
-    svg += f'<polygon points="120,0 180,0 180,60 120,60" fill="{_tint_hex([0, 0, 255])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += f'<polygon id="r3" points="120,0 180,0 180,60 120,60" fill="{_tint_hex([0, 0, 255])}" stroke="#AAA" stroke-width="1"/>'.encode()
     svg += b'</svg>'
 
     _out, merge_records = regenerate_merged_svg(
@@ -1242,48 +1242,104 @@ async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
     matched = [m for m in merge_records if m["tiny_template_id"] == 2]
     assert len(matched) == 1
     assert matched[0]["target_template_id"] == 1
+    # 必須含 polygon_id（confirm 走 post_process 用）
+    assert matched[0]["polygon_id"] == "r2"
 
 
 @pytest.mark.asyncio
-async def test_confirm_pending_merges_applies_to_db(client: AsyncClient, db):
-    """confirm 套用 pending_auto_merges → mapping 改色 + 重 finalize。"""
-    from unittest.mock import patch
+async def test_confirm_pending_merges_dispatches_post_process(client: AsyncClient, db):
+    """confirm 把 pending_auto_merges 轉成 per-polygon merge_color batch ops，
+    透過 post_process 派給 Celery，**不**直接改 palette_color_mappings。"""
+    from unittest.mock import patch, MagicMock
     from palette.service import finalize_template
 
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
     color_a = await _create_color(db, COLOR_A)
     color_b = await _create_color(db, COLOR_B)
+    color_b_id = color_b.id  # cache before session expire
     await _seed_settings(db)
 
-    # 設 pending_auto_merges 模擬「上次 finalize 偵測到 tid 2 → tid 1」
     job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
     bucket, _ = _mock_bucket_for_finalize()
     with patch("core.firebase.get_bucket", return_value=bucket):
         await finalize_template(db, job.id)
     await db.refresh(job)
-    # 手動塞 pending（mock _merge_tiny_polygons 較複雜，這裡直接設）
+
+    # 紀錄 tid 2 原本的 physical_color_id（confirm 後不該被動）
+    tid2_before = (await db.execute(
+        select(PaletteColorMapping.physical_color_id).where(
+            PaletteColorMapping.production_job_id == job.id,
+            PaletteColorMapping.template_id == 2,
+        )
+    )).scalar_one()
+
+    # 手動塞 pending — 包含 polygon_id（新版必要欄位）
+    job.pending_auto_merges = [
+        {"polygon_id": "r10", "tiny_template_id": 2, "target_template_id": 1, "tiny_area": 5.0},
+        {"polygon_id": "r25", "tiny_template_id": 2, "target_template_id": 1, "tiny_area": 3.2},
+    ]
+    await db.commit()
+    job_id = job.id  # 在 session expire 前先抓 UUID
+
+    # mock run_post_process_job.delay 避免實際派 Celery
+    with patch("production.tasks.run_post_process_job.delay") as mock_delay:
+        res = await client.post(f"{_palette_url(job.id)}/confirm-merges")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["operations_dispatched"] == 2
+    assert body["pending_count"] == 2
+    assert body["job_status"] == "processing"
+
+    # 確認 Celery 收到正確的 per-polygon merge_color ops
+    mock_delay.assert_called_once()
+    args = mock_delay.call_args
+    # call_args.args = (str(job_id), params_dict)
+    _job_id_str, params = args.args
+    assert "operations" in params
+    ops = params["operations"]
+    assert len(ops) == 2
+    polygon_ids = sorted(o["polygon_id"] for o in ops)
+    assert polygon_ids == ["r10", "r25"]
+    for op in ops:
+        assert op["op"] == "merge_color"
+        assert op["target_template_id"] == 1
+
+    # pending_auto_merges 已清
+    db.expire_all()
+    pending_after = (await db.execute(
+        select(ProductionJob.pending_auto_merges).where(ProductionJob.id == job_id)
+    )).scalar_one()
+    assert pending_after is None
+
+    # **關鍵**：tid 2 的 mapping 沒被直接改（confirm 不該動 palette_color_mappings）
+    tid2_after = (await db.execute(
+        select(PaletteColorMapping.physical_color_id).where(
+            PaletteColorMapping.production_job_id == job_id,
+            PaletteColorMapping.template_id == 2,
+        )
+    )).scalar_one()
+    assert tid2_after == tid2_before
+    assert tid2_after == color_b_id  # 仍是原本的 PAL-002 (= color_b)
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_merges_rejects_legacy_no_polygon_id(client: AsyncClient, db):
+    """舊版 pending 紀錄沒 polygon_id 欄位 → 400 + 提示重按完成對應。"""
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002")])
+    # 舊資料：沒 polygon_id 欄位
     job.pending_auto_merges = [
         {"tiny_template_id": 2, "target_template_id": 1, "tiny_area": 5.0},
     ]
     await db.commit()
 
-    with patch("core.firebase.get_bucket", return_value=bucket):
-        res = await client.post(f"{_palette_url(job.id)}/confirm-merges")
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["applied_count"] == 1
-
-    await db.refresh(job)
-    assert job.pending_auto_merges is None
-    # tid 2 的 mapping 應該被改成 tid 1 的 physical_color_id (= color_a)
-    tid2 = (await db.execute(
-        select(PaletteColorMapping).where(
-            PaletteColorMapping.production_job_id == job.id,
-            PaletteColorMapping.template_id == 2,
-        )
-    )).scalar_one()
-    assert tid2.physical_color_id == color_a.id
+    res = await client.post(f"{_palette_url(job.id)}/confirm-merges")
+    assert res.status_code == 400
+    assert "polygon_id" in res.json()["detail"]
 
 
 @pytest.mark.asyncio

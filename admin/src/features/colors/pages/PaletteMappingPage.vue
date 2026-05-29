@@ -71,6 +71,59 @@ async function rejectAutoMerges() {
   }
 }
 
+// 自動合併建議按 tiny_template_id 分組（每個 template 可能有 N 個 polygon 各別合併）
+interface MergeGroup {
+  tiny_template_id: number
+  count: number
+  total_area: number
+  // 每個 target 各有幾個 polygon 指向；按 polygon 數降序
+  targets: { tid: number; count: number }[]
+  dominant_target: number
+  has_polygon_id: boolean   // 舊資料缺 polygon_id → 提示 admin 重按完成對應
+}
+
+const groupedMerges = computed<MergeGroup[]>(() => {
+  const map = new Map<number, {
+    count: number
+    total_area: number
+    targets: Map<number, number>
+    has_polygon_id: boolean
+  }>()
+  for (const m of jobData.value?.pending_auto_merges ?? []) {
+    const e = map.get(m.tiny_template_id) ?? {
+      count: 0, total_area: 0, targets: new Map(), has_polygon_id: false,
+    }
+    e.count++
+    e.total_area += m.tiny_area
+    e.targets.set(
+      m.target_template_id,
+      (e.targets.get(m.target_template_id) ?? 0) + 1,
+    )
+    if (m.polygon_id) e.has_polygon_id = true
+    map.set(m.tiny_template_id, e)
+  }
+  return Array.from(map.entries())
+    .map(([tid, e]) => {
+      const targets = Array.from(e.targets.entries())
+        .map(([t, c]) => ({ tid: t, count: c }))
+        .sort((a, b) => b.count - a.count)
+      return {
+        tiny_template_id: tid,
+        count: e.count,
+        total_area: e.total_area,
+        targets,
+        dominant_target: targets[0]?.tid ?? -1,
+        has_polygon_id: e.has_polygon_id,
+      }
+    })
+    .sort((a, b) => b.count - a.count)
+})
+
+const hasLegacyPendingData = computed(() =>
+  groupedMerges.value.length > 0
+    && groupedMerges.value.some((g) => !g.has_polygon_id),
+)
+
 const mappings = computed(() => data.value?.mappings ?? [])
 
 // 抓 job 細節給 canvas 預覽 + finalize 後的最終模板 preview 用
@@ -583,33 +636,50 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
         <Sparkles :size="18" :stroke-width="1.5" class="text-state-info mt-0.5 shrink-0" />
         <div class="flex-1 min-w-0">
           <h3 class="font-display text-ink-strong text-[15px] leading-[22px] mb-1">
-            自動合併建議（{{ jobData.pending_auto_merges.length }} 個小色塊）
+            自動合併建議（{{ jobData.pending_auto_merges.length }} 個小色塊 · 涵蓋 {{ groupedMerges.length }} 個 template）
           </h3>
           <p class="text-[12px] text-ink-muted leading-[1.6]">
-            系統偵測到一些太小、難以辨識色號的色塊，已在上方「最新版」模板**視覺上**合進
-            色差最近的鄰居（這時候 DB 還沒動）。請對照「原始版 vs 最新版」確認 — 滿意就按
-            「確認合併寫入 DB」（會更新 mapping + 重新 finalize 一次）；不滿意就「放棄這次建議」。
+            系統偵測到一些太小、難以辨識色號的色塊，已在上方「最新版」模板<b>視覺上</b>合進
+            色差最近的鄰居（這時候 DB 還沒動）。
+            <br />
+            點「確認合併寫入 DB」會用 <b>per-polygon</b> 方式處理 —
+            只把這些小色塊精準改成鄰居色，<b>不會動原 template 的大色塊</b>，
+            並重 finalize 一次（會 archive 當前版為「原始版」）。
           </p>
-          <ul class="mt-2 text-[12px] space-y-0.5 max-h-[160px] overflow-y-auto pr-1">
+          <div
+            v-if="hasLegacyPendingData"
+            class="mt-2 px-3 py-2 border border-state-warning/40 bg-[var(--color-state-warning)]/[0.06] text-state-warning text-[11px] rounded-[var(--radius-xs)] leading-[1.5]"
+          >
+            ⚠ 部分舊資料沒有 polygon_id 欄位（之前的 bug 版本產生的），無法精準
+            per-polygon 合併。請按「放棄這次建議」清掉、再重按「完成對應」即可重新偵測。
+          </div>
+          <ul class="mt-2 text-[12px] space-y-1 max-h-[200px] overflow-y-auto pr-1">
             <li
-              v-for="m in jobData.pending_auto_merges"
-              :key="`${m.tiny_template_id}-${m.target_template_id}`"
+              v-for="g in groupedMerges"
+              :key="g.tiny_template_id"
               class="text-ink-default leading-[1.5]"
             >
-              • template <span class="font-mono">#{{ m.tiny_template_id }}</span>
-              （面積 {{ m.tiny_area.toFixed(1) }}）→ 合併到
-              <span class="font-mono">#{{ m.target_template_id }}</span> 的色組
+              • template <span class="font-mono">#{{ g.tiny_template_id }}</span>
+              的 <span class="font-mono">{{ g.count }}</span> 個小色塊
+              <span class="text-ink-muted">（總面積 {{ g.total_area.toFixed(1) }}）</span>
+              → 主要合進到 <span class="font-mono">#{{ g.dominant_target }}</span>
+              <span
+                v-if="g.targets.length > 1"
+                class="text-ink-muted"
+              >
+                （另含 {{ g.targets.slice(1).map((t) => `#${t.tid}(${t.count})`).join(', ') }}）
+              </span>
             </li>
           </ul>
           <div class="mt-3 flex gap-2 flex-wrap">
             <Button
               variant="primary"
-              :disabled="confirmMergesMut.isPending.value || rejectMergesMut.isPending.value"
+              :disabled="confirmMergesMut.isPending.value || rejectMergesMut.isPending.value || hasLegacyPendingData"
               @click="confirmAutoMerges"
             >
               <Loader2 v-if="confirmMergesMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
               <CheckCircle2 v-else :size="14" :stroke-width="1.5" />
-              確認合併寫入 DB
+              確認合併（per-polygon 精準改色）
             </Button>
             <Button
               variant="secondary"

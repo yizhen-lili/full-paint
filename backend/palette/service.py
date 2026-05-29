@@ -302,65 +302,63 @@ async def complete_mappings(db: AsyncSession, job_id: UUID) -> dict:
 
 
 async def confirm_pending_merges(db: AsyncSession, job_id: UUID) -> dict:
-    """把 pending_auto_merges 真的套用到 palette_color_mappings 並重 finalize。
+    """把 pending_auto_merges 轉成 per-polygon post_process merge_color 批次。
+
+    **重要設計** — 不直接改 palette_color_mappings（per template_id），改走既有
+    post_process pipeline 的 merge_color op（per polygon_id）。
+    這樣 template #7 內 5 個 tiny polygon 各自合進 target、95 個大塊保留 #7 不變色。
 
     流程：
     1. 取 job.pending_auto_merges（無 → 400）
-    2. 對每個 (tiny_tid, target_tid)：
-       - 從 target 的 mapping 取 physical_color_id
-       - update tiny 的 mapping 改成同個 physical_color_id, mapped_by='system',
-         required_ml=None（待 complete_mappings 重算）
-    3. 清空 pending_auto_merges（避免重 finalize 又把舊的 records 寫回 — 注意：
-       新一輪 svg_consolidate 仍可能偵測新的 tiny，但這次的清單已套用、不該卡舊）
-    4. 重跑 complete_mappings（含 finalize_template）— 會觸發 archive
-       把當前 latest 鎖為「原始版」、產出合併後新版
+    2. 把每筆建議轉成 {op: "merge_color", polygon_id, target_template_id}
+    3. 清空 pending_auto_merges（避免重複）
+    4. 呼叫 production.service.post_process → Celery 在 SVG 層級改 polygon 歸屬
+       + 重產 template.svg / palette_json / template_final / filled_template_final
     """
     job = await _get_job_or_404(db, job_id)
     pending = job.pending_auto_merges or []
     if not pending:
         raise BadRequestError("沒有待確認的自動合併建議")
 
-    # 載入該 job 所有 mappings 給後續查 physical_color_id 用
-    mappings = list((await db.execute(
-        select(PaletteColorMapping).where(
-            PaletteColorMapping.production_job_id == job_id,
-        )
-    )).scalars().all())
-    by_tid = {m.template_id: m for m in mappings}
-
-    applied = 0
+    # 轉成 per-polygon merge_color operations
+    operations: list[dict] = []
+    seen_polygon_ids: set[str] = set()  # 防 same polygon_id 在 list 內重複 → Celery 拒
     for rec in pending:
-        try:
-            tiny_tid = int(rec["tiny_template_id"])
-            target_tid = int(rec["target_template_id"])
-        except (KeyError, TypeError, ValueError):
+        polygon_id = rec.get("polygon_id")
+        target_tid = rec.get("target_template_id")
+        if not polygon_id or target_tid is None:
             continue
-        target_m = by_tid.get(target_tid)
-        tiny_m = by_tid.get(tiny_tid)
-        if target_m is None or tiny_m is None:
+        if polygon_id in seen_polygon_ids:
             continue
-        if tiny_m.physical_color_id == target_m.physical_color_id:
-            continue
-        tiny_m.physical_color_id = target_m.physical_color_id
-        tiny_m.mapped_by = MappedByEnum.system
-        tiny_m.required_ml = None
-        applied += 1
+        seen_polygon_ids.add(polygon_id)
+        operations.append({
+            "op": "merge_color",
+            "polygon_id": str(polygon_id),
+            "target_template_id": int(target_tid),
+        })
 
-    # 清掉 pending（不論 applied 是 0 還是 N，這次的清單已處理完）
+    if not operations:
+        raise BadRequestError(
+            "pending 內無有效 polygon_id（可能是舊版資料）— 請重按「完成對應」重新偵測",
+        )
+
+    pending_count = len(pending)
+    # 清掉 pending（避免下次 finalize 又把舊的回寫）
     job.pending_auto_merges = None
     await db.commit()
 
     logger.info(
-        "confirm_pending_merges: job=%s applied=%d of %d pending",
-        job_id, applied, len(pending),
+        "confirm_pending_merges: job=%s dispatching %d merge_color ops (from %d pending)",
+        job_id, len(operations), pending_count,
     )
 
-    # 重跑 complete_mappings → 重算 required_ml + finalize_template
-    # 這次 finalize 會把當前 latest archive 為「原始版」、新版反映合併狀態
-    result = await complete_mappings(db, job_id)
+    # 走既有 post_process pipeline（Celery）— per-polygon 精準改色 + 重 finalize
+    from production.service import post_process  # noqa: PLC0415
+    updated_job = await post_process(db, job_id, {"operations": operations})
     return {
-        "applied_count": applied,
-        "complete_result": result,
+        "operations_dispatched": len(operations),
+        "pending_count": pending_count,
+        "job_status": updated_job.status.value if hasattr(updated_job.status, "value") else str(updated_job.status),
     }
 
 
