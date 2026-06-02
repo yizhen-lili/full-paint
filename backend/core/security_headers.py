@@ -22,6 +22,20 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Swagger / ReDoc 需要的路徑 — CSP 放寬
 _DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
 
+# ECpay 物流相關 HTML 端點 — 需要 inline script 自動提交表單 + form-action 到 ECpay 域名
+# /cvs-map：產 auto-submit form POST 到 ECpay 電子地圖
+# /cvs-callback：ECpay 選店完成 POST 回來，inline script 用 postMessage 把資料傳給 opener window
+_ECPAY_HTML_PATHS = (
+    "/api/v1/logistics/cvs-map",
+    "/api/v1/logistics/cvs-callback",
+)
+
+# ECpay 物流環境的兩個 endpoint 域名（form 會 POST 到這兩個之一）
+_ECPAY_LOGISTICS_ORIGINS = (
+    "https://logistics.ecpay.com.tw",
+    "https://logistics-stage.ecpay.com.tw",
+)
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(
@@ -47,6 +61,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             )
 
         # CSP — Swagger 路徑放寬給 ReDoc / Swagger UI inline JS / CDN
+        # ECpay 物流 HTML 端點需要 inline script 自動 submit + form-action 到 ECpay
         # 其他 API endpoint 給最嚴格的 default-src 'none'
         if any(request.url.path.startswith(p) for p in _DOCS_PATHS):
             response.headers["Content-Security-Policy"] = (
@@ -56,6 +71,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "img-src 'self' data: https:; "
                 "font-src 'self' https://cdn.jsdelivr.net; "
                 "connect-src 'self'; "
+                "frame-ancestors 'none'"
+            )
+        elif any(request.url.path.startswith(p) for p in _ECPAY_HTML_PATHS):
+            ecpay_origins = " ".join(_ECPAY_LOGISTICS_ORIGINS)
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                f"form-action {ecpay_origins}; "
                 "frame-ancestors 'none'"
             )
         else:
