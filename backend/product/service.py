@@ -389,12 +389,16 @@ async def list_products(
     status: str | None,
     page: int,
     page_size: int,
+    exclude_ids: list[UUID] | None = None,
 ) -> dict:
     query = select(Product)
     if search:
         query = query.where(Product.title.ilike(f"%{search}%"))
     if status:
         query = query.where(Product.status == status)
+    # PinProductPickerDialog 用：把已在首頁置頂的商品排掉
+    if exclude_ids:
+        query = query.where(Product.id.notin_(exclude_ids))
 
     total_result = await db.execute(
         select(func.count()).select_from(query.subquery())
@@ -522,6 +526,144 @@ async def delete_product(db: AsyncSession, product_id: UUID) -> None:
             raise ConflictError("請先停用所有規格變體才能刪除商品")
     await db.delete(product)
     await db.commit()
+
+
+# ── 首頁置頂商品（Module 22）─────────────────────────────────────────────────
+# 業務規則（user 2026-06-02 確認）：
+# - 上限 12 筆（超過 400）
+# - 只接受 status='on_sale'（draft/off_sale 400）
+# - 不可重複 id
+# - 空陣列 = 清空全部
+# - 批次 atomic 寫入：先全部設 NULL，再依序 1..N
+
+HOMEPAGE_PINNED_MAX = 12
+
+
+async def _list_homepage_pinned_items(db: AsyncSession) -> list[dict]:
+    """共用：撈目前 homepage_order != NULL 的商品，依 order ASC 排。"""
+    result = await db.execute(
+        select(Product)
+        .where(Product.homepage_order.isnot(None))
+        .order_by(Product.homepage_order.asc())
+    )
+    products = result.scalars().all()
+    return [
+        {
+            "id": p.id,
+            "title": p.title,
+            "cover_image_url": p.cover_image_url,
+            "status": p.status,
+            "homepage_order": p.homepage_order,
+        }
+        for p in products
+    ]
+
+
+async def list_homepage_pinned(db: AsyncSession) -> dict:
+    """admin GET /admin/products/homepage-pinned"""
+    return {"items": await _list_homepage_pinned_items(db)}
+
+
+async def set_homepage_order(db: AsyncSession, product_ids: list[UUID]) -> dict:
+    """admin POST /admin/products/homepage-order — atomic 寫入新順序。
+
+    驗證：
+    1. ≤ HOMEPAGE_PINNED_MAX 筆（schema 已限上限，這裡再驗一次防繞過）
+    2. 不可重複（schema 已驗）
+    3. 全部 product_id 必須存在
+    4. 全部 product 必須 status='on_sale'
+
+    並發保護：
+    - 用 pg_advisory_xact_lock 序列化整個 endpoint，避免兩個 admin 同時操作
+      時其中一方驗證通過後另一方已把 status 改掉的 race（業務規則：只接受 on_sale）
+    - lock_key 為固定值（整個 endpoint 共用一把鎖）
+
+    寫入：
+    - 先把所有 homepage_order != NULL 的商品 set NULL
+    - 再依 product_ids 順序賦值 1..N
+    - 全部包在 try/except 中，任何一步失敗則 rollback，避免「全 NULL 但沒新值」
+      的首頁清空中間狀態
+    """
+    if len(product_ids) > HOMEPAGE_PINNED_MAX:
+        raise BadRequestError(f"product_ids 超過 {HOMEPAGE_PINNED_MAX} 筆")
+
+    from sqlalchemy import text, update  # noqa: PLC0415
+
+    # 序列化整個 endpoint（pg_advisory_xact_lock 在 transaction 結束自動釋放）
+    # 固定 key 9_223_372_036_854_775_001 — PostgreSQL bigint 範圍內、不易撞號
+    HOMEPAGE_ORDER_LOCK_KEY = 9_223_372_036_854_775_001  # noqa: N806
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k)"),
+        {"k": HOMEPAGE_ORDER_LOCK_KEY},
+    )
+
+    if product_ids:
+        # 一次撈出來 batch 驗證（避免 N+1）
+        result = await db.execute(
+            select(Product.id, Product.status).where(Product.id.in_(product_ids))
+        )
+        found = {row.id: row.status for row in result.all()}
+
+        # 不存在的 id？
+        missing = set(product_ids) - set(found.keys())
+        if missing:
+            raise BadRequestError(
+                f"product_ids 含不存在的商品：{[str(pid) for pid in missing]}"
+            )
+
+        # 非 on_sale 的？
+        non_on_sale = [
+            str(pid) for pid, st in found.items() if st != ProductStatusEnum.on_sale
+        ]
+        if non_on_sale:
+            raise BadRequestError(
+                f"含未上架商品（必須全部 on_sale）：{non_on_sale}"
+            )
+
+    # Atomic：先清空所有 homepage_order，再依序賦值；失敗時 rollback 避免首頁空白
+    try:
+        await db.execute(
+            update(Product)
+            .where(Product.homepage_order.isnot(None))
+            .values(homepage_order=None)
+        )
+
+        for idx, pid in enumerate(product_ids, start=1):
+            await db.execute(
+                update(Product).where(Product.id == pid).values(homepage_order=idx)
+            )
+
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    return {"items": await _list_homepage_pinned_items(db)}
+
+
+async def public_list_homepage_pinned(db: AsyncSession) -> dict:
+    """store public GET /products/homepage-pinned.
+
+    只回 on_sale + 有 active variant，依 homepage_order ASC 排。
+    """
+    active_variant_pids = (
+        select(ProductVariant.product_id).where(ProductVariant.is_active.is_(True))
+    )
+    result = await db.execute(
+        select(Product)
+        .where(
+            Product.homepage_order.isnot(None),
+            Product.status == ProductStatusEnum.on_sale,
+            Product.id.in_(active_variant_pids),
+        )
+        .order_by(Product.homepage_order.asc())
+    )
+    products = result.scalars().all()
+
+    items = []
+    for p in products:
+        items.append(await _public_product_brief(db, p))
+    return {"items": items}
 
 
 # ── Product images ────────────────────────────────────────────────────────────

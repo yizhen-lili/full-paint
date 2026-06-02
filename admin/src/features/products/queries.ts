@@ -17,6 +17,7 @@ import {
   deleteVariant,
   getProduct,
   listAvailableJobs,
+  listHomepagePinned,
   listImages,
   listProducts,
   listSeries,
@@ -24,6 +25,7 @@ import {
   listThemes,
   listVariants,
   reorderImages,
+  setHomepageOrder,
   updateProduct,
   updateSeries,
   updateTag,
@@ -40,6 +42,7 @@ const KEYS = {
   product: (id: string) => ['products', 'detail', id] as const,
   variants: (id: string) => ['products', 'variants', id] as const,
   images: (id: string) => ['products', 'images', id] as const,
+  homepagePinned: ['products', 'homepage-pinned'] as const,
   series: ['series', 'list'] as const,
   tags: ['tags', 'list'] as const,
   themes: ['themes', 'list'] as const,
@@ -304,5 +307,26 @@ export function useDeleteTagMutation() {
   return useMutation({
     mutationFn: deleteTag,
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.tags }),
+  })
+}
+
+// ── Homepage pinned (Module 22) ───────────────────────────────────────
+
+export function useHomepagePinnedQuery() {
+  return useQuery({
+    queryKey: KEYS.homepagePinned,
+    queryFn: listHomepagePinned,
+  })
+}
+
+export function useSetHomepageOrderMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: setHomepageOrder,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.homepagePinned })
+      // 商品 list 也含 homepage_order 欄位 — 也 invalidate
+      qc.invalidateQueries({ queryKey: KEYS.productsList })
+    },
   })
 }

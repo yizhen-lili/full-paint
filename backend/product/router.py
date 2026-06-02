@@ -8,6 +8,7 @@ from core.database import get_db
 from dependencies.auth import require_admin
 from product import service
 from product.schemas.request import (
+    HomepageOrderRequest,
     ImageReorderRequest,
     ProductCreateRequest,
     ProductImageCreateRequest,
@@ -22,10 +23,12 @@ from product.schemas.request import (
     VariantUpdateRequest,
 )
 from product.schemas.response import (
+    HomepagePinnedListResponse,
     ProductDetailResponse,
     ProductImageListResponse,
     ProductImageResponse,
     ProductListResponse,
+    PublicHomepagePinnedResponse,
     PublicProductDetailResponse,
     PublicProductListResponse,
     PublicSeriesDetailResponse,
@@ -80,6 +83,19 @@ async def store_search_products(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.public_search_products(db, q, page, page_size)
+
+
+# 必須在 /products/{product_id} 之前 — 不然 "homepage-pinned" 會被嘗試解析成 UUID 然後 422
+@router.get(
+    "/products/homepage-pinned",
+    response_model=PublicHomepagePinnedResponse,
+    tags=["Store - Browse"],
+)
+async def store_list_homepage_pinned(
+    db: AsyncSession = Depends(get_db),
+):
+    """首頁置頂商品（依 homepage_order ASC，只回 on_sale + 有 active variant）。"""
+    return await service.public_list_homepage_pinned(db)
 
 
 @router.get(
@@ -293,12 +309,22 @@ async def delete_tag(
 async def list_products(
     search: str | None = Query(default=None),
     status: Literal["draft", "on_sale", "off_sale"] | None = Query(default=None),
+    exclude_ids: list[UUID] | None = Query(
+        default=None,
+        max_length=24,
+        description=(
+            "排除這些 product_ids（PinProductPickerDialog 用，避免列出已置頂的）。"
+            "上限 24 個（HOMEPAGE_PINNED_MAX=12 的兩倍 buffer），防 IN 子句被濫用"
+        ),
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     _: None = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.list_products(db, search, status, page, page_size)
+    return await service.list_products(
+        db, search, status, page, page_size, exclude_ids=exclude_ids
+    )
 
 
 @router.post("/admin/products", response_model=ProductDetailResponse, status_code=201)
@@ -308,6 +334,33 @@ async def create_product(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.create_product(db, body.model_dump())
+
+
+# ── 首頁置頂商品（Module 22）─────────────────────────────────────────────────
+# 必須擺在 /admin/products/{product_id} 之前，避免被 path param 吃掉
+# （雖然 UUID 驗證會 reject 字串，但安全起見明確排前面）
+
+@router.get(
+    "/admin/products/homepage-pinned",
+    response_model=HomepagePinnedListResponse,
+)
+async def list_homepage_pinned(
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.list_homepage_pinned(db)
+
+
+@router.post(
+    "/admin/products/homepage-order",
+    response_model=HomepagePinnedListResponse,
+)
+async def set_homepage_order(
+    body: HomepageOrderRequest,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.set_homepage_order(db, body.product_ids)
 
 
 @router.get("/admin/products/{product_id}", response_model=ProductDetailResponse)

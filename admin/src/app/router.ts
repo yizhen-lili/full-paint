@@ -68,6 +68,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/features/products/pages/TagsAdminPage.vue'),
       },
       {
+        path: 'products/homepage-pinned',
+        name: 'admin-products-homepage-pinned',
+        component: () =>
+          import('@/features/products/pages/HomepagePinnedPage.vue'),
+      },
+      {
         path: 'products/:id',
         name: 'admin-products-edit',
         component: () => import('@/features/products/pages/ProductFormPage.vue'),

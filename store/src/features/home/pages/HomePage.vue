@@ -9,6 +9,7 @@ useSeo(() => ({
 }))
 
 import EditorLetterSection from '../components/EditorLetterSection.vue'
+import PinnedTopSection from '../components/PinnedTopSection.vue'
 import LatestProductsSection from '../components/LatestProductsSection.vue'
 import ThemesShowcaseSection from '../components/ThemesShowcaseSection.vue'
 import FeaturedSeriesSection from '../components/FeaturedSeriesSection.vue'
@@ -23,6 +24,9 @@ import SignatureFooter from '../components/SignatureFooter.vue'
 
   <!-- B. Editor's Letter — 安靜窄欄引言（呼吸區） -->
   <EditorLetterSection />
+
+  <!-- C. Pinned Top — admin 釘選的本季嚴選；無置頂時整段不渲染 -->
+  <PinnedTopSection />
 
   <!-- D. Latest Products — 最新上架 4 卡 -->
   <LatestProductsSection />

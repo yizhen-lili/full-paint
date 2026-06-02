@@ -47,6 +47,8 @@ export interface ProductListItem {
   series_name: string | null
   variant_count: number
   is_featured: boolean
+  /** 首頁置頂順序（Module 22）；null = 不上首頁 */
+  homepage_order: number | null
   updated_at: string
 }
 
@@ -60,6 +62,8 @@ export interface ProductsListResponse {
 export interface ProductsListParams {
   search?: string
   status?: ProductStatus | ''
+  /** 排除這些 product_ids（PinProductPickerDialog 用） */
+  exclude_ids?: string[]
   page?: number
   page_size?: number
 }
@@ -166,6 +170,10 @@ export function listProducts(params: ProductsListParams) {
   const q = new URLSearchParams()
   if (params.search) q.set('search', params.search)
   if (params.status) q.set('status', params.status)
+  if (params.exclude_ids?.length) {
+    // FastAPI list query: 重複同 key（exclude_ids=a&exclude_ids=b）
+    for (const id of params.exclude_ids) q.append('exclude_ids', id)
+  }
   q.set('page', String(params.page ?? 1))
   q.set('page_size', String(params.page_size ?? 20))
   return request<ProductsListResponse>(`/admin/products?${q.toString()}`)
@@ -191,6 +199,31 @@ export function updateProduct(id: string, payload: ProductPayload) {
 
 export function deleteProduct(id: string) {
   return request<void>(`/admin/products/${id}`, { method: 'DELETE' })
+}
+
+// ── Homepage pinned (Module 22) ───────────────────────────────────────
+
+export interface HomepagePinnedItem {
+  id: string
+  title: string
+  cover_image_url: string
+  status: ProductStatus
+  homepage_order: number
+}
+
+export interface HomepagePinnedListResponse {
+  items: HomepagePinnedItem[]
+}
+
+export function listHomepagePinned() {
+  return request<HomepagePinnedListResponse>('/admin/products/homepage-pinned')
+}
+
+export function setHomepageOrder(productIds: string[]) {
+  return request<HomepagePinnedListResponse>('/admin/products/homepage-order', {
+    method: 'POST',
+    body: JSON.stringify({ product_ids: productIds }),
+  })
 }
 
 // ── Variants ──────────────────────────────────────────────────────────

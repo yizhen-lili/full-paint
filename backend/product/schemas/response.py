@@ -117,6 +117,7 @@ class ProductBriefResponse(BaseModel):
     series_name: str | None
     variant_count: int
     is_featured: bool
+    homepage_order: int | None = None
     tags: list[TagBriefResponse]
     created_at: datetime
     updated_at: datetime
@@ -140,6 +141,7 @@ class ProductDetailResponse(BaseModel):
     series_order: int | None
     status: ProductStatusEnum
     is_featured: bool
+    homepage_order: int | None = None
     tags: list[TagBriefResponse]
     images: list[ProductImageResponse]
     variants: list[VariantResponse]
@@ -320,3 +322,23 @@ class PublicSeriesDetailResponse(BaseModel):
     is_featured: bool
     sample_cover_image_url: str | None = None
     products: list[PublicProductBrief]   # 依 series_order ASC 排
+
+
+# ── 首頁置頂商品（Module 22）───────────────────────────────────────────────────
+
+class HomepagePinnedItem(BaseModel):
+    """admin 端首頁置頂列表 / reorder 回傳的單筆。"""
+    id: UUID
+    title: str
+    cover_image_url: str
+    status: ProductStatusEnum
+    homepage_order: int
+
+
+class HomepagePinnedListResponse(BaseModel):
+    items: list[HomepagePinnedItem]
+
+
+class PublicHomepagePinnedResponse(BaseModel):
+    """store 首頁置頂 section 用，依 homepage_order ASC，只回 on_sale + 有 active variant。"""
+    items: list[PublicProductBrief]

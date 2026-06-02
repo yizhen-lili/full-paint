@@ -344,6 +344,24 @@ Response 404: 系列不存在
 
 > `series_order` NULL 排在最後（NULLS LAST）。
 
+### GET /products/homepage-pinned
+**權限**：public｜首頁置頂商品（Module 22）
+
+Response：依 `homepage_order ASC` 排，僅回 `status='on_sale'` 且有 active variant 的商品。
+
+```json
+Response 200: {
+  "items": [{
+    "id": "uuid", "title": "string", "cover_image_url": "string",
+    "difficulty_range": ["beginner","advanced"],
+    "price_min": 397, "price_max": 860,
+    "is_preorder": false, "is_featured": false
+  }]
+}
+```
+
+> 沒置頂時回 `{"items": []}`；前端據此整段不渲染。
+
 ---
 
 ## 模組六：商品管理（Admin）
@@ -351,7 +369,10 @@ Response 404: 系列不存在
 ### GET /admin/products
 **權限**：admin
 
-Query: `?search=&status=draft|on_sale|off_sale&page=1&page_size=20`
+Query: `?search=&status=draft|on_sale|off_sale&exclude_ids=uuid&exclude_ids=uuid&page=1&page_size=20`
+
+> `exclude_ids`（list query，可重複）：排除指定 product_ids；PinProductPickerDialog 用以避免列出已置頂的商品。
+> Response 每筆含 `homepage_order: int | null`（與 Module 22 對齊）。
 
 ### POST /admin/products
 **權限**：admin
@@ -366,6 +387,36 @@ Request: {
 }
 ```
 > `is_featured`：精選商品標記，store 端「精選商品」入口會撈這筆。
+> `homepage_order` 不接受寫入；必須透過 `POST /admin/products/homepage-order` 設定。
+
+### GET /admin/products/homepage-pinned
+**權限**：admin｜列目前首頁置頂商品（依 homepage_order ASC）
+
+```json
+Response 200: {
+  "items": [{
+    "id": "uuid", "title": "string", "cover_image_url": "string",
+    "status": "on_sale", "homepage_order": 1
+  }]
+}
+```
+
+### POST /admin/products/homepage-order
+**權限**：admin｜批次設定首頁置頂順序（atomic）
+
+```json
+Request:  { "product_ids": ["uuid", "uuid", ...] }
+Response 200: { "items": [...] }  // 同 GET homepage-pinned
+```
+
+驗證規則：
+- 空陣列 = 清空全部 homepage_order
+- 上限 12 筆（>12 → 422）
+- 不可重複（→ 422）
+- 所有 id 必須存在（→ 400 `不存在`）
+- 所有 product 必須 `status='on_sale'`（→ 400 `含未上架商品`）
+
+寫入順序：先把 DB 全部 `homepage_order` set NULL，再依 list index 賦值 1..N（同一 transaction commit）。
 
 ### PUT /admin/products/{id}
 **權限**：admin

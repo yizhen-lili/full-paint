@@ -144,3 +144,10 @@ export async function getRelatedProducts(id: string): Promise<RelatedProductsRes
   if (!res.ok) throw new Error(`getRelatedProducts failed: ${res.status}`)
   return (await res.json()) as RelatedProductsResponse
 }
+
+/** GET /products/homepage-pinned — 首頁置頂商品（依 homepage_order ASC，僅 on_sale + 有 active variant）*/
+export async function listHomepagePinned(): Promise<{ items: ProductBrief[] }> {
+  const res = await fetch(`${API_BASE}/products/homepage-pinned`, { credentials: 'include' })
+  if (!res.ok) throw new Error(`listHomepagePinned failed: ${res.status}`)
+  return (await res.json()) as { items: ProductBrief[] }
+}

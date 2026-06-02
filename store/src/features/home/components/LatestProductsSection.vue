@@ -60,8 +60,8 @@ const PREVIEW_PRODUCTS: ProductBrief[] = [
 <template>
   <section class="section">
     <SectionMasthead
-      no="01"
-      chapter="Featured"
+      no="02"
+      chapter="Latest"
       title="最新上架"
       caption="this season"
       link-text="看全部 →"

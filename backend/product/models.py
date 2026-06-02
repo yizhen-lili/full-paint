@@ -91,12 +91,22 @@ class Product(Base):
         server_default=text("false"),
         default=False,
     )
+    # 首頁置頂順序：NULL = 不上首頁；≥1 = 顯示順序（越小越前面）
+    # 與 is_featured 解耦：是否首頁置頂 ≠ 是否標精選
+    homepage_order = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "homepage_order IS NULL OR homepage_order >= 1",
+            name="ck_products_homepage_order_positive",
+        ),
     )
 
 

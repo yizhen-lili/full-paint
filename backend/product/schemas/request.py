@@ -81,6 +81,25 @@ class ImageReorderRequest(BaseModel):
         return v
 
 
+class HomepageOrderRequest(BaseModel):
+    """首頁置頂商品拖曳排序。
+
+    後端會 atomic 清空所有 homepage_order，再依此 list 順序賦值 1..N。
+    - 空陣列 = 全部清空
+    - 上限 12 筆（業務規則，超過 400）
+    - 每個 id 必須是現存 product 且 status='on_sale'（draft/off_sale 400）
+    - 不能重複（400）
+    """
+    product_ids: list[UUID] = Field(default_factory=list, max_length=12)
+
+    @field_validator("product_ids")
+    @classmethod
+    def no_duplicates(cls, v: list[UUID]) -> list[UUID]:
+        if len(v) != len(set(v)):
+            raise ValueError("product_ids 不可重複")
+        return v
+
+
 class VariantCreateRequest(BaseModel):
     production_job_id: UUID
     price: float

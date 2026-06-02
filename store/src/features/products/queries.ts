@@ -2,6 +2,7 @@ import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import {
   listProducts,
+  listHomepagePinned,
   searchProducts,
   getProduct,
   getRelatedProducts,
@@ -59,5 +60,14 @@ export function useRelatedProductsQuery(id: MaybeRefOrGetter<string>) {
     queryFn: () => getRelatedProducts(toValue(id)),
     staleTime: STALE_5MIN,
     enabled: computed(() => isValidId(toValue(id))),
+  })
+}
+
+/** 首頁置頂商品（Module 22）— 沒置頂時 items 為空，PinnedTopSection 整段 v-if 隱藏 */
+export function useHomepagePinnedQuery() {
+  return useQuery({
+    queryKey: ['public', 'products', 'homepage-pinned'] as const,
+    queryFn: listHomepagePinned,
+    staleTime: STALE_60S,
   })
 }
