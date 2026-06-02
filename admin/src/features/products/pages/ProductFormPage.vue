@@ -66,6 +66,7 @@ const [coverImageUrl] = defineField('cover_image_url')
 const [seriesId] = defineField('series_id')
 const [tagIds] = defineField('tag_ids')
 const [status] = defineField('status')
+const [isFeatured] = defineField('is_featured')
 
 watch(existing, (next) => {
   if (next) {
