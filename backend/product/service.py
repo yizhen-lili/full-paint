@@ -1250,15 +1250,18 @@ async def public_list_themes(db: AsyncSession) -> dict:
     )).all()
     series_count_map = {r.theme_id: r.cnt for r in series_count_rows}
 
-    # 各 theme 的 product_count（透過 series 連 Product，僅 on_sale）
-    # SELECT s.theme_id, COUNT(p.id) FROM product_series s JOIN products p ON p.series_id=s.id
-    #   WHERE s.theme_id IN (...) AND p.status='on_sale' GROUP BY s.theme_id
+    # 各 theme 的 product_count（透過 series 連 Product，僅 on_sale + 有 active variant）
+    # ⚠ 與 public_list_products 一致 — 沒 variant 的 zombie 商品不算
+    active_variant_pids_t = (
+        select(ProductVariant.product_id).where(ProductVariant.is_active.is_(True))
+    )
     product_count_rows = (await db.execute(
         select(ProductSeries.theme_id, func.count(Product.id).label("cnt"))
         .join(Product, Product.series_id == ProductSeries.id)
         .where(
             ProductSeries.theme_id.in_([t.id for t in themes]),
             Product.status == ProductStatusEnum.on_sale,
+            Product.id.in_(active_variant_pids_t),
         )
         .group_by(ProductSeries.theme_id)
     )).all()
@@ -1340,12 +1343,18 @@ async def public_list_series(
     if not series_rows:
         return {"items": []}
 
-    # product_count（only on_sale）
+    # product_count（only on_sale + 至少 1 個 active variant）
+    # ⚠ 必須與 public_list_products 的 filter 完全一致：zombie 商品（建立但
+    # 沒加變體）不該被計入 count，否則前端「共 N 件」會比實際列出來的多。
+    active_variant_pids = (
+        select(ProductVariant.product_id).where(ProductVariant.is_active.is_(True))
+    )
     count_rows = (await db.execute(
         select(Product.series_id, func.count(Product.id).label("cnt"))
         .where(
             Product.series_id.in_([s.id for s in series_rows]),
             Product.status == ProductStatusEnum.on_sale,
+            Product.id.in_(active_variant_pids),
         )
         .group_by(Product.series_id)
     )).all()
