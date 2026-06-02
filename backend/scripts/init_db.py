@@ -157,6 +157,27 @@ async def init_schema() -> None:
                 "ALTER TABLE production_jobs "
                 "ADD COLUMN IF NOT EXISTS pending_auto_merges JSONB"
             ))
+            # Module 22：首頁置頂商品（homepage_order 越小越前面；NULL = 不上首頁；上限 12 由 service layer 驗證）
+            await conn.execute(text(
+                "ALTER TABLE products "
+                "ADD COLUMN IF NOT EXISTS homepage_order INTEGER"
+            ))
+            # CHECK constraint — PostgreSQL 不支援 ADD CONSTRAINT IF NOT EXISTS，
+            # 用 DO $$ + EXCEPTION duplicate_object 包裹做 idempotent。
+            await conn.execute(text(
+                "DO $$ "
+                "BEGIN "
+                "ALTER TABLE products "
+                "ADD CONSTRAINT ck_products_homepage_order_positive "
+                "CHECK (homepage_order IS NULL OR homepage_order >= 1); "
+                "EXCEPTION WHEN duplicate_object THEN NULL; "
+                "END $$"
+            ))
+            # 部分索引：只索引非 NULL，省空間 + ORDER BY 快
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_products_homepage_order "
+                "ON products (homepage_order) WHERE homepage_order IS NOT NULL"
+            ))
 
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)
