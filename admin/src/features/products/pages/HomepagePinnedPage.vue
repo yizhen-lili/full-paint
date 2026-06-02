@@ -55,6 +55,12 @@ function removeItem(id: string) {
 }
 
 function onPick(item: ProductListItem) {
+  // 已達上限就不再加（理論上 picker 內部按鈕也會 disabled，這是雙保險）
+  if (localList.value.length >= MAX_PINNED) {
+    pickerOpen.value = false
+    return
+  }
+
   // 把 ProductListItem 轉 HomepagePinnedItem（homepage_order 暫時設成下一個位置，純顯示用）
   localList.value.push({
     id: item.id,
@@ -64,7 +70,12 @@ function onPick(item: ProductListItem) {
     homepage_order: localList.value.length + 1,
   })
   isDirty.value = true
-  pickerOpen.value = false
+
+  // 連續挑：dialog 保持開啟，picker 內已挑的會被 excludeIds 排掉、剩餘格數即時遞減；
+  // 達到上限 12 才自動關閉。admin 也可以隨時手動按「關閉」結束。
+  if (localList.value.length >= MAX_PINNED) {
+    pickerOpen.value = false
+  }
 }
 
 async function save() {
