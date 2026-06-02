@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 import { useTitle } from '@vueuse/core'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('服務條款｜易木 YIIMUI')
 
 const SECTIONS = [
@@ -81,6 +82,7 @@ const SECTIONS = [
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="00"
       chapter="Terms"

@@ -7,6 +7,7 @@ import { useTitle } from '@vueuse/core'
 import { Check, X, Upload, Wand2, MessageSquareCheck, Package } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('訂製流程｜易木 YIIMUI')
 
 const STEPS = [
@@ -52,6 +53,7 @@ const PHOTO_NO = [
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="03"
       chapter="Bespoke"

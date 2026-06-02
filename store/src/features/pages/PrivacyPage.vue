@@ -4,6 +4,7 @@
 import { useTitle } from '@vueuse/core'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('隱私權政策｜易木 YIIMUI')
 
 const SECTIONS = [
@@ -101,6 +102,7 @@ const SECTIONS = [
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="00"
       chapter="Privacy"

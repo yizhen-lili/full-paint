@@ -6,6 +6,7 @@ import { ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useTitle } from '@vueuse/core'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
+import BackLink from '@/shared/components/BackLink.vue'
 
 useTitle('常見問題｜易木 YIIMUI')
 
@@ -106,6 +107,7 @@ function isOpen(g: number, i: number): boolean {
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="00"
       chapter="FAQ"

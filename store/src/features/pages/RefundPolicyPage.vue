@@ -6,6 +6,7 @@ import { useTitle } from '@vueuse/core'
 import { Check, X, Mail, Instagram, MessageCircle } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('退換貨政策｜易木 YIIMUI')
 
 interface Rule { ok: boolean; title: string; desc?: string }
@@ -76,6 +77,7 @@ const FLOW_STEPS = [
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="05"
       chapter="Policy"

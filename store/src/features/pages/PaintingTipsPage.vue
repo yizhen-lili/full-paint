@@ -7,6 +7,7 @@ import { useTitle } from '@vueuse/core'
 import { Layers, Lock, Repeat, Droplet } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('新手教學｜易木 YIIMUI')
 
 const TIPS = [
@@ -43,6 +44,7 @@ const FAQS = [
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="00"
       chapter="Painting Tips"

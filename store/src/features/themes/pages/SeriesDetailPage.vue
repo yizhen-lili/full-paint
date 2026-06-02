@@ -11,6 +11,7 @@ import { useProductsQuery } from '@/features/products/queries'
 import ProductCard from '@/features/products/components/ProductCard.vue'
 import SeriesCard from '@/features/themes/components/SeriesCard.vue'
 import type { ProductBrief } from '@/features/products/api'
+import BackLink from '@/shared/components/BackLink.vue'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id || ''))
@@ -99,6 +100,7 @@ const otherSeriesTitle = computed(() =>
   </section>
 
   <section v-else class="page">
+    <BackLink fallback="/themes" />
     <!-- breadcrumb -->
     <nav class="breadcrumb">
       <RouterLink to="/themes">主題</RouterLink>

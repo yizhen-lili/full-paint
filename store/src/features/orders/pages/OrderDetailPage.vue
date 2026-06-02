@@ -289,6 +289,7 @@ function fmtDateTime(iso: string | null): string {
 
 // 物流官網查詢連結 — 依 shipping_type 對應
 import type { Shipment as ShipmentType } from '../api'
+import BackLink from '@/shared/components/BackLink.vue'
 function trackingUrl(s: ShipmentType): string | null {
   const tn = s.tracking_number
   if (!tn) return null
@@ -331,6 +332,7 @@ function specSummary(spec: Record<string, unknown>): string {
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/orders" class="back-link">
       <ArrowLeft :size="14" />
       我的訂單

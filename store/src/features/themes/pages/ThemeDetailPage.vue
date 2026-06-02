@@ -6,6 +6,7 @@ import { useThemeDetailQuery } from '@/features/browse/queries'
 import { useProductsQuery } from '@/features/products/queries'
 import SeriesCard from '../components/SeriesCard.vue'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
+import BackLink from '@/shared/components/BackLink.vue'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id || ''))
@@ -84,6 +85,7 @@ const totalProducts = computed(() =>
   </section>
 
   <section v-else class="page">
+    <BackLink fallback="/themes" />
     <nav class="breadcrumb">
       <RouterLink to="/themes">主題</RouterLink>
       <span>/</span>

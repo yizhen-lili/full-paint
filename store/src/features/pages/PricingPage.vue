@@ -10,6 +10,7 @@ import {
 } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('報價參考｜易木 YIIMUI')
 
 const API_BASE = '/api/v1'
@@ -169,6 +170,7 @@ function sizePreview(s: CanvasSize) {
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="04"
       chapter="Pricing"

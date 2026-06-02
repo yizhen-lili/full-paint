@@ -5,6 +5,7 @@ import { ArrowLeft, Loader2, ShoppingBag } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import { useOrdersQuery, STATUS_LABEL, STATUS_TAB, type OrderTab } from '../queries'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const TABS: readonly OrderTab[] = ['unpaid', 'shipping', 'completed', 'cancelled', 'refund'] as const
 
 const tab = ref<OrderTab>('unpaid')
@@ -66,6 +67,7 @@ const EMPTY_HINT: Record<OrderTab, string> = {
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/profile" class="back-link">
       <ArrowLeft :size="14" />
       會員中心

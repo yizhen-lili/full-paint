@@ -10,6 +10,7 @@ import type { Gender, UpdateProfilePayload, UserProfile } from '../api'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import ChangeEmailDialog from '../components/ChangeEmailDialog.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const queryClient = useQueryClient()
 
 const profileQuery = useQuery({
@@ -198,6 +199,7 @@ function onEmailChangeSuccess(newEmail: string) {
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/profile" class="back-link" aria-label="會員中心">
       <ArrowLeft :size="14" />
       會員中心

@@ -5,6 +5,7 @@ import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import { useCustomRequestListQuery } from '../queries'
 import { STATUS_LABEL, REQUEST_TYPE_LABEL, type RequestStatus } from '../api'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const FILTERS: Array<{ value: RequestStatus | null; label: string }> = [
   { value: null, label: '全部' },
   { value: 'quote_pending', label: '等待報價' },
@@ -55,6 +56,7 @@ function statusTone(status: RequestStatus): string {
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/profile" class="back-link">
       <ArrowLeft :size="14" />
       會員中心

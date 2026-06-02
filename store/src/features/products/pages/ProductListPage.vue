@@ -24,6 +24,7 @@ import ProductSort from '../components/ProductSort.vue'
 import Pagination from '../components/Pagination.vue'
 import SeriesProductGroup from '../components/SeriesProductGroup.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const route = useRoute()
 const router = useRouter()
 
@@ -156,6 +157,7 @@ const PREVIEW_PRODUCTS: ProductBrief[] = Array.from({ length: 8 }, (_, i) => ({
 
 <template>
   <section class="page">
+    <BackLink />
     <header class="page-header">
       <div>
         <div class="page-eyebrow">All Products</div>

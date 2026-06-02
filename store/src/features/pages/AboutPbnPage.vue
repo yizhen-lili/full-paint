@@ -7,6 +7,7 @@ import { useTitle } from '@vueuse/core'
 import { Package, Hash, Brush, Frame } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('什麼是數字油畫｜易木 YIIMUI')
 
 const STEPS = [
@@ -19,6 +20,7 @@ const STEPS = [
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="00"
       chapter="What is PBN"

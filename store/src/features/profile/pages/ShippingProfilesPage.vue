@@ -8,6 +8,7 @@ import * as profileApi from '../api'
 import type { ShippingProfile, ShippingProfileInput, ShippingType, ApiError } from '../api'
 import ShippingProfileForm from '../components/ShippingProfileForm.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const queryClient = useQueryClient()
 const profilesQuery = useQuery({
   queryKey: ['shipping-profiles'],
@@ -127,6 +128,7 @@ const SHIPPING_TYPE_LABEL: Record<ShippingType, string> = {
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/profile" class="back-link">
       <ArrowLeft :size="14" />
       會員中心

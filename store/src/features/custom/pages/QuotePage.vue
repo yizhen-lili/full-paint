@@ -13,6 +13,7 @@ import {
 } from '../queries'
 import { quotePreviewUrl, type ApiError } from '../api'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const route = useRoute()
 const router = useRouter()
 const token = computed(() => route.params.token as string)
@@ -164,6 +165,7 @@ function canExtend() {
 
 <template>
   <main class="page">
+    <BackLink />
     <!-- ── 載入 ──────────────────────────────────────────────── -->
     <div v-if="summaryQuery.isPending.value" class="state">
       <Loader2 :size="24" class="spin" /> 載入報價中…

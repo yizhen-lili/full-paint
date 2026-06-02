@@ -13,6 +13,7 @@ import {
 } from '../api'
 import CaseDetailDialog from '../components/CaseDetailDialog.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const router = useRouter()
 
 // Categories filter
@@ -64,6 +65,7 @@ function consultCase(c: CustomCase) {
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/custom" class="back-link">
       <ArrowLeft :size="14" /> 客製化首頁
     </RouterLink>

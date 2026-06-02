@@ -6,6 +6,7 @@
 import { RouterLink } from 'vue-router'
 import { useTitle } from '@vueuse/core'
 import { Hourglass, Leaf, Sparkles, Instagram } from 'lucide-vue-next'
+import BackLink from '@/shared/components/BackLink.vue'
 
 useTitle('關於易木 YIIMUI｜我們是誰')
 
@@ -54,6 +55,7 @@ const PILLARS = [
 
 <template>
   <main class="page">
+    <BackLink />
     <!-- Hero brand statement -->
     <header class="hero">
       <div class="hero-rule">

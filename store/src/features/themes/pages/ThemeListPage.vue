@@ -4,12 +4,14 @@ import { Loader2 } from 'lucide-vue-next'
 import { useThemesQuery } from '@/features/browse/queries'
 import ThemeCard from '../components/ThemeCard.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const themesQuery = useThemesQuery()
 const themes = computed(() => themesQuery.data.value?.items ?? [])
 </script>
 
 <template>
   <section class="page">
+    <BackLink />
     <header class="page-header">
       <div class="page-eyebrow">Themes</div>
       <h1 class="page-title">主題瀏覽</h1>

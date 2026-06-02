@@ -6,6 +6,7 @@ import {
 } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 // FAQ accordion state
 const openFaqId = ref<string | null>(null)
 function toggleFaq(id: string) {
@@ -64,6 +65,7 @@ const FAQS: Faq[] = [
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/custom" class="back-link">
       <ArrowLeft :size="14" /> 客製化首頁
     </RouterLink>

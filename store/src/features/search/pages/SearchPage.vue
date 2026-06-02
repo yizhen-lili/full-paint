@@ -6,6 +6,7 @@ import { useSearchProductsQuery } from '@/features/products/queries'
 import ProductGrid from '@/features/products/components/ProductGrid.vue'
 import Pagination from '@/features/products/components/Pagination.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const route = useRoute()
 const router = useRouter()
 
@@ -51,6 +52,7 @@ function onPageChange(newPage: number) {
 
 <template>
   <section class="page">
+    <BackLink />
     <header class="page-header">
       <div class="page-eyebrow">Search</div>
       <h1 class="page-title">

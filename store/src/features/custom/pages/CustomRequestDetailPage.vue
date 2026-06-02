@@ -26,6 +26,7 @@ import {
 import RequestProgressStepper from '../components/RequestProgressStepper.vue'
 import MessageTimeline from '../components/MessageTimeline.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const route = useRoute()
 const router = useRouter()
 const queryClient = useQueryClient()
@@ -297,6 +298,7 @@ const composerVisible = computed(() =>
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/custom/requests" class="back-link">
       <ArrowLeft :size="14" />
       返回申請列表

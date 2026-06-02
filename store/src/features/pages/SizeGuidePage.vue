@@ -8,6 +8,7 @@ import { useTitle } from '@vueuse/core'
 import { ChevronDown } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('尺寸指南｜易木 YIIMUI')
 
 // 視覺渲染比例：1cm = 3px，max 60cm = 180px
@@ -91,6 +92,7 @@ const fullOpen = ref(false)
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="01"
       chapter="Reference"

@@ -6,6 +6,7 @@ import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import * as profileApi from '../api'
 import CouponCard from '../components/CouponCard.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const tab = ref<'available' | 'used' | 'expired'>('available')
 
 const couponsQuery = useQuery({
@@ -31,6 +32,7 @@ const TAB_LABEL = {
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/profile" class="back-link">
       <ArrowLeft :size="14" />
       會員中心

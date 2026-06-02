@@ -6,11 +6,13 @@ import { useTitle } from '@vueuse/core'
 import { CreditCard, Calendar, Package, Truck } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('配送與付款｜易木 YIIMUI')
 </script>
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="04"
       chapter="Shipping & Payment"

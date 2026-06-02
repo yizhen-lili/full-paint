@@ -5,6 +5,7 @@ import { useTitle } from '@vueuse/core'
 import { Ruler, Coins, Sparkles, Truck, ShieldCheck, BookOpen, Brush, MessageCircleQuestion, Heart } from 'lucide-vue-next'
 import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 useTitle('購物說明｜易木 YIIMUI')
 
 interface InfoCard {
@@ -97,6 +98,7 @@ const POPULAR_QUESTIONS: FaqItem[] = [
 
 <template>
   <main class="page">
+    <BackLink />
     <SectionMasthead
       no="00"
       chapter="Help"

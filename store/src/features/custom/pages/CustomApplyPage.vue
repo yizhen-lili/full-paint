@@ -5,11 +5,13 @@ import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import InfoDrawer from '@/features/info/InfoDrawer.vue'
 import CustomApplyForm from '../components/CustomApplyForm.vue'
 
+import BackLink from '@/shared/components/BackLink.vue'
 const pricingOpen = ref(false)
 </script>
 
 <template>
   <main class="page">
+    <BackLink />
     <RouterLink to="/custom" class="back-link">
       <ArrowLeft :size="14" /> 客製化首頁
     </RouterLink>
