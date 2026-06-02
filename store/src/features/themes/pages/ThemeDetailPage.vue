@@ -281,33 +281,36 @@ const totalProducts = computed(() =>
   inset: 0;
   background-size: cover;
   background-position: center;
-  filter: sepia(0.06) saturate(0.92);
+  /* 不再壓暗 — 之前 sepia + 低 saturate 把封面灰沉化 */
+  filter: sepia(0.02) saturate(1);
 }
 .text-bg-tone {
+  /* 換成 paper-surface 淺米基底 + 重點色微染 — 不再用 paper-deep 深棕 */
   background:
-    radial-gradient(circle at 20% 25%, rgba(255,255,255,0.5), transparent 55%),
-    radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 60%),
+    radial-gradient(circle at 20% 25%, rgba(255, 252, 244, 0.95), transparent 60%),
+    radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 65%),
     linear-gradient(135deg,
-      var(--color-paper-deep) 0%,
-      var(--color-accent-soft) 70%,
-      var(--color-accent) 130%);
+      var(--color-paper-surface) 0%,
+      var(--color-paper-canvas) 60%,
+      var(--color-accent-soft) 130%);
 }
+/* veil 改成淺米色（紙感）— 讓 cover image 透出來但不灰沉，文字在淺底配深色字 */
 .text-veil {
   position: absolute;
   inset: 0;
   background:
     linear-gradient(135deg,
-      rgba(31, 26, 21, 0.42) 0%,
-      rgba(31, 26, 21, 0.18) 50%,
-      rgba(31, 26, 21, 0.45) 100%);
+      rgba(252, 247, 229, 0.62) 0%,
+      rgba(252, 247, 229, 0.42) 50%,
+      rgba(252, 247, 229, 0.62) 100%);
   pointer-events: none;
 }
 .hero-with-image .text-veil {
   background:
     linear-gradient(135deg,
-      rgba(31, 26, 21, 0.55) 0%,
-      rgba(31, 26, 21, 0.32) 55%,
-      rgba(31, 26, 21, 0.58) 100%);
+      rgba(252, 247, 229, 0.78) 0%,
+      rgba(252, 247, 229, 0.62) 55%,
+      rgba(252, 247, 229, 0.8) 100%);
 }
 
 .text-inner {
@@ -318,10 +321,10 @@ const totalProducts = computed(() =>
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 24px;
-  color: var(--color-paper-canvas);
+  color: var(--color-ink-strong);
 }
 
-/* Top — 戳印 */
+/* Top — 戳印（淺底配深字） */
 .hero-top {
   display: flex;
   align-items: center;
@@ -330,23 +333,23 @@ const totalProducts = computed(() =>
   font-size: 11px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: rgba(250, 244, 221, 0.85);
+  color: var(--color-ink-muted);
 }
 .hero-stamp {
   font-weight: 500;
-  color: rgba(250, 244, 221, 0.95);
+  color: var(--color-accent);
 }
 .hero-stamp-rule {
   flex: 0 1 80px;
   height: 1px;
-  background: rgba(250, 244, 221, 0.4);
+  background: var(--color-line);
 }
 .hero-stamp-cap {
   font-family: var(--font-display);
   font-style: italic;
   font-size: 14px;
   letter-spacing: 0.04em;
-  color: rgba(250, 244, 221, 0.75);
+  color: var(--color-ink-muted);
   text-transform: none;
 }
 
@@ -358,9 +361,10 @@ const totalProducts = computed(() =>
   line-height: 1.1;
   letter-spacing: 0.12em;
   margin: 16px 0 0;
-  color: rgba(250, 244, 221, 0.98);
+  color: var(--color-ink-strong);
   align-self: end;
-  text-shadow: 0 4px 24px rgba(31, 26, 21, 0.35);
+  /* 微弱的 paper canvas glow 提升可讀性（cover 透出時也能站住） */
+  text-shadow: 0 1px 0 rgba(252, 247, 229, 0.6);
 }
 .hero-desc {
   font-family: var(--font-cn-serif);
@@ -368,7 +372,7 @@ const totalProducts = computed(() =>
   font-size: 16px;
   line-height: 1.95;
   letter-spacing: 0.06em;
-  color: rgba(250, 244, 221, 0.85);
+  color: var(--color-ink-default);
   max-width: 540px;
   margin: 0;
   align-self: start;
@@ -378,7 +382,7 @@ const totalProducts = computed(() =>
   font-style: italic;
   font-size: 26px;
   font-weight: 300;
-  color: var(--color-accent-tint);
+  color: var(--color-accent);
   margin: 0 4px;
   vertical-align: -4px;
 }
@@ -396,25 +400,25 @@ const totalProducts = computed(() =>
   align-items: baseline;
   gap: 10px;
   font-family: var(--font-mono);
-  color: rgba(250, 244, 221, 0.9);
+  color: var(--color-ink-default);
 }
 .meta-num {
   font-size: 26px;
   font-weight: 500;
   letter-spacing: 0.04em;
-  color: rgba(250, 244, 221, 1);
+  color: var(--color-ink-strong);
 }
 .meta-label {
   font-size: 11px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: rgba(250, 244, 221, 0.6);
+  color: var(--color-ink-muted);
   margin-right: 6px;
 }
 .meta-divider {
   width: 1px;
   height: 18px;
-  background: rgba(250, 244, 221, 0.4);
+  background: var(--color-line);
   margin: 0 8px;
 }
 .hero-cta {
@@ -423,15 +427,16 @@ const totalProducts = computed(() =>
   letter-spacing: 0.28em;
   text-transform: uppercase;
   padding: 14px 28px;
-  border: 1px solid rgba(250, 244, 221, 0.7);
-  color: rgba(250, 244, 221, 0.95);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-strong);
   text-decoration: none;
+  background: transparent;
   transition: all 200ms;
 }
 .hero-cta:hover {
-  background: rgba(250, 244, 221, 0.95);
-  color: var(--color-ink-strong);
-  border-color: rgba(250, 244, 221, 0.95);
+  background: var(--color-ink-strong);
+  color: var(--color-paper-canvas);
+  border-color: var(--color-ink-strong);
 }
 
 /* ── Hero mosaic 2x2（右側精選商品，坐在 canvas 上） ── */
