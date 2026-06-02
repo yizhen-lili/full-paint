@@ -114,8 +114,16 @@ const otherSeriesTitle = computed(() =>
     </nav>
 
     <!-- Hero — 參考主題擺放：左 light text panel + 右 2x2 精選 mosaic（無灰黑 veil） -->
-    <header class="hero">
+    <header class="hero" :class="{ 'hero-with-image': series.sample_cover_image_url }">
       <div class="hero-text-side">
+        <div
+          v-if="series.sample_cover_image_url"
+          class="text-bg"
+          :style="{ backgroundImage: `url(${series.sample_cover_image_url})` }"
+        ></div>
+        <div v-else class="text-bg text-bg-tone"></div>
+        <div class="text-veil"></div>
+
         <div class="text-inner">
           <div class="hero-top">
             <span class="hero-stamp">Series</span>
@@ -314,6 +322,41 @@ const otherSeriesTitle = computed(() =>
   background: var(--color-paper-surface);
 }
 
+/* 系列有自訂 cover → 當左面板背景圖（不灰沉、有淺米色 veil 讓文字站住） */
+.text-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: sepia(0.02) saturate(1);
+}
+.text-bg-tone {
+  background:
+    radial-gradient(circle at 20% 25%, rgba(255, 252, 244, 0.95), transparent 60%),
+    radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 65%),
+    linear-gradient(135deg,
+      var(--color-paper-surface) 0%,
+      var(--color-paper-canvas) 60%,
+      var(--color-accent-soft) 130%);
+}
+.text-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(135deg,
+      rgba(252, 247, 229, 0.62) 0%,
+      rgba(252, 247, 229, 0.42) 50%,
+      rgba(252, 247, 229, 0.62) 100%);
+  pointer-events: none;
+}
+.hero-with-image .text-veil {
+  background:
+    linear-gradient(135deg,
+      rgba(252, 247, 229, 0.78) 0%,
+      rgba(252, 247, 229, 0.62) 55%,
+      rgba(252, 247, 229, 0.8) 100%);
+}
+
 .text-inner {
   position: relative;
   z-index: 2;
@@ -383,6 +426,8 @@ const otherSeriesTitle = computed(() =>
   align-self: end;
   word-break: keep-all;
   overflow-wrap: break-word;
+  /* cover image 透出時的紙感 glow 提升可讀性 */
+  text-shadow: 0 1px 0 rgba(252, 247, 229, 0.6);
 }
 .hero-desc {
   font-family: var(--font-cn-serif);
