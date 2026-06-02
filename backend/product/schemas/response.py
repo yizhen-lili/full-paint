@@ -280,6 +280,7 @@ class PublicSeriesInTheme(BaseModel):
     name: str
     description: str | None
     product_count: int
+    sample_cover_image_url: str | None = None
 
     model_config = {"from_attributes": True}
 

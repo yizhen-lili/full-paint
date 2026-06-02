@@ -8,6 +8,8 @@ defineProps<{
     description: string | null
     product_count: number
     is_featured?: boolean
+    /** admin 在系列管理上傳的代表圖；有就顯示，沒有 fallback 漸層 */
+    sample_cover_image_url?: string | null
   }
   /** 漸層 index（每張卡不同） */
   index?: number
@@ -26,7 +28,19 @@ function gradientFor(idx: number) {
 
 <template>
   <RouterLink :to="`/series/${series.id}`" class="card">
-    <div class="card-visual" :style="{ background: gradientFor(index ?? 0) }">
+    <div
+      class="card-visual"
+      :style="series.sample_cover_image_url
+        ? undefined
+        : { background: gradientFor(index ?? 0) }"
+    >
+      <img
+        v-if="series.sample_cover_image_url"
+        :src="series.sample_cover_image_url"
+        :alt="series.name"
+        class="visual-img"
+        loading="lazy"
+      />
       <div class="visual-overlay">
         <span class="visual-name">{{ series.name }}</span>
         <span v-if="series.is_featured" class="visual-featured">⭐ 精選</span>
@@ -71,6 +85,20 @@ function gradientFor(idx: number) {
 }
 .card:hover .card-visual {
   background-position: 70% 70%;
+}
+
+.visual-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 不壓暗（之前 sepia + 低 saturate 會灰沉）*/
+  filter: sepia(0.03) saturate(0.98);
+  transition: transform 600ms ease;
+}
+.card:hover .visual-img {
+  transform: scale(1.04);
 }
 
 .visual-overlay {

@@ -1318,6 +1318,7 @@ async def public_get_theme(db: AsyncSession, theme_id: UUID) -> dict:
                 "name": s.name,
                 "description": s.description,
                 "product_count": count_map.get(s.id, 0),
+                "sample_cover_image_url": s.sample_cover_image_url,
             }
             for s in series_rows
         ],

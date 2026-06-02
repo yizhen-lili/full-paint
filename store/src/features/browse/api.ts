@@ -31,6 +31,8 @@ export interface ThemeSeriesItem {
   name: string
   description: string | null
   product_count: number
+  /** admin 在系列管理上傳的代表圖；ThemeDetailPage SeriesCard 用 */
+  sample_cover_image_url: string | null
 }
 
 export interface ThemeDetail {
