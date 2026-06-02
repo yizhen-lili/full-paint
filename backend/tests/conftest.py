@@ -66,3 +66,19 @@ async def client(db):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _mock_auth_send_email(monkeypatch):
+    """測試環境自動 mock auth._send_email 成 no-op。
+
+    背景：production code 改成「email 失敗 raise ExternalServiceError」之後，
+    auth tests 若直接打 register / forgot-password endpoint 會因為沒設
+    RESEND_API_KEY 直接 503。對於不在乎 email 行為的測試（絕大多數），統一
+    mock 成功；想測「email 失敗時的 rollback 行為」的測試可以在用 monkeypatch
+    覆蓋這個 fixture。
+    """
+    async def _noop(to: str, subject: str, html: str) -> None:
+        return None
+
+    monkeypatch.setattr("auth.service._send_email", _noop)

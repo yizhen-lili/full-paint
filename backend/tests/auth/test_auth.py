@@ -556,6 +556,60 @@ async def test_cleanup_cascades_tokens(db):
 
 
 @pytest.mark.asyncio
+async def test_register_rolls_back_when_email_fails(
+    client: AsyncClient, db, monkeypatch
+):
+    """RESEND_API_KEY 沒設 / email 寄信失敗 → register 必須 rollback 不留孤兒帳號。
+
+    之前的 bug：silent try/except 吞掉 email 失敗，user 建出來但 is_email_verified=False
+    永遠拿不到驗證連結 → 登不進。修法後 email 失敗 = 全部 rollback + 回 503。
+    """
+    from core.exceptions import ExternalServiceError
+
+    async def _raise(to, subject, html):
+        raise ExternalServiceError("test: email infra down")
+
+    monkeypatch.setattr("auth.service._send_email", _raise)
+
+    res = await client.post(
+        REGISTER_URL,
+        json={"name": "orphan", "email": "orphan@test.com", "password": "abc1234567"},
+    )
+    assert res.status_code == 503
+
+    # DB 應該完全沒留下這個 user 跟 token（rollback 成功）
+    user_row = await db.execute(select(User).where(User.email == "orphan@test.com"))
+    assert user_row.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_rolls_back_when_email_fails(
+    client: AsyncClient, db, monkeypatch
+):
+    """forgot-password email 失敗 → 新 reset token 不該入庫，避免 user 以為已寄出。"""
+    from core.exceptions import ExternalServiceError
+
+    # 先正常註冊 + 驗證
+    user = await _register_and_verify(client, db, email="forgot@test.com")
+    user_id = user.id  # 先拿出來，後面 rollback 後 session 狀態可能不穩
+
+    # 接下來 mock email 寄信失敗
+    async def _raise(to, subject, html):
+        raise ExternalServiceError("test: email infra down")
+
+    monkeypatch.setattr("auth.service._send_email", _raise)
+
+    res = await client.post(FORGOT_URL, json={"email": "forgot@test.com"})
+    assert res.status_code == 503
+
+    # DB 應該沒新增 reset token
+    pr = await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.user_id == user_id)
+    )
+    assert pr.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
 async def test_cleanup_frees_email_for_reregistration(client: AsyncClient, db):
     """user 註冊後 25h+ 沒驗證 → cleanup → 同 email 可再次註冊。"""
     email = "reuse@test.com"

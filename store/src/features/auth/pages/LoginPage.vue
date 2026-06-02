@@ -13,6 +13,10 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const apiError = ref<string | null>(null)
+// 403 ForbiddenError 多半是「請先驗證 Email」— 開出「重發驗證信」action 讓 user 自救
+const needsEmailVerification = ref(false)
+const resending = ref(false)
+const resendMessage = ref<string | null>(null)
 const submitting = ref(false)
 
 const { handleSubmit, errors, defineField } = useForm<LoginValues>({
@@ -30,6 +34,8 @@ const redirectTo = computed(() => {
 
 const onSubmit = handleSubmit(async (values) => {
   apiError.value = null
+  needsEmailVerification.value = false
+  resendMessage.value = null
   submitting.value = true
   try {
     await authApi.login(values.email, values.password)
@@ -41,6 +47,9 @@ const onSubmit = handleSubmit(async (values) => {
       apiError.value = '帳號或密碼錯誤'
     } else if (err.status === 403) {
       apiError.value = err.detail || 'Email 尚未驗證，請至信箱完成驗證'
+      needsEmailVerification.value = true
+    } else if (err.status === 503) {
+      apiError.value = err.detail || '系統暫時無法處理，請稍後再試'
     } else {
       apiError.value = err.detail || '登入失敗，請稍後再試'
     }
@@ -48,6 +57,28 @@ const onSubmit = handleSubmit(async (values) => {
     submitting.value = false
   }
 })
+
+async function resendVerification() {
+  if (!email.value) {
+    resendMessage.value = '請先輸入 Email'
+    return
+  }
+  resending.value = true
+  resendMessage.value = null
+  try {
+    await authApi.resendVerification(email.value)
+    resendMessage.value = '驗證信已重發，請至信箱查看（連結 24 小時內有效）'
+  } catch (e) {
+    const err = e as authApi.ApiError
+    if (err.status === 503) {
+      resendMessage.value = err.detail || '寄信暫時失敗，請稍後再試'
+    } else {
+      resendMessage.value = err.detail || '無法重發驗證信'
+    }
+  } finally {
+    resending.value = false
+  }
+}
 </script>
 
 <template>
@@ -90,6 +121,19 @@ const onSubmit = handleSubmit(async (values) => {
       </div>
 
       <p v-if="apiError" class="api-err">{{ apiError }}</p>
+
+      <div v-if="needsEmailVerification" class="verify-actions">
+        <button
+          type="button"
+          class="resend-btn"
+          :disabled="resending"
+          @click="resendVerification"
+        >
+          <Loader2 v-if="resending" class="spin" />
+          <span>{{ resending ? '寄送中...' : '重發驗證信' }}</span>
+        </button>
+        <p v-if="resendMessage" class="resend-msg">{{ resendMessage }}</p>
+      </div>
 
       <button type="submit" class="btn-primary" :disabled="submitting">
         <Loader2 v-if="submitting" class="spin" />
@@ -190,6 +234,40 @@ const onSubmit = handleSubmit(async (values) => {
   background: rgba(155, 58, 80, 0.08);
   border: 1px solid var(--color-state-danger);
   border-radius: var(--radius-xs);
+  letter-spacing: 0.04em;
+}
+
+.verify-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: -8px;
+}
+.resend-btn {
+  align-self: flex-start;
+  font-family: var(--font-body);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: var(--color-accent);
+  background: transparent;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-xs);
+  padding: 8px 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 150ms, color 150ms;
+}
+.resend-btn:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-paper-canvas);
+}
+.resend-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.resend-msg {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-ink-muted);
   letter-spacing: 0.04em;
 }
 

@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.models import EmailVerificationToken, PasswordResetToken, TokenTypeEnum, User
 from core.config import settings
-from core.exceptions import BadRequestError, ConflictError, ForbiddenError, UnauthorizedError
+from core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ExternalServiceError,
+    ForbiddenError,
+    UnauthorizedError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +43,23 @@ def _make_jwt(user_id: str, role: str, expire_seconds: int) -> str:
 
 
 async def _send_email(to: str, subject: str, html: str) -> None:
+    """寄 email；失敗時 raise ExternalServiceError 給 caller。
+
+    Critical auth flow（register / forgot_password / resend_verification）的 caller
+    應該在這個 exception 觸發時 rollback DB 並讓 endpoint 回 503，避免 user 以為
+    信已寄出但實際沒收到（之前的 silent swallow 就是這個 bug，導致 user 完成
+    重設流程後 is_email_verified=False 卻不知道、新密碼也登不進）。
+
+    通知類 caller（非 auth 模組、純通知）若不想阻斷流程，可在 caller 端自行
+    try/except 包，但仍應 log.error 把問題冒出來。
+    """
+    if not settings.resend_api_key:
+        raise ExternalServiceError(
+            "寄信服務未設定（RESEND_API_KEY 缺失）",
+            code="email_not_configured",
+        )
     try:
-        import resend
+        import resend  # noqa: PLC0415
         resend.api_key = settings.resend_api_key
         payload: dict = {
             "from": settings.resend_from_email,
@@ -52,8 +73,15 @@ async def _send_email(to: str, subject: str, html: str) -> None:
             None,
             lambda: resend.Emails.send(payload),
         )
+    except ExternalServiceError:
+        raise
     except Exception as e:
-        logger.warning(f"Email send failed to {to}: {e}")
+        # logger.warning 升級到 error + exc_info，Railway log 變得明顯
+        logger.error("Email send failed to %s: %s", to, e, exc_info=True)
+        raise ExternalServiceError(
+            f"寄信失敗：{e}",
+            code="email_send_failed",
+        ) from e
 
 
 async def register(db: AsyncSession, name: str, email: str, password: str) -> None:
@@ -119,7 +147,9 @@ async def register(db: AsyncSession, name: str, email: str, password: str) -> No
         token_type=TokenTypeEnum.signup,
         expires_at=datetime.now(UTC) + timedelta(hours=24),
     ))
-    await db.commit()
+    # flush 把 user / token / overwrite 寫進 DB transaction，但先不 commit；
+    # 若 email 寄出失敗就 rollback，避免建出收不到信的孤兒帳號（user 卡死無法登入）。
+    await db.flush()
 
     verify_url = f"{settings.frontend_url}/verify-email/{plain}"
     body = (
@@ -127,7 +157,13 @@ async def register(db: AsyncSession, name: str, email: str, password: str) -> No
         f"<p><a href='{verify_url}'>{verify_url}</a></p>"
         f"<p>連結 24 小時內有效。</p>"
     )
-    await _send_email(email, "易木 YIIMUI — 請驗證您的 Email", body)
+    try:
+        await _send_email(email, "易木 YIIMUI — 請驗證您的 Email", body)
+    except ExternalServiceError:
+        await db.rollback()
+        raise
+
+    await db.commit()
 
 
 async def login(
@@ -206,7 +242,8 @@ async def resend_verification(db: AsyncSession, email: str) -> None:
             token_type=TokenTypeEnum.signup,
             expires_at=datetime.now(UTC) + timedelta(hours=24),
         ))
-        await db.commit()
+        # 寄信失敗就 rollback 新 token，避免 user 以為已重發
+        await db.flush()
 
         verify_url = f"{settings.frontend_url}/verify-email/{plain}"
         body = (
@@ -214,7 +251,13 @@ async def resend_verification(db: AsyncSession, email: str) -> None:
             f"<p><a href='{verify_url}'>{verify_url}</a></p>"
             f"<p>連結 24 小時內有效。</p>"
         )
-        await _send_email(email, "易木 YIIMUI — 重新驗證您的 Email", body)
+        try:
+            await _send_email(email, "易木 YIIMUI — 重新驗證您的 Email", body)
+        except ExternalServiceError:
+            await db.rollback()
+            raise
+
+        await db.commit()
 
 
 async def forgot_password(db: AsyncSession, email: str, admin_only: bool = False) -> None:
@@ -237,7 +280,9 @@ async def forgot_password(db: AsyncSession, email: str, admin_only: bool = False
             token=_hash_token(plain),
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         ))
-        await db.commit()
+        # 寄信失敗就 rollback：舊 token 不會被誤廢、新 token 也不建，避免 user
+        # 看到「重設信已寄出」訊息但實際沒收到的錯覺
+        await db.flush()
 
         base_url = settings.admin_url if admin_only else settings.frontend_url
         reset_url = f"{base_url}/reset-password/{plain}"
@@ -246,7 +291,13 @@ async def forgot_password(db: AsyncSession, email: str, admin_only: bool = False
             f"<p><a href='{reset_url}'>{reset_url}</a></p>"
             f"<p>連結 1 小時內有效。</p>"
         )
-        await _send_email(email, "易木 YIIMUI — 重設密碼", body)
+        try:
+            await _send_email(email, "易木 YIIMUI — 重設密碼", body)
+        except ExternalServiceError:
+            await db.rollback()
+            raise
+
+        await db.commit()
 
 
 async def cleanup_unverified_users(db: AsyncSession, grace_hours: int = 25) -> int:
