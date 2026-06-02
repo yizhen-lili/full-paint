@@ -9,12 +9,12 @@ const themes = computed<ThemeListItem[]>(
   () => themesQuery.data.value?.items.slice(0, 4) ?? [],
 )
 
-// 4 種 mood 漸層 — 跟 ThemeCard / SeriesDetail mosaic 對齊
+// 4 種 mood 漸層 — alpha 拉滿 1.0 讓淺色 band 也看得到飽和色（不再依賴深色背景襯托）
 const TONES = [
-  'linear-gradient(135deg, rgba(221,229,210,0.6), rgba(151,166,135,0.4))',
-  'linear-gradient(135deg, rgba(236,223,218,0.6), rgba(201,168,168,0.4))',
-  'linear-gradient(135deg, rgba(236,227,210,0.6), rgba(184,160,132,0.4))',
-  'linear-gradient(135deg, rgba(220,227,226,0.6), rgba(152,171,168,0.4))',
+  'linear-gradient(135deg, #E6EDDB 0%, #B9C7A7 100%)',
+  'linear-gradient(135deg, #F2E5E0 0%, #D5B6B6 100%)',
+  'linear-gradient(135deg, #F2EAD8 0%, #C9B496 100%)',
+  'linear-gradient(135deg, #E4ECEB 0%, #ABBDBA 100%)',
 ]
 function toneFor(idx: number) {
   return TONES[idx % TONES.length]
@@ -79,18 +79,19 @@ function toneFor(idx: number) {
 <style scoped>
 .band {
   position: relative;
-  background: var(--color-paper-deep);
+  /* 改 paper-canvas 米白底（之前 paper-deep 深棕讓整段灰暗） */
+  background: var(--color-paper-canvas);
   padding: 120px 0 128px;
   overflow: hidden;
   margin: 96px 0;
 }
 
-/* 紙質 grain（淡底上的微紋路） */
+/* 紙質 grain — opacity 大幅降低（之前 0.25 multiply 把整段壓暗）*/
 .band-grain {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0.25;
+  opacity: 0.08;
   mix-blend-mode: multiply;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.4 0 0 0 0 0.32 0 0 0 0 0.22 0 0 0 0.05 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>");
 }
@@ -114,7 +115,8 @@ function toneFor(idx: number) {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.22em;
-  color: var(--color-fresh);
+  /* 改用 accent — paper-canvas 底色上對比更舒服（fresh 是亮綠、在淺米色上反而搶眼） */
+  color: var(--color-accent);
   font-weight: 500;
 }
 .head-dot {
@@ -192,21 +194,23 @@ function toneFor(idx: number) {
 }
 .card-img {
   object-fit: cover;
-  filter: sepia(0.06) saturate(0.9) brightness(0.9);
+  /* 不再壓暗 brightness — 原本 0.9 把每張封面壓出灰暗感 */
+  filter: sepia(0.04) saturate(0.96);
   transition: transform 700ms ease, filter 200ms;
 }
 .card:hover .card-img {
   transform: scale(1.05);
-  filter: sepia(0.04) saturate(1) brightness(0.95);
+  filter: sepia(0.02) saturate(1.02);
 }
+/* veil 大幅減淡 — 仍保留底部一絲深色讓白字可讀，但不再把整圖壓黑 */
 .card-veil {
   position: absolute;
   inset: 0;
   background: linear-gradient(
     to top,
-    rgba(20, 16, 12, 0.78) 0%,
-    rgba(20, 16, 12, 0.12) 55%,
-    rgba(20, 16, 12, 0) 100%
+    rgba(20, 16, 12, 0.45) 0%,
+    rgba(20, 16, 12, 0.05) 40%,
+    rgba(20, 16, 12, 0) 70%
   );
 }
 
