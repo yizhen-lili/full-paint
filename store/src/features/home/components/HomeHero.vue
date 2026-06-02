@@ -1,8 +1,19 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { useProductsQuery } from '@/features/products/queries'
+import { useHomepagePinnedQuery, useProductsQuery } from '@/features/products/queries'
 
-const heroProductQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 1 })
+// Hero「Cover Story」優先用 admin 釘選的 Top1（homepage_order = 1）；
+// 沒置頂時 fallback 到最新上架那張。這樣 admin 在 /admin/products/homepage-pinned
+// 拖第一名 = 直接影響 store 首頁最上方那張 cover。
+const pinnedQuery = useHomepagePinnedQuery()
+const latestQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 1 })
+
+const heroProduct = computed(() => {
+  const pinnedTop = pinnedQuery.data.value?.items[0]
+  if (pinnedTop) return pinnedTop
+  return latestQuery.data.value?.items[0]
+})
 </script>
 
 <template>
@@ -45,13 +56,18 @@ const heroProductQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 
 
       <div class="hero-visual">
         <span class="visual-cap" aria-hidden="true">— Cover Story —</span>
-        <div class="visual-frame">
+        <RouterLink
+          v-if="heroProduct?.cover_image_url"
+          :to="`/products/${heroProduct.id}`"
+          class="visual-frame visual-frame-link"
+        >
           <img
-            v-if="heroProductQuery.data.value?.items[0]?.cover_image_url"
-            :src="heroProductQuery.data.value.items[0].cover_image_url"
-            :alt="heroProductQuery.data.value.items[0].title"
+            :src="heroProduct.cover_image_url"
+            :alt="heroProduct.title"
           />
-          <div v-else class="visual-placeholder">
+        </RouterLink>
+        <div v-else class="visual-frame">
+          <div class="visual-placeholder">
             <span class="placeholder-letter">易</span>
           </div>
         </div>
@@ -261,6 +277,15 @@ const heroProductQuery = useProductsQuery({ sort: 'latest', page: 1, page_size: 
   background: var(--color-paper-deep);
   border: 1px solid var(--color-line-subtle);
   position: relative;
+  display: block;
+}
+.visual-frame-link {
+  text-decoration: none;
+  transition: transform 300ms ease, box-shadow 300ms ease;
+}
+.visual-frame-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(31, 26, 21, 0.08);
 }
 .visual-frame::after {
   content: '';
