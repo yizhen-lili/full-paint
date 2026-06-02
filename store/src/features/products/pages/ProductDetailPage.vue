@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
-import { Loader2, Package, Sparkles } from 'lucide-vue-next'
+import { ChevronLeft, Loader2, Package, Sparkles } from 'lucide-vue-next'
 import { useProductDetailQuery, useRelatedProductsQuery } from '../queries'
 import type { ProductDetail, ProductVariant, ProductImage, ProductBrief } from '../api'
 import ProductGallery from '../components/ProductGallery.vue'
@@ -159,6 +159,16 @@ const router = useRouter()
 const auth = useAuthStore()
 const addCartMut = useAddCartItemMutation()
 
+// 回上一頁：優先用瀏覽器歷史（保留 list 的篩選 / 排序狀態）；
+// 直連進來（沒 history）fallback 回 /products 列表
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push('/products')
+  }
+}
+
 const toast = ref<string | null>(null)
 const toastKind = ref<'info' | 'success' | 'error'>('info')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
@@ -215,6 +225,11 @@ async function onAddToCart() {
   </section>
 
   <section v-else class="page">
+    <button type="button" class="back-link" @click="goBack">
+      <ChevronLeft :size="14" :stroke-width="1.5" />
+      回上一頁
+    </button>
+
     <div v-if="isPreview" class="preview-banner">
       <span class="preview-eyebrow">Design Preview</span>
       <span>商品建設中 — 以下為設計示意，dev mode only。</span>
@@ -362,6 +377,24 @@ async function onAddToCart() {
   text-transform: uppercase;
   color: var(--color-accent);
   text-decoration: none;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 4px 8px 4px 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  color: var(--color-ink-muted);
+  cursor: pointer;
+  transition: color 120ms;
+}
+.back-link:hover {
+  color: var(--color-ink-strong);
 }
 
 .preview-banner {
