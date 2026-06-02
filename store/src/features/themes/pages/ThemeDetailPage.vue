@@ -92,45 +92,48 @@ const totalProducts = computed(() =>
       <span class="current">{{ theme.name }}</span>
     </nav>
 
-    <!-- Hero — 左半深色 text panel / 右半 2x2 精選商品（坐在 canvas 上） -->
-    <header
-      class="hero"
-      :class="{ 'hero-with-image': heroImage }"
-    >
-      <div class="hero-text-side">
-        <div v-if="heroImage" class="text-bg" :style="{ backgroundImage: `url(${heroImage})` }"></div>
-        <div v-else class="text-bg text-bg-tone"></div>
-        <div class="text-veil"></div>
-
-        <div class="text-inner">
-          <div class="hero-top">
-            <span class="hero-stamp">Theme · No. {{ String(theme.sort_order).padStart(2, '0') }}</span>
-            <span class="hero-stamp-rule"></span>
-            <span class="hero-stamp-cap">Yiimui Atelier</span>
-          </div>
-
-          <h1 class="hero-title">{{ theme.name }}</h1>
-
-          <p v-if="theme.description" class="hero-desc">
-            <em class="desc-quote">“</em>{{ theme.description }}<em class="desc-quote">”</em>
-          </p>
-
-          <div class="hero-bottom">
-            <div class="hero-meta">
-              <span class="meta-num">{{ theme.series.length }}</span>
-              <span class="meta-label">Series</span>
-              <span class="meta-divider"></span>
-              <span class="meta-num">{{ totalProducts }}</span>
-              <span class="meta-label">Products</span>
-            </div>
-            <RouterLink :to="`/products?theme_id=${theme.id}`" class="hero-cta">
-              該主題全部商品 →
-            </RouterLink>
-          </div>
-        </div>
+    <!-- Page header — 文字從 cover 拿掉，獨立成上方 block -->
+    <header class="page-header">
+      <div class="header-top">
+        <span class="header-stamp">Theme · No. {{ String(theme.sort_order).padStart(2, '0') }}</span>
+        <span class="header-stamp-rule"></span>
+        <span class="header-stamp-cap">Yiimui Atelier</span>
       </div>
 
-      <!-- 右側 2x2 精選商品（坐在頁面 canvas 上） -->
+      <h1 class="page-title">{{ theme.name }}</h1>
+
+      <p v-if="theme.description" class="page-desc">
+        <em class="desc-quote">“</em>{{ theme.description }}<em class="desc-quote">”</em>
+      </p>
+
+      <div class="page-meta-row">
+        <div class="page-meta">
+          <span class="meta-num">{{ theme.series.length }}</span>
+          <span class="meta-label">Series</span>
+          <span class="meta-divider"></span>
+          <span class="meta-num">{{ totalProducts }}</span>
+          <span class="meta-label">Products</span>
+        </div>
+        <RouterLink :to="`/products?theme_id=${theme.id}`" class="page-cta">
+          該主題全部商品 →
+        </RouterLink>
+      </div>
+    </header>
+
+    <!-- Hero — 純圖：左 cover image clean / 右 2x2 精選 mosaic -->
+    <section class="hero" aria-label="主題封面與精選">
+      <div class="hero-cover">
+        <img
+          v-if="heroImage"
+          :src="heroImage"
+          :alt="theme.name"
+          class="cover-img"
+          loading="lazy"
+        />
+        <div v-else class="cover-tone"></div>
+      </div>
+
+      <!-- 右側 2x2 精選商品 -->
       <aside class="hero-mosaic" aria-label="精選商品">
           <span class="mosaic-cap" aria-hidden="true">— Featured —</span>
           <div class="mosaic-grid">
@@ -167,7 +170,7 @@ const totalProducts = computed(() =>
             </template>
           </div>
         </aside>
-    </header>
+    </section>
 
     <!-- 該主題下的系列 -->
     <section class="series-section">
@@ -258,74 +261,15 @@ const totalProducts = computed(() =>
 .breadcrumb a:hover { color: var(--color-accent); }
 .breadcrumb .current { color: var(--color-ink-default); }
 
-/* ── Hero（左 dark text panel + 右 light mosaic） ── */
-.hero {
-  margin-bottom: 80px;
-  display: grid;
-  grid-template-columns: 1fr 0.75fr;
-  gap: 24px;
-  align-items: stretch;
-  min-height: clamp(440px, 60vh, 620px);
+/* ── Page header（文字從 cover 拿掉後獨立的上方 block） ── */
+.page-header {
+  margin-bottom: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 880px;
 }
-
-/* 左側 dark text panel — 只有這塊有深色背景 + veil */
-.hero-text-side {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-sm);
-}
-
-.text-bg {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
-  /* 不再壓暗 — 之前 sepia + 低 saturate 把封面灰沉化 */
-  filter: sepia(0.02) saturate(1);
-}
-.text-bg-tone {
-  /* 換成 paper-surface 淺米基底 + 重點色微染 — 不再用 paper-deep 深棕 */
-  background:
-    radial-gradient(circle at 20% 25%, rgba(255, 252, 244, 0.95), transparent 60%),
-    radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 65%),
-    linear-gradient(135deg,
-      var(--color-paper-surface) 0%,
-      var(--color-paper-canvas) 60%,
-      var(--color-accent-soft) 130%);
-}
-/* veil 改成淺米色（紙感）— 讓 cover image 透出來但不灰沉，文字在淺底配深色字 */
-.text-veil {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(135deg,
-      rgba(252, 247, 229, 0.62) 0%,
-      rgba(252, 247, 229, 0.42) 50%,
-      rgba(252, 247, 229, 0.62) 100%);
-  pointer-events: none;
-}
-.hero-with-image .text-veil {
-  background:
-    linear-gradient(135deg,
-      rgba(252, 247, 229, 0.78) 0%,
-      rgba(252, 247, 229, 0.62) 55%,
-      rgba(252, 247, 229, 0.8) 100%);
-}
-
-.text-inner {
-  position: relative;
-  z-index: 2;
-  height: 100%;
-  padding: 56px 56px;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 24px;
-  color: var(--color-ink-strong);
-}
-
-/* Top — 戳印（淺底配深字） */
-.hero-top {
+.header-top {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -334,17 +278,18 @@ const totalProducts = computed(() =>
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--color-ink-muted);
+  flex-wrap: wrap;
 }
-.hero-stamp {
+.header-stamp {
   font-weight: 500;
   color: var(--color-accent);
 }
-.hero-stamp-rule {
-  flex: 0 1 80px;
+.header-stamp-rule {
+  flex: 0 1 120px;
   height: 1px;
   background: var(--color-line);
 }
-.hero-stamp-cap {
+.header-stamp-cap {
   font-family: var(--font-display);
   font-style: italic;
   font-size: 14px;
@@ -353,29 +298,26 @@ const totalProducts = computed(() =>
   text-transform: none;
 }
 
-/* 中段 — 大標 + 描述 */
-.hero-title {
+.page-title {
   font-family: var(--font-cn-serif);
   font-weight: 300;
   font-size: clamp(48px, 9vw, 96px);
   line-height: 1.1;
   letter-spacing: 0.12em;
-  margin: 16px 0 0;
+  margin: 8px 0 0;
   color: var(--color-ink-strong);
-  align-self: end;
-  /* 微弱的 paper canvas glow 提升可讀性（cover 透出時也能站住） */
-  text-shadow: 0 1px 0 rgba(252, 247, 229, 0.6);
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
-.hero-desc {
+.page-desc {
   font-family: var(--font-cn-serif);
   font-weight: 300;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.95;
   letter-spacing: 0.06em;
   color: var(--color-ink-default);
-  max-width: 540px;
+  max-width: 640px;
   margin: 0;
-  align-self: start;
 }
 .desc-quote {
   font-family: var(--font-display);
@@ -387,20 +329,23 @@ const totalProducts = computed(() =>
   vertical-align: -4px;
 }
 
-/* 底部 — meta + CTA */
-.hero-bottom {
+.page-meta-row {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
   flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-line-subtle);
 }
-.hero-meta {
+.page-meta {
   display: flex;
   align-items: baseline;
   gap: 10px;
   font-family: var(--font-mono);
   color: var(--color-ink-default);
+  flex-wrap: wrap;
 }
 .meta-num {
   font-size: 26px;
@@ -421,7 +366,7 @@ const totalProducts = computed(() =>
   background: var(--color-line);
   margin: 0 8px;
 }
-.hero-cta {
+.page-cta {
   font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: 0.28em;
@@ -433,10 +378,46 @@ const totalProducts = computed(() =>
   background: transparent;
   transition: all 200ms;
 }
-.hero-cta:hover {
+.page-cta:hover {
   background: var(--color-ink-strong);
   color: var(--color-paper-canvas);
   border-color: var(--color-ink-strong);
+}
+
+/* ── Hero（純圖：左 cover image clean / 右 mosaic） ── */
+.hero {
+  margin-bottom: 80px;
+  display: grid;
+  grid-template-columns: 1fr 0.75fr;
+  gap: 24px;
+  align-items: stretch;
+  min-height: clamp(440px, 60vh, 620px);
+}
+
+.hero-cover {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-surface);
+}
+.cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: sepia(0.02) saturate(1);
+}
+.cover-tone {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 25%, rgba(255, 252, 244, 0.95), transparent 60%),
+    radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 65%),
+    linear-gradient(135deg,
+      var(--color-paper-surface) 0%,
+      var(--color-paper-canvas) 60%,
+      var(--color-accent-soft) 130%);
 }
 
 /* ── Hero mosaic 2x2（右側精選商品，坐在 canvas 上） ── */
@@ -563,26 +544,24 @@ const totalProducts = computed(() =>
 
 @media (max-width: 1279px) {
   .hero { grid-template-columns: 1fr 0.7fr; gap: 20px; }
-  .text-inner { padding: 48px 40px; }
   .series-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 1023px) {
   .page { padding: 40px 32px 64px; }
+  .page-header { margin-bottom: 32px; }
   .hero {
     grid-template-columns: 1fr;
     gap: 20px;
     min-height: auto;
   }
-  .hero-text-side { min-height: 380px; }
-  .text-inner { padding: 40px 36px; }
+  .hero-cover { aspect-ratio: 3 / 2; }
   .mosaic-grid { aspect-ratio: 2 / 1; }
 }
 @media (max-width: 767px) {
   .page { padding: 32px 24px 48px; }
-  .text-inner { padding: 32px 24px; gap: 24px; }
-  .hero-text-side { min-height: 320px; }
-  .hero-title { letter-spacing: 0.06em; }
-  .hero-bottom { flex-direction: column; align-items: flex-start; }
+  .page-title { letter-spacing: 0.06em; }
+  .page-meta-row { flex-direction: column; align-items: flex-start; }
+  .hero-cover { aspect-ratio: 4 / 3; }
   .mosaic-grid { aspect-ratio: 1; }
   .series-grid { grid-template-columns: 1fr; }
 }

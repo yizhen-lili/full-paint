@@ -113,58 +113,60 @@ const otherSeriesTitle = computed(() =>
       <span class="current">{{ series.name }}</span>
     </nav>
 
-    <!-- Hero — 參考主題擺放：左 light text panel + 右 2x2 精選 mosaic（無灰黑 veil） -->
-    <header class="hero" :class="{ 'hero-with-image': series.sample_cover_image_url }">
-      <div class="hero-text-side">
-        <div
-          v-if="series.sample_cover_image_url"
-          class="text-bg"
-          :style="{ backgroundImage: `url(${series.sample_cover_image_url})` }"
-        ></div>
-        <div v-else class="text-bg text-bg-tone"></div>
-        <div class="text-veil"></div>
-
-        <div class="text-inner">
-          <div class="hero-top">
-            <span class="hero-stamp">Series</span>
-            <span class="hero-stamp-rule"></span>
-            <span v-if="series.is_featured" class="featured-mark">
-              <Star class="featured-icon" />Featured
-            </span>
-            <span v-else class="hero-stamp-cap">Yiimui Atelier</span>
-          </div>
-
-          <h1 class="hero-title">{{ series.name }}</h1>
-
-          <p v-if="series.description" class="hero-desc">
-            <em class="desc-quote">“</em>{{ series.description }}<em class="desc-quote">”</em>
-          </p>
-          <p v-else class="hero-desc hero-desc-empty">— 一個還在悄悄誕生的系列 —</p>
-
-          <div class="hero-bottom">
-            <div class="hero-meta">
-              <span class="meta-num">{{ series.products.length }}</span>
-              <span class="meta-label">Products</span>
-              <template v-if="series.theme_name && series.theme_id">
-                <span class="meta-divider"></span>
-                <RouterLink
-                  :to="`/themes/${series.theme_id}`"
-                  class="meta-theme"
-                >{{ series.theme_name }}</RouterLink>
-              </template>
-            </div>
-            <RouterLink
-              v-if="allProducts.length > 0"
-              :to="`/products?series_id=${series.id}`"
-              class="hero-cta"
-            >
-              該系列全部商品 →
-            </RouterLink>
-          </div>
-        </div>
+    <!-- Page header — 文字從 cover 上拿掉，獨立成上方 block（不再壓在圖上） -->
+    <header class="page-header">
+      <div class="header-top">
+        <span class="header-stamp">Series</span>
+        <span class="header-stamp-rule"></span>
+        <span v-if="series.is_featured" class="featured-mark">
+          <Star class="featured-icon" />Featured
+        </span>
+        <span v-else class="header-stamp-cap">Yiimui Atelier</span>
       </div>
 
-      <!-- 右側 2x2 精選商品 mosaic（坐在頁面 canvas 上） -->
+      <h1 class="page-title">{{ series.name }}</h1>
+
+      <p v-if="series.description" class="page-desc">
+        <em class="desc-quote">“</em>{{ series.description }}<em class="desc-quote">”</em>
+      </p>
+      <p v-else class="page-desc page-desc-empty">— 一個還在悄悄誕生的系列 —</p>
+
+      <div class="page-meta-row">
+        <div class="page-meta">
+          <span class="meta-num">{{ series.products.length }}</span>
+          <span class="meta-label">Products</span>
+          <template v-if="series.theme_name && series.theme_id">
+            <span class="meta-divider"></span>
+            <RouterLink
+              :to="`/themes/${series.theme_id}`"
+              class="meta-theme"
+            >{{ series.theme_name }}</RouterLink>
+          </template>
+        </div>
+        <RouterLink
+          v-if="allProducts.length > 0"
+          :to="`/products?series_id=${series.id}`"
+          class="page-cta"
+        >
+          該系列全部商品 →
+        </RouterLink>
+      </div>
+    </header>
+
+    <!-- Hero — 純圖：左 cover image clean / 右 2x2 精選 mosaic clean -->
+    <section class="hero" aria-label="系列封面與精選">
+      <div class="hero-cover">
+        <img
+          v-if="series.sample_cover_image_url"
+          :src="series.sample_cover_image_url"
+          :alt="series.name"
+          class="cover-img"
+          loading="lazy"
+        />
+        <div v-else class="cover-tone"></div>
+      </div>
+
+      <!-- 右側 2x2 精選商品 mosaic -->
       <aside class="hero-mosaic" aria-label="精選商品">
         <span class="mosaic-cap" aria-hidden="true">— Featured —</span>
         <div class="mosaic-grid">
@@ -201,7 +203,7 @@ const otherSeriesTitle = computed(() =>
           </template>
         </div>
       </aside>
-    </header>
+    </section>
 
     <!-- 該系列全部商品 -->
     <section v-if="allProducts.length > 0" class="products-section">
@@ -304,71 +306,15 @@ const otherSeriesTitle = computed(() =>
 .breadcrumb a:hover { color: var(--color-accent); }
 .breadcrumb .current { color: var(--color-ink-default); }
 
-/* ── Hero (左 light text panel + 右 mosaic — 無灰黑 veil) ── */
-.hero {
-  margin-bottom: 80px;
-  display: grid;
-  grid-template-columns: 1fr 0.75fr;
-  gap: 24px;
-  align-items: stretch;
-  min-height: clamp(440px, 60vh, 620px);
+/* ── Page header（文字從 cover 拿掉後獨立的上方 block） ── */
+.page-header {
+  margin-bottom: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 880px;
 }
-
-.hero-text-side {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--color-line-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--color-paper-surface);
-}
-
-/* 系列有自訂 cover → 當左面板背景圖（不灰沉、有淺米色 veil 讓文字站住） */
-.text-bg {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
-  filter: sepia(0.02) saturate(1);
-}
-.text-bg-tone {
-  background:
-    radial-gradient(circle at 20% 25%, rgba(255, 252, 244, 0.95), transparent 60%),
-    radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 65%),
-    linear-gradient(135deg,
-      var(--color-paper-surface) 0%,
-      var(--color-paper-canvas) 60%,
-      var(--color-accent-soft) 130%);
-}
-.text-veil {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(135deg,
-      rgba(252, 247, 229, 0.62) 0%,
-      rgba(252, 247, 229, 0.42) 50%,
-      rgba(252, 247, 229, 0.62) 100%);
-  pointer-events: none;
-}
-.hero-with-image .text-veil {
-  background:
-    linear-gradient(135deg,
-      rgba(252, 247, 229, 0.78) 0%,
-      rgba(252, 247, 229, 0.62) 55%,
-      rgba(252, 247, 229, 0.8) 100%);
-}
-
-.text-inner {
-  position: relative;
-  z-index: 2;
-  height: 100%;
-  padding: 56px;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 24px;
-  color: var(--color-ink-strong);
-}
-
-.hero-top {
+.header-top {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -379,16 +325,16 @@ const otherSeriesTitle = computed(() =>
   color: var(--color-ink-muted);
   flex-wrap: wrap;
 }
-.hero-stamp {
+.header-stamp {
   font-weight: 500;
   color: var(--color-accent);
 }
-.hero-stamp-rule {
-  flex: 0 1 80px;
+.header-stamp-rule {
+  flex: 0 1 120px;
   height: 1px;
   background: var(--color-line);
 }
-.hero-stamp-cap {
+.header-stamp-cap {
   font-family: var(--font-display);
   font-style: italic;
   font-size: 14px;
@@ -415,33 +361,29 @@ const otherSeriesTitle = computed(() =>
   stroke: currentColor; fill: currentColor; stroke-width: 1.5;
 }
 
-.hero-title {
+.page-title {
   font-family: var(--font-cn-serif);
   font-weight: 300;
   font-size: clamp(48px, 8vw, 88px);
   line-height: 1.12;
   letter-spacing: 0.1em;
-  margin: 16px 0 0;
+  margin: 8px 0 0;
   color: var(--color-ink-strong);
-  align-self: end;
   word-break: keep-all;
   overflow-wrap: break-word;
-  /* cover image 透出時的紙感 glow 提升可讀性 */
-  text-shadow: 0 1px 0 rgba(252, 247, 229, 0.6);
 }
-.hero-desc {
+.page-desc {
   font-family: var(--font-cn-serif);
   font-weight: 300;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 2;
   letter-spacing: 0.04em;
   color: var(--color-ink-default);
-  max-width: 540px;
+  max-width: 640px;
   margin: 0;
-  align-self: start;
   white-space: pre-wrap;
 }
-.hero-desc-empty {
+.page-desc-empty {
   color: var(--color-ink-muted);
   font-style: italic;
 }
@@ -455,14 +397,17 @@ const otherSeriesTitle = computed(() =>
   vertical-align: -4px;
 }
 
-.hero-bottom {
+.page-meta-row {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
   flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-line-subtle);
 }
-.hero-meta {
+.page-meta {
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -499,7 +444,7 @@ const otherSeriesTitle = computed(() =>
   transition: color 150ms;
 }
 .meta-theme:hover { color: var(--color-accent-deep); }
-.hero-cta {
+.page-cta {
   font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: 0.28em;
@@ -511,10 +456,47 @@ const otherSeriesTitle = computed(() =>
   transition: all 200ms;
   background: transparent;
 }
-.hero-cta:hover {
+.page-cta:hover {
   background: var(--color-ink-strong);
   color: var(--color-paper-canvas);
   border-color: var(--color-ink-strong);
+}
+
+/* ── Hero（純圖：左 cover image clean / 右 mosaic） ── */
+.hero {
+  margin-bottom: 80px;
+  display: grid;
+  grid-template-columns: 1fr 0.75fr;
+  gap: 24px;
+  align-items: stretch;
+  min-height: clamp(440px, 60vh, 620px);
+}
+
+.hero-cover {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-line-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-surface);
+}
+.cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  /* 不壓暗 — 純圖呈現 */
+  filter: sepia(0.02) saturate(1);
+}
+.cover-tone {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 25%, rgba(255, 252, 244, 0.95), transparent 60%),
+    radial-gradient(circle at 80% 75%, var(--color-accent-tint), transparent 65%),
+    linear-gradient(135deg,
+      var(--color-paper-surface) 0%,
+      var(--color-paper-canvas) 60%,
+      var(--color-accent-soft) 130%);
 }
 
 /* ── Hero mosaic 2x2 ── */
@@ -665,29 +647,27 @@ const otherSeriesTitle = computed(() =>
 
 @media (max-width: 1279px) {
   .hero { grid-template-columns: 1fr 0.7fr; gap: 20px; }
-  .text-inner { padding: 48px 40px; }
   .products-grid,
   .others-grid { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 1023px) {
   .page { padding: 40px 32px 64px; }
+  .page-header { margin-bottom: 32px; }
   .hero {
     grid-template-columns: 1fr;
     gap: 20px;
     min-height: auto;
   }
-  .hero-text-side { min-height: 380px; }
-  .text-inner { padding: 40px 36px; }
+  .hero-cover { aspect-ratio: 3 / 2; }
   .mosaic-grid { aspect-ratio: 2 / 1; }
   .products-grid,
   .others-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 767px) {
   .page { padding: 32px 24px 48px; }
-  .text-inner { padding: 32px 24px; gap: 24px; }
-  .hero-text-side { min-height: 320px; }
-  .hero-title { letter-spacing: 0.06em; font-size: 40px; }
-  .hero-bottom { flex-direction: column; align-items: flex-start; }
+  .page-title { letter-spacing: 0.06em; font-size: 40px; }
+  .page-meta-row { flex-direction: column; align-items: flex-start; }
+  .hero-cover { aspect-ratio: 4 / 3; }
   .mosaic-grid { aspect-ratio: 1; }
   .products-grid,
   .others-grid { grid-template-columns: 1fr; }
