@@ -301,6 +301,7 @@ class PublicSeriesBriefWithCount(BaseModel):
     theme_name: str | None
     is_featured: bool
     product_count: int
+    sample_cover_image_url: str | None = None
 
     model_config = {"from_attributes": True}
 

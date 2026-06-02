@@ -59,6 +59,8 @@ export interface SeriesListItem {
   theme_name: string | null
   is_featured: boolean
   product_count: number
+  /** admin 在系列管理上傳的代表圖；FeaturedSeriesSection / SeriesCard 用 */
+  sample_cover_image_url: string | null
 }
 
 export interface SeriesListResponse {

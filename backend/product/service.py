@@ -1378,6 +1378,8 @@ async def public_list_series(
             "theme_name": theme_map.get(s.theme_id) if s.theme_id else None,
             "is_featured": s.is_featured,
             "product_count": count_map.get(s.id, 0),
+            # admin 在系列管理上傳的代表圖；FeaturedSeriesSection / SeriesCard 用
+            "sample_cover_image_url": s.sample_cover_image_url,
         }
         for s in series_rows
     ]

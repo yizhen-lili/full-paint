@@ -39,7 +39,20 @@ function gradientFor(index: number) {
         :to="`/series/${s.id}`"
         class="card"
       >
-        <div class="card-visual" :style="{ background: gradientFor(idx) }">
+        <div
+          class="card-visual"
+          :style="s.sample_cover_image_url
+            ? undefined
+            : { background: gradientFor(idx) }"
+        >
+          <!-- admin 上傳的 sample_cover_image_url；沒有則 fallback 漸層 -->
+          <img
+            v-if="s.sample_cover_image_url"
+            :src="s.sample_cover_image_url"
+            :alt="s.name"
+            class="visual-img"
+            loading="lazy"
+          />
           <div class="visual-overlay">
             <span class="visual-num">No. {{ String(idx + 1).padStart(2, '0') }}</span>
             <span class="visual-name">{{ s.name }}</span>
@@ -99,6 +112,19 @@ function gradientFor(index: number) {
 }
 .card:hover .card-visual {
   background-position: 70% 70%;
+}
+
+.visual-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: sepia(0.04) saturate(0.92);
+  transition: transform 600ms ease;
+}
+.card:hover .visual-img {
+  transform: scale(1.04);
 }
 
 .visual-overlay {
