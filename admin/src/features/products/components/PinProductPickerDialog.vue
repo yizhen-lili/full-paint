@@ -107,7 +107,7 @@ function pick(item: ProductListItem) {
     </div>
 
     <template #footer>
-      <Button variant="ghost" @click="emit('close')">關閉</Button>
+      <Button variant="secondary" @click="emit('close')">關閉</Button>
     </template>
   </Dialog>
 </template>

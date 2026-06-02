@@ -122,7 +122,7 @@ const excludeIds = computed(() => localList.value.map((it) => it.id))
   <PageHeader title="商品管理" subtitle="首頁置頂排序 — 拖曳卡片調整 store 首頁顯示順序">
     <template #actions>
       <Button
-        variant="ghost"
+        variant="secondary"
         :disabled="isFull"
         @click="pickerOpen = true"
       >
