@@ -47,10 +47,16 @@ def _public_filled_url(raw: str | None) -> str | None:
 
 
 def _persistent_firebase_url(raw: str | None) -> str | None:
-    """把 gs:// URL 轉成 Firebase 下載 URL（永久有效，公開讀由 storage.rules 控制）。
+    """把 gs:// URL 轉成 **帶 download token** 的 Firebase 下載 URL（永久有效）。
 
-    格式：https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}?alt=media
+    格式：https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}?alt=media&token=...
     用途：寫入永久欄位（如 products.cover_image_url），與 upload service 行為一致。
+
+    bug fix：之前不帶 token、靠 storage.rules `allow read: if true` 公開讀；
+    但 Celery worker 寫 filled_template_*.png 時沒設 metadata token，且
+    Firebase 預設 storage.rules 私有 → 403 → 商品封面壞圖。
+    修法：取 blob 看 metadata 有沒有 firebaseStorageDownloadTokens；
+    沒有就 generate UUID + patch metadata；URL 一律帶 token。
     """
     if not raw:
         return None
@@ -60,6 +66,7 @@ def _persistent_firebase_url(raw: str | None) -> str | None:
         return None
     try:
         import urllib.parse  # noqa: PLC0415
+        import uuid  # noqa: PLC0415
 
         # gs://bucket/path → bucket, path
         bucket_and_path = raw[len("gs://"):]
@@ -67,7 +74,40 @@ def _persistent_firebase_url(raw: str | None) -> str | None:
         if not bucket_name or not path:
             return None
         encoded = urllib.parse.quote(path, safe="")
-        return f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/{encoded}?alt=media"
+
+        # 確保 blob 有 download token — 沒有就 inject 一個讓 URL 永久可讀
+        token: str | None = None
+        try:
+            from core.firebase import get_bucket  # noqa: PLC0415
+
+            bucket = get_bucket()
+            blob = bucket.blob(path)
+            blob.reload()  # 載 metadata
+            existing = (blob.metadata or {}).get("firebaseStorageDownloadTokens")
+            if existing:
+                # metadata 可能有多個 token（逗號分隔），取第一個即可
+                token = existing.split(",")[0].strip()
+            else:
+                # 注入 token + patch metadata
+                token = uuid.uuid4().hex
+                blob.metadata = {
+                    **(blob.metadata or {}),
+                    "firebaseStorageDownloadTokens": token,
+                }
+                blob.patch()
+                logger.info(
+                    "_persistent_firebase_url: injected download token to %s",
+                    path,
+                )
+        except Exception as e:  # noqa: BLE001
+            # blob 不存在或 patch 失敗：回 token-less URL（fallback 至 storage.rules）
+            logger.warning(
+                "_persistent_firebase_url: token inject failed for %s — %s",
+                path, e,
+            )
+
+        base = f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/{encoded}?alt=media"
+        return f"{base}&token={token}" if token else base
     except Exception as e:  # noqa: BLE001
         logger.warning("gs:// → firebase download URL 失敗：%s — %s", raw, e)
         return None
