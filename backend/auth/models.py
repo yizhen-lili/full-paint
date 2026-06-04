@@ -29,7 +29,13 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     email = Column(String, nullable=False, unique=True)
-    password_hash = Column(String, nullable=False)
+    # Google-only 用戶沒有 password_hash（透過 google_signin 建立）；
+    # email + password 用戶仍照舊（service 在 register 寫入）。
+    # login service 用 password_hash IS NULL 守衛，避免 _verify_password 拿 None 炸。
+    password_hash = Column(String, nullable=True)
+    # Google ID token 的 "sub" claim — 唯一識別一個 Google 帳號（即使 Google 換 email 也不變）。
+    # 部分 UNIQUE 索引（ux_users_google_sub WHERE google_sub IS NOT NULL）— 避免多個 NULL 衝突。
+    google_sub = Column(String, nullable=True, unique=True)
     gender = Column(Enum(GenderEnum), nullable=True)
     birthday = Column(Date, nullable=True)
     role = Column(Enum(RoleEnum), nullable=False, default=RoleEnum.customer)

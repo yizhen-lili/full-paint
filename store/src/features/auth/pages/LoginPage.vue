@@ -7,6 +7,7 @@ import { Loader2 } from 'lucide-vue-next'
 import * as authApi from '../api'
 import { loginSchema, type LoginValues } from '../schemas'
 import { useAuthStore } from '../store'
+import GoogleSigninButton from '../components/GoogleSigninButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -58,6 +59,15 @@ const onSubmit = handleSubmit(async (values) => {
   }
 })
 
+async function onGoogleSuccess() {
+  await auth.fetchMe()
+  router.push(redirectTo.value)
+}
+
+function onGoogleError(message: string) {
+  apiError.value = message
+}
+
 async function resendVerification() {
   if (!email.value) {
     resendMessage.value = '請先輸入 Email'
@@ -88,6 +98,13 @@ async function resendVerification() {
       <h1 class="title">登入</h1>
       <p class="lede">回到你的小作坊，繼續慢慢畫。</p>
     </header>
+
+    <!-- Google Sign-in：放表單上方，醒目 + 一鍵流程 -->
+    <div class="google-block">
+      <GoogleSigninButton text="signin_with" @success="onGoogleSuccess" @error="onGoogleError" />
+    </div>
+
+    <div class="divider"><span>或</span></div>
 
     <form class="form" @submit.prevent="onSubmit" novalidate>
       <div class="field">
@@ -174,6 +191,28 @@ async function resendVerification() {
   letter-spacing: 0.04em;
   color: var(--color-ink-muted);
   margin: 0;
+}
+
+.google-block {
+  margin-bottom: 20px;
+}
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 20px;
+  color: var(--color-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-line-subtle);
 }
 
 .form { display: flex; flex-direction: column; gap: 20px; }

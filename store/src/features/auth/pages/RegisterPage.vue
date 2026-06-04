@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useForm } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
 import { Loader2, Check } from 'lucide-vue-next'
 import SpamTip from '@/shared/components/SpamTip.vue'
 import * as authApi from '../api'
 import { registerSchema, type RegisterValues } from '../schemas'
+import { useAuthStore } from '../store'
+import GoogleSigninButton from '../components/GoogleSigninButton.vue'
 
 const RESEND_COOLDOWN = 60
+
+const router = useRouter()
+const auth = useAuthStore()
 
 const apiError = ref<string | null>(null)
 const submitting = ref(false)
@@ -80,6 +85,15 @@ async function resend() {
   }
 }
 
+async function onGoogleSuccess() {
+  await auth.fetchMe()
+  router.push('/')
+}
+
+function onGoogleError(message: string) {
+  apiError.value = message
+}
+
 onUnmounted(() => {
   if (cooldownTimer) clearInterval(cooldownTimer)
 })
@@ -119,6 +133,13 @@ onUnmounted(() => {
       <h1 class="title">建立帳號</h1>
       <p class="lede">在易木 YIIMUI 開始你的數字油畫旅程。</p>
     </header>
+
+    <!-- Google Sign-in：第一次點直接建好帳號 + 跳過 email 驗證 -->
+    <div class="google-block">
+      <GoogleSigninButton text="signup_with" @success="onGoogleSuccess" @error="onGoogleError" />
+    </div>
+
+    <div class="divider"><span>或</span></div>
 
     <form class="form" @submit.prevent="onSubmit" novalidate>
       <div class="field">
@@ -225,6 +246,28 @@ onUnmounted(() => {
   stroke: var(--color-fresh);
   stroke-width: 2;
   fill: none;
+}
+
+.google-block {
+  margin-bottom: 20px;
+}
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 20px;
+  color: var(--color-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-line-subtle);
 }
 
 .form { display: flex; flex-direction: column; gap: 20px; }

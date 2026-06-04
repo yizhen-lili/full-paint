@@ -23,6 +23,9 @@ resend==2.29.0
 firebase-admin==6.6.0
 celery==5.4.0
 redis==5.2.1
+# Google ID token 驗證（store 客戶端 Google Sign-in 用；驗 JWT + Google 公鑰 +
+# audience 檢查；只 identity 不打 Google API，不需 access token / refresh token）
+google-auth==2.35.0
 
 # PDF generation (Module 15 print_batch)
 reportlab==4.2.5

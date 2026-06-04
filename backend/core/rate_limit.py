@@ -94,6 +94,16 @@ async def rate_limit_login(request: Request) -> None:
     )
 
 
+async def rate_limit_google_signin(request: Request) -> None:
+    """Google sign-in: 同 login 的 10 次 / 15 分鐘 / IP（涵蓋首次建帳號 + 登入）."""
+    await check_rate_limit(
+        key_id=_client_ip(request),
+        endpoint="google_signin",
+        limit=10,
+        window_sec=15 * 60,
+    )
+
+
 async def rate_limit_register(request: Request) -> None:
     """Register: 5 次 / 60 分鐘 / IP."""
     await check_rate_limit(

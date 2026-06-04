@@ -9,7 +9,13 @@ import jwt
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.models import EmailVerificationToken, PasswordResetToken, TokenTypeEnum, User
+from auth.models import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    RoleEnum,
+    TokenTypeEnum,
+    User,
+)
 from core.config import settings
 from core.exceptions import (
     BadRequestError,
@@ -111,6 +117,11 @@ async def register(db: AsyncSession, name: str, email: str, password: str) -> No
     result = await db.execute(select(User).where(User.email == email))
     existing = result.scalar_one_or_none()
 
+    # Google-only 帳號（password_hash NULL + google_sub NOT NULL）不能用 email/password
+    # 重註冊覆寫，否則 attacker 知道某 email 註冊過 Google 就能蓋掉密碼搶帳號。
+    if existing and existing.google_sub is not None:
+        raise ConflictError("此 Email 已透過 Google 註冊，請改用「用 Google 繼續」登入")
+
     if existing and existing.is_email_verified:
         # 情境 2：已驗證帳號，不可覆蓋
         raise ConflictError("此 Email 已被使用")
@@ -171,6 +182,11 @@ async def login(
 ) -> tuple[User, str]:
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
+
+    # Google-only 用戶（沒設過密碼）直接導去 Google 登入，避免 _verify_password
+    # 拿 None 炸 + 「帳號或密碼錯誤」誤導訊息
+    if user and user.password_hash is None and user.google_sub is not None:
+        raise BadRequestError("此帳號透過 Google 註冊，請改用「用 Google 繼續」登入")
 
     if not user or not _verify_password(password, user.password_hash):
         raise UnauthorizedError("帳號或密碼錯誤")
@@ -268,6 +284,17 @@ async def forgot_password(db: AsyncSession, email: str, admin_only: bool = False
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
+    # Google-only 用戶沒密碼可重設 — 靜默不寄信（不告訴 caller，避免向外洩漏帳號類型，
+    # 也避免 attacker 用 forgot-password 探測是否為 Google 用戶）。logger 記下 admin
+    # 可以查；end user 看到 200 等同「若 email 存在則已寄出」的標準防探測訊息。
+    if user and user.password_hash is None and user.google_sub is not None:
+        logger.info(
+            "forgot_password skipped: Google-only user (email=%s, user_id=%s)",
+            email,
+            user.id,
+        )
+        return
+
     if user:
         await db.execute(
             update(PasswordResetToken)
@@ -298,6 +325,98 @@ async def forgot_password(db: AsyncSession, email: str, admin_only: bool = False
             raise
 
         await db.commit()
+
+
+async def google_signin(
+    db: AsyncSession, raw_id_token: str
+) -> tuple[User, str]:
+    """驗證 Google ID token，回 (user, JWT) 用於設 cookie。
+
+    處理 3 種情境（GIS popup 流程，前端拿 ID token 後端驗）：
+    A. 已綁 google_sub 的既有 user → 直接登入
+    B. 同 email 既有 user（email/password 註冊過）→ 隱式合併 (set google_sub
+       + is_email_verified=True)，user 不用重輸密碼。同 email + Google 已驗證
+       → 安全：attacker 若控制該 Google 帳號，本來就拿得到 email 的所有 reset
+       連結了；合併不增加風險。
+    C. 完全新帳號 → 建 User(password_hash=None, google_sub=sub, is_email_verified=True)
+
+    Admin 角色用 Google 登入直接拒（admin 仍走 email + password 路徑）。
+
+    失敗條件：
+    - settings.google_client_id 沒設 → 503（避免 silent fail）
+    - Google 簽章驗證失敗 / audience 不對 / 過期 → 401
+    - email_verified=False（Google 端罕見） → 403
+    - user 已停用 → 403
+    """
+    if not settings.google_client_id:
+        raise ExternalServiceError(
+            "Google 登入未設定（GOOGLE_CLIENT_ID 缺失）",
+            code="google_signin_not_configured",
+        )
+
+    # google-auth 是 sync API，run_in_executor 避免阻塞 event loop
+    try:
+        from google.auth.transport import requests as google_requests  # noqa: PLC0415
+        from google.oauth2 import id_token as google_id_token  # noqa: PLC0415
+
+        info = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: google_id_token.verify_oauth2_token(
+                raw_id_token,
+                google_requests.Request(),
+                settings.google_client_id,
+            ),
+        )
+    except ValueError as e:
+        # verify_oauth2_token 對所有失敗（簽章 / audience / 過期）統一 raise ValueError
+        logger.warning("Google ID token verification failed: %s", e)
+        raise UnauthorizedError("Google 登入 token 無效") from e
+
+    google_sub: str = info["sub"]
+    email: str = info["email"]
+    email_verified: bool = info.get("email_verified", False)
+    name: str = info.get("name") or email.split("@", 1)[0]
+
+    if not email_verified:
+        raise ForbiddenError("Google 帳號 email 尚未驗證")
+
+    # 情境 A：google_sub lookup
+    result = await db.execute(select(User).where(User.google_sub == google_sub))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        # 情境 B：email lookup（既有 email/password user 隱式合併）
+        result = await db.execute(select(User).where(User.email == email))
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.google_sub = google_sub
+            existing.is_email_verified = True
+            user = existing
+        else:
+            # 情境 C：完全新帳號
+            user = User(
+                name=name,
+                email=email,
+                password_hash=None,
+                google_sub=google_sub,
+                is_email_verified=True,
+            )
+            db.add(user)
+
+        await db.commit()
+        await db.refresh(user)
+
+    # 安全守衛：admin 不走 Google
+    if user.role == RoleEnum.admin:
+        raise ForbiddenError("管理員請用 Email 登入後台")
+
+    if not user.is_active:
+        raise ForbiddenError("帳號已停用")
+
+    expire_seconds = settings.jwt_expire_days_customer * 86400
+    token = _make_jwt(str(user.id), user.role, expire_seconds)
+    return user, token
 
 
 async def cleanup_unverified_users(db: AsyncSession, grace_hours: int = 25) -> int:

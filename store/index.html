@@ -71,6 +71,9 @@
         }
       }
     </script>
+    <!-- Google Identity Services（store customer Google Sign-in；GIS popup flow，
+         不用 OAuth redirect URI）。在 GoogleSigninButton 元件內 window.google.accounts.id 才會存在 -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
     <div id="app"></div>

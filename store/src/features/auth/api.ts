@@ -77,6 +77,14 @@ export async function login(
   })
 }
 
+/** POST /auth/google → set cookie (新註冊 / 既有合併 / 既有 Google 三情境 backend 自動處理) */
+export async function googleSignin(idToken: string): Promise<LoginResponse> {
+  return jsonRequest<LoginResponse>('/auth/google', {
+    method: 'POST',
+    body: JSON.stringify({ id_token: idToken }),
+  })
+}
+
 /** POST /auth/logout */
 export async function logout(): Promise<void> {
   const res = await fetch(`${API_BASE}/auth/logout`, {

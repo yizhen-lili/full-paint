@@ -179,6 +179,21 @@ async def init_schema() -> None:
                 "ON products (homepage_order) WHERE homepage_order IS NOT NULL"
             ))
 
+            # store customer Google Sign-in（2026-06-04）
+            # - password_hash 改 nullable：Google-only 用戶沒密碼
+            # - google_sub：Google ID token sub claim，唯一識別一個 Google 帳號
+            # - 部分 UNIQUE 索引：只索引非 NULL，避免兩個 NULL 衝突
+            await conn.execute(text(
+                "ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub VARCHAR"
+            ))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_google_sub "
+                "ON users (google_sub) WHERE google_sub IS NOT NULL"
+            ))
+
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)
             await conn.execute(text(

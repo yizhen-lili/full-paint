@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import service
 from auth.schemas.request import (
     ForgotPasswordRequest,
+    GoogleSigninRequest,
     LoginRequest,
     RegisterRequest,
     ResendVerificationRequest,
@@ -16,6 +17,7 @@ from core.database import get_db
 from core.rate_limit import (
     rate_limit_admin_login,
     rate_limit_forgot_password,
+    rate_limit_google_signin,
     rate_limit_login,
     rate_limit_register,
     rate_limit_resend_verification,
@@ -57,6 +59,19 @@ async def login(
     _rl=Depends(rate_limit_login),
 ):
     user, token = await service.login(db, body.email, body.password)
+    _set_cookie(response, token, settings.jwt_expire_days_customer * 86400)
+    return LoginResponse(id=str(user.id), name=user.name, role=user.role)
+
+
+@router.post("/auth/google", response_model=LoginResponse, tags=["Auth"])
+async def google_signin(
+    body: GoogleSigninRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    _rl=Depends(rate_limit_google_signin),
+):
+    """store customer 用 Google ID token 登入 / 註冊（自動建帳號或合併）。"""
+    user, token = await service.google_signin(db, body.id_token)
     _set_cookie(response, token, settings.jwt_expire_days_customer * 86400)
     return LoginResponse(id=str(user.id), name=user.name, role=user.role)
 

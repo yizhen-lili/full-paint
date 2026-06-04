@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     jwt_expire_days_customer: int = 7
     jwt_expire_hours_admin: int = 8
 
+    # Google Sign-in（store customer 端，admin 不用）— Google Cloud Console OAuth 2.0 Client ID
+    # 用途：驗 Google Identity Services 發的 ID token 的 audience 欄位。
+    # 空字串時 service.google_signin 主動 raise 503，避免靜默失敗。
+    google_client_id: str = ""
+
     resend_api_key: str = ""
     resend_from_email: str = "onboarding@resend.dev"
     # 客人按「回信」會回到這個地址 — 通常是商家可即時收信的 Gmail / 工作信箱

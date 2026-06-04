@@ -56,3 +56,8 @@ class ResetPasswordRequest(BaseModel):
     @classmethod
     def validate_new_password(cls, v: str) -> str:
         return _validate_password(v)
+
+
+class GoogleSigninRequest(BaseModel):
+    """Google Sign-in：前端 GIS popup 拿到的 ID token（JWT 字串，由 Google 簽）。"""
+    id_token: str

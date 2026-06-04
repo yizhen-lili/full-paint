@@ -631,3 +631,172 @@ async def test_cleanup_frees_email_for_reregistration(client: AsyncClient, db):
         REGISTER_URL, json={"name": "second", "email": email, "password": "abc1234567"}
     )
     assert res.status_code == 201
+
+
+# ── Google Sign-in ─────────────────────────────────────────────────────────────
+#
+# Google ID token verification 是 sync call 到 google-auth lib，會打 Google 公鑰
+# endpoint。所有 case 都 monkeypatch verify_oauth2_token 回固定 dict 模擬 Google
+# 已驗證的 token，避免測試打外網 / 假 JWT 要簽。
+
+GOOGLE_URL = "/api/v1/auth/google"
+
+
+def _patch_google_token(monkeypatch, sub: str, email: str, email_verified: bool = True,
+                       name: str = "Test User") -> None:
+    """共用：mock id_token.verify_oauth2_token 回固定 dict。"""
+    payload = {"sub": sub, "email": email, "email_verified": email_verified, "name": name}
+    monkeypatch.setattr(
+        "google.oauth2.id_token.verify_oauth2_token",
+        lambda *args, **kwargs: payload,
+    )
+    # GOOGLE_CLIENT_ID 必須非空，否則 service 會主動 raise 503
+    from core.config import settings as _settings
+    monkeypatch.setattr(_settings, "google_client_id", "test-client-id.apps.googleusercontent.com")
+
+
+@pytest.mark.asyncio
+async def test_google_signin_new_user(client: AsyncClient, db, monkeypatch):
+    """情境 C：全新 email + 全新 google_sub → 建 user，password=NULL，已驗證。"""
+    _patch_google_token(monkeypatch, sub="google-sub-001", email="new@gmail.com", name="新用戶")
+
+    res = await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+    assert res.status_code == 200
+    assert res.json()["name"] == "新用戶"
+
+    u = (await db.execute(select(User).where(User.email == "new@gmail.com"))).scalar_one()
+    assert u.google_sub == "google-sub-001"
+    assert u.password_hash is None
+    assert u.is_email_verified is True
+    assert u.role == "customer"
+
+
+@pytest.mark.asyncio
+async def test_google_signin_merges_existing_email(client: AsyncClient, db, monkeypatch):
+    """情境 B：既有 email/password 用戶 + 同 email 的 Google 登入 → 隱式合併 google_sub。"""
+    # 先建一個 email/password 帳號（即使尚未驗證）— name 必須 ≥4 字元（schema validator）
+    register_res = await client.post(
+        REGISTER_URL,
+        json={"name": "舊有用戶", "email": "merge@test.com", "password": "abc1234567"},
+    )
+    assert register_res.status_code == 201
+
+    _patch_google_token(monkeypatch, sub="google-sub-002", email="merge@test.com", name="新名字")
+
+    res = await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+    assert res.status_code == 200
+
+    u = (await db.execute(select(User).where(User.email == "merge@test.com"))).scalar_one()
+    assert u.google_sub == "google-sub-002"
+    assert u.is_email_verified is True  # Google 認可 → 視同已驗證
+    # password_hash 不該被清掉（既有 user 仍可用 email + password 登入）
+    assert u.password_hash is not None
+    # name 不該被 Google name 覆蓋（保留用戶原註冊資料）
+    assert u.name == "舊有用戶"
+
+
+@pytest.mark.asyncio
+async def test_google_signin_existing_google_user(client: AsyncClient, db, monkeypatch):
+    """情境 A：已綁 google_sub 的 user 再點 Google → 直接登入，不重複建。"""
+    _patch_google_token(monkeypatch, sub="google-sub-003", email="repeat@gmail.com")
+
+    # 第一次：建帳號
+    r1 = await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+    assert r1.status_code == 200
+
+    # 第二次：應該 lookup 到既有 user，不該再建一個
+    r2 = await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+    assert r2.status_code == 200
+
+    rows = (await db.execute(select(User).where(User.email == "repeat@gmail.com"))).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_google_signin_invalid_token(client: AsyncClient, db, monkeypatch):
+    """ID token verify 失敗（簽章 / audience / 過期）→ 401。"""
+    def _raise(*args, **kwargs):
+        raise ValueError("Token signature invalid")
+
+    monkeypatch.setattr("google.oauth2.id_token.verify_oauth2_token", _raise)
+    from core.config import settings as _settings
+    monkeypatch.setattr(_settings, "google_client_id", "test-client-id.apps.googleusercontent.com")
+
+    res = await client.post(GOOGLE_URL, json={"id_token": "tampered.jwt.token"})
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_google_signin_unverified_email_rejected(client: AsyncClient, db, monkeypatch):
+    """Google email_verified=False（罕見）→ 403。"""
+    _patch_google_token(
+        monkeypatch, sub="google-sub-004", email="unverified@gmail.com", email_verified=False
+    )
+
+    res = await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_google_signin_admin_rejected(client: AsyncClient, db, monkeypatch):
+    """既有 admin role 用 Google 登入 → 403（admin 仍走 email/password）。"""
+    # 先把這個 user 升 admin（name 須 ≥4 字元）
+    await client.post(
+        REGISTER_URL,
+        json={"name": "管理者人", "email": "admin@yiimui.com", "password": "abc1234567"},
+    )
+    u = (await db.execute(select(User).where(User.email == "admin@yiimui.com"))).scalar_one()
+    u.role = RoleEnum.admin
+    u.is_email_verified = True
+    await db.commit()
+
+    _patch_google_token(monkeypatch, sub="google-sub-005", email="admin@yiimui.com")
+
+    res = await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_login_blocked_for_google_only_user(client: AsyncClient, db, monkeypatch):
+    """Google-only 用戶（password_hash=NULL）嘗試 email/password 登入 → 400 引導改用 Google。"""
+    _patch_google_token(monkeypatch, sub="google-sub-006", email="googleonly@gmail.com")
+    await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+
+    # 嘗試用 password 登入
+    res = await client.post(
+        LOGIN_URL,
+        json={"email": "googleonly@gmail.com", "password": "anything1234"},
+    )
+    assert res.status_code == 400
+    assert "Google" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_silent_for_google_only_user(client: AsyncClient, db, monkeypatch):
+    """Google-only 用戶 forgot-password → 200 但不寄信、不建 reset token。"""
+    _patch_google_token(monkeypatch, sub="google-sub-007", email="silentgoogle@gmail.com")
+    await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+
+    u = (await db.execute(select(User).where(User.email == "silentgoogle@gmail.com"))).scalar_one()
+    user_id = u.id
+
+    res = await client.post(FORGOT_URL, json={"email": "silentgoogle@gmail.com"})
+    assert res.status_code == 200  # 不洩漏帳號類型
+
+    # 確認 DB 沒新增 reset token
+    pr = await db.execute(select(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+    assert pr.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_google_bound_email(client: AsyncClient, db, monkeypatch):
+    """email 已綁 Google 帳號時 register 用此 email → 409，引導用 Google 登入。"""
+    _patch_google_token(monkeypatch, sub="google-sub-008", email="googlebound@gmail.com")
+    await client.post(GOOGLE_URL, json={"id_token": "fake.jwt.token"})
+
+    res = await client.post(
+        REGISTER_URL,
+        json={"name": "搶他帳號", "email": "googlebound@gmail.com", "password": "abc1234567"},
+    )
+    assert res.status_code == 409
+    assert "Google" in res.json()["detail"]
