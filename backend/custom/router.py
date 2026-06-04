@@ -75,31 +75,14 @@ async def list_active_canvas_sizes(db: AsyncSession = Depends(get_db)):
 
 @router.get("/custom-photo-prices", response_model=PhotoPriceListResponse)
 async def list_public_photo_prices(db: AsyncSession = Depends(get_db)):
-    """公開：客製照片基礎定價表（供 PriceRangeHint 顯示參考價）。
+    """公開：客製照片參考價（已套 custom_photo_price_multiplier）。
 
     Response: { items: [{canvas_w, canvas_h, difficulty, price}] }
-    若管理員後台尚未填入價格 → items 可能為空陣列。
+    管理員後台填入的是「基礎價」；這個公開端點回的 price 已乘上 multiplier，
+    讓 store 申請表單顯示的數字 ≈ 實際收費。詳見
+    `service.list_public_photo_prices` docstring 與 docs/requirements/pricing_formula.md。
     """
-    from sqlalchemy import select
-
-    from custom.models import CustomPhotoPrice
-    result = await db.execute(
-        select(CustomPhotoPrice)
-        .where(CustomPhotoPrice.price.is_not(None))
-        .order_by(CustomPhotoPrice.canvas_w, CustomPhotoPrice.canvas_h)
-    )
-    rows = result.scalars().all()
-    items = []
-    for r in rows:
-        diff = r.difficulty
-        items.append({
-            "id": str(r.id),
-            "canvas_w": r.canvas_w,
-            "canvas_h": r.canvas_h,
-            "difficulty": diff.value if hasattr(diff, "value") else diff,
-            "price": float(r.price) if r.price is not None else None,
-        })
-    return {"items": items}
+    return await service.list_public_photo_prices(db)
 
 
 # ── Customer endpoints ────────────────────────────────────────────────────────

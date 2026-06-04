@@ -948,3 +948,198 @@ async def test_app_error_returns_code(client, db):
     assert "code" in body and body["code"] == "QUOTE_ALREADY_EXTENDED"
     assert "detail" in body
     _ = rid
+
+
+# ── Preview image: filled_template_final_url fallback ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_customer_preview_uses_final_url_when_available(
+    client, db, monkeypatch
+):
+    """job.filled_template_final_url 有設 → preview 應該抓 final 版（實體色），
+    不該抓 filled_template_url（演算法量化版）。"""
+    rid, token = await _setup_quote_sent_state(client, db)
+
+    # 設定 job 的兩個 URL（final 是 finalize 完才會有）
+    job_result = await db.execute(
+        select(ProductionJob).where(ProductionJob.custom_request_id == rid)
+    )
+    job = job_result.scalar_one()
+    job.filled_template_url = "https://stub.example.com/algo-quantized.png"
+    job.filled_template_final_url = "https://stub.example.com/physical-color.png"
+    await db.commit()
+
+    called_with = []
+
+    async def _fake_fetch(url):
+        called_with.append(url)
+        return b"\x89PNG\r\n\x1a\nfake-bytes"
+
+    monkeypatch.setattr("custom.service.fetch_filled_template_bytes", _fake_fetch)
+
+    def _fake_render(_raw, _wm):
+        return b"\x89PNG\r\n\x1a\nrendered-watermarked"
+
+    monkeypatch.setattr("custom.service.render_watermarked_preview", _fake_render)
+
+    res = await client.get(f"{QUOTE_URL}/{token}/preview")
+    assert res.status_code == 200
+    # 關鍵：應該用 final URL，不是 algo URL
+    assert called_with == ["https://stub.example.com/physical-color.png"]
+
+
+@pytest.mark.asyncio
+async def test_customer_preview_falls_back_to_algo_url_when_final_missing(
+    client, db, monkeypatch
+):
+    """finalize 還沒跑（filled_template_final_url 是 None）→ fallback 抓
+    filled_template_url（向後相容舊 quote）。"""
+    rid, token = await _setup_quote_sent_state(client, db)
+
+    job_result = await db.execute(
+        select(ProductionJob).where(ProductionJob.custom_request_id == rid)
+    )
+    job = job_result.scalar_one()
+    job.filled_template_url = "https://stub.example.com/algo-only.png"
+    job.filled_template_final_url = None  # 還沒 finalize
+    await db.commit()
+
+    called_with = []
+
+    async def _fake_fetch(url):
+        called_with.append(url)
+        return b"\x89PNG\r\n\x1a\nfake"
+
+    monkeypatch.setattr("custom.service.fetch_filled_template_bytes", _fake_fetch)
+    monkeypatch.setattr(
+        "custom.service.render_watermarked_preview",
+        lambda _r, _w: b"\x89PNG\r\n\x1a\nrendered",
+    )
+
+    res = await client.get(f"{QUOTE_URL}/{token}/preview")
+    assert res.status_code == 200
+    # 沒 final → fallback 用 algo URL
+    assert called_with == ["https://stub.example.com/algo-only.png"]
+
+
+@pytest.mark.asyncio
+async def test_admin_preview_uses_final_url_when_available(
+    client, db, monkeypatch
+):
+    """admin preview 端點也走相同邏輯（final 優先 + fallback algo）。"""
+    rid, _token = await _setup_quote_sent_state(client, db)
+
+    # 升 customer 為 admin 以打 admin endpoint
+    u = (await db.execute(select(User).where(User.email == CUSTOMER["email"]))).scalar_one()
+    u.role = "admin"
+    await db.commit()
+
+    job_result = await db.execute(
+        select(ProductionJob).where(ProductionJob.custom_request_id == rid)
+    )
+    job = job_result.scalar_one()
+    job.filled_template_url = "https://stub.example.com/algo.png"
+    job.filled_template_final_url = "https://stub.example.com/final.png"
+    await db.commit()
+
+    called_with = []
+
+    async def _fake_fetch(url):
+        called_with.append(url)
+        return b"\x89PNG\r\n\x1a\n"
+
+    monkeypatch.setattr("custom.service.fetch_filled_template_bytes", _fake_fetch)
+    monkeypatch.setattr(
+        "custom.service.render_watermarked_preview",
+        lambda _r, _w: b"\x89PNG\r\n\x1a\n",
+    )
+
+    res = await client.get(f"{ADMIN_CR_URL}/{rid}/preview-watermark")
+    assert res.status_code == 200
+    assert called_with == ["https://stub.example.com/final.png"]
+
+
+# ── Photo prices public endpoint: multiplier application ──────────────────────
+
+
+PHOTO_PRICES_URL = "/api/v1/custom-photo-prices"
+
+
+async def _seed_photo_prices(db):
+    """塞兩筆基礎價方便測試 multiplier。"""
+    from decimal import Decimal
+
+    from custom.models import CustomPhotoPrice
+
+    db.add(CustomPhotoPrice(
+        canvas_w=30,
+        canvas_h=40,
+        difficulty="beginner",
+        price=Decimal("200"),
+    ))
+    db.add(CustomPhotoPrice(
+        canvas_w=60,
+        canvas_h=60,
+        difficulty="advanced",
+        price=Decimal("500"),
+    ))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_photo_prices_default_multiplier_2x(client, db):
+    """multiplier 未設 → 預設 2.0 倍。"""
+    await _seed_photo_prices(db)
+
+    res = await client.get(PHOTO_PRICES_URL)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    by_size = {(i["canvas_w"], i["canvas_h"]): i for i in items}
+
+    # base 200 → 200 × 2.0 = 400
+    assert by_size[(30, 40)]["price"] == 400
+    # base 500 → 500 × 2.0 = 1000
+    assert by_size[(60, 60)]["price"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_photo_prices_with_custom_multiplier_2_8(client, db):
+    """admin 改 multiplier=2.8 → 顯示價跟著漲。"""
+    await _seed_photo_prices(db)
+    db.add(SystemSetting(key="custom_photo_price_multiplier", value="2.8"))
+    await db.commit()
+
+    res = await client.get(PHOTO_PRICES_URL)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    by_size = {(i["canvas_w"], i["canvas_h"]): i for i in items}
+
+    # base 200 × 2.8 = 560
+    assert by_size[(30, 40)]["price"] == 560
+    # base 500 × 2.8 = 1400
+    assert by_size[(60, 60)]["price"] == 1400
+
+
+@pytest.mark.asyncio
+async def test_photo_prices_invalid_multiplier_fallback_to_default(client, db):
+    """system_settings 內容非數字 → fallback 預設 2.0、不爆。"""
+    await _seed_photo_prices(db)
+    db.add(SystemSetting(key="custom_photo_price_multiplier", value="not-a-number"))
+    await db.commit()
+
+    res = await client.get(PHOTO_PRICES_URL)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    by_size = {(i["canvas_w"], i["canvas_h"]): i for i in items}
+
+    # fallback 2.0：base 200 × 2.0 = 400
+    assert by_size[(30, 40)]["price"] == 400
+
+
+@pytest.mark.asyncio
+async def test_photo_prices_empty_table_returns_empty_items(client, db):
+    """photo_prices 表為空（admin 還沒填）→ items=[] 不爆。"""
+    res = await client.get(PHOTO_PRICES_URL)
+    assert res.status_code == 200
+    assert res.json() == {"items": []}

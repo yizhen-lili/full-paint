@@ -19,6 +19,7 @@ from core.exceptions import (
     NotFoundError,
 )
 from custom.models import (
+    CustomPhotoPrice,
     CustomRequest,
     CustomRequestMessage,
     CustomRequestStatusEnum,
@@ -242,6 +243,57 @@ async def _get_setting(db: AsyncSession, key: str) -> str | None:
     result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
     row = result.scalar_one_or_none()
     return row.value if row else None
+
+
+_DEFAULT_CUSTOM_PHOTO_PRICE_MULTIPLIER = 2.0
+
+
+async def list_public_photo_prices(db: AsyncSession) -> dict:
+    """store 端公開的客製照片參考價（套用 custom_photo_price_multiplier）。
+
+    admin 後台 photo_prices 表填的是「基礎價」(pricing_formula.md 設計上分兩層)；
+    store /custom/apply 表單顯示給客戶看的是「乘上 custom_photo_price_multiplier
+    後」的數字，這樣客戶在表單看到的預估價 ≈ admin 之後實際開報價時公式建議值，
+    不會有「表單估 NT$400、實際報價 NT$800」的落差驚嚇。
+
+    multiplier 從 system_settings 拉取（admin 後台「內容管理 → 系統設定 → 客製
+    設定」可隨時調整）；未設定時 fallback 預設 2.0。
+    """
+    multiplier_str = await _get_setting(db, "custom_photo_price_multiplier")
+    try:
+        if multiplier_str:
+            multiplier = float(multiplier_str)
+        else:
+            multiplier = _DEFAULT_CUSTOM_PHOTO_PRICE_MULTIPLIER
+    except (TypeError, ValueError):
+        logger.warning(
+            "custom_photo_price_multiplier 內容非數字 (%r)，fallback 預設 %s",
+            multiplier_str,
+            _DEFAULT_CUSTOM_PHOTO_PRICE_MULTIPLIER,
+        )
+        multiplier = _DEFAULT_CUSTOM_PHOTO_PRICE_MULTIPLIER
+
+    result = await db.execute(
+        select(CustomPhotoPrice)
+        .where(CustomPhotoPrice.price.is_not(None))
+        .order_by(CustomPhotoPrice.canvas_w, CustomPhotoPrice.canvas_h)
+    )
+    rows = result.scalars().all()
+
+    items = []
+    for r in rows:
+        diff = r.difficulty
+        base_price = float(r.price) if r.price is not None else None
+        # round() 四捨五入到整數元 — 跟 pricing_formula.md「售價已四捨五入至整數」一致
+        display_price = round(base_price * multiplier) if base_price is not None else None
+        items.append({
+            "id": str(r.id),
+            "canvas_w": r.canvas_w,
+            "canvas_h": r.canvas_h,
+            "difficulty": diff.value if hasattr(diff, "value") else diff,
+            "price": display_price,
+        })
+    return {"items": items}
 
 
 # ── Customer endpoints ────────────────────────────────────────────────────────
@@ -618,7 +670,11 @@ async def admin_get_preview_watermark(
     if quote_job is None:
         raise NotFoundError("尚無可預覽的製作圖")
 
-    raw_bytes = await fetch_filled_template_bytes(quote_job.filled_template_url)
+    # finalize 後的「實體色 filled」版本優先 — 顏色已套 palette_color_mappings
+    # 對應到真實顏料 RGB，這才是客戶實際手繪會看到的顏色；finalize 還沒跑時
+    # fallback 到演算法量化版（Lab 空間 K-means 結果），確保舊 quote 仍能 preview。
+    preview_url = quote_job.filled_template_final_url or quote_job.filled_template_url
+    raw_bytes = await fetch_filled_template_bytes(preview_url)
     if raw_bytes is None:
         raise NotFoundError("預覽圖無法載入")
 
@@ -655,8 +711,11 @@ async def get_quote_preview_image(
     if quote_job is None:
         raise NotFoundError("尚無可預覽的製作圖")
 
-    # 拿原圖 bytes → 浮水印處理
-    raw_bytes = await fetch_filled_template_bytes(quote_job.filled_template_url)
+    # 拿原圖 bytes → 浮水印處理。finalize 後優先用實體色版（filled_template_final_url），
+    # 沒 finalize 才 fallback 演算法量化版（filled_template_url）— 客戶看到的就跟
+    # admin 內部 preview 一致，避免「報價時看到量化色、實際手繪是別的顏色」的落差。
+    preview_url = quote_job.filled_template_final_url or quote_job.filled_template_url
+    raw_bytes = await fetch_filled_template_bytes(preview_url)
     if raw_bytes is None:
         raise NotFoundError("預覽圖無法載入")
 
