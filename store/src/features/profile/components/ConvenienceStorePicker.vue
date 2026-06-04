@@ -1,121 +1,39 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
-import { Store, MapPin, Loader2, X } from 'lucide-vue-next'
+import { Store, MapPin, X } from 'lucide-vue-next'
 import type { ShippingType } from '../api'
+import { buildCvsMapUrl } from '../cvsRedirect'
 
 const props = defineProps<{
   shippingType: ShippingType  // 'seven_eleven' | 'family_mart' (home 不會走這裡)
   storeId: string | null
   storeName: string | null
+  /** 同分頁 redirect 流程 — 用 sessionStorage 還原時，已選店的地址 / 電話顯示用 */
+  selectedAddress?: string | null
+  selectedPhone?: string | null
 }>()
 
 const emit = defineEmits<{
   'update:storeId': [value: string]
   'update:storeName': [value: string]
-  /** 額外資訊（地址、電話）— 父層可選擇要不要保存 */
-  'selected': [info: { storeId: string; storeName: string; address: string; phone: string }]
+  /** 即將 redirect 到 ECpay，父層需要把當前 form draft 寫進 sessionStorage */
+  'before-redirect': []
 }>()
 
-// shipping_type → ECpay LogisticsSubType (C2C 店到店)
-// User 的 ECpay 帳號實際開的是 C2C；確認方式：GET /api/v1/logistics/probe-subtypes
-// C2C 不用測標、按單收費、適合中小規模。要切 B2C 改成 UNIMART / FAMI 即可。
-const SUB_TYPE_MAP: Record<string, string> = {
-  seven_eleven: 'UNIMARTC2C',
-  family_mart: 'FAMIC2C',
-}
-
-const opening = ref(false)
-const errorText = ref<string | null>(null)
-const popupRef = ref<Window | null>(null)
-const lastSelectedAddress = ref<string | null>(null)
-const lastSelectedPhone = ref<string | null>(null)
-
-interface CvsSelectedPayload {
-  type: 'ecpay-cvs-selected'
-  ok: boolean
-  logistics_sub_type: string
-  store_id: string
-  store_name: string
-  store_address: string
-  store_phone: string
-  store_outside: string  // '0' / '1' / ''
-  extra_data: string
-}
-
-function handleMessage(e: MessageEvent) {
-  const data = e.data as CvsSelectedPayload | null
-  if (!data || data.type !== 'ecpay-cvs-selected') return
-
-  opening.value = false
-  stopClosedPoll()
-  if (!data.ok || !data.store_id) {
-    errorText.value = '選店失敗或簽章驗證未通過，請再試一次'
-    return
-  }
-
-  errorText.value = null
-  lastSelectedAddress.value = data.store_address
-  lastSelectedPhone.value = data.store_phone
-  emit('update:storeId', data.store_id)
-  emit('update:storeName', data.store_name)
-  emit('selected', {
-    storeId: data.store_id,
-    storeName: data.store_name,
-    address: data.store_address,
-    phone: data.store_phone,
-  })
-}
-
-window.addEventListener('message', handleMessage)
-onBeforeUnmount(() => {
-  window.removeEventListener('message', handleMessage)
-  stopClosedPoll()
-  if (popupRef.value && !popupRef.value.closed) {
-    popupRef.value.close()
-  }
-})
-
-let closedPollHandle: number | null = null
-
-function stopClosedPoll() {
-  if (closedPollHandle !== null) {
-    clearInterval(closedPollHandle)
-    closedPollHandle = null
-  }
-}
-
 function openPicker() {
-  errorText.value = null
-  const subType = SUB_TYPE_MAP[props.shippingType]
-  if (!subType) {
-    errorText.value = `不支援的配送方式：${props.shippingType}`
+  // 行動 Safari 在 cross-origin redirect 後會清掉 window.opener + 擋 window.close，
+  // 所以舊版 popup + postMessage 流程行不通 → 全平台改成同分頁 redirect。
+  const url = buildCvsMapUrl(props.shippingType, window.location.pathname)
+  if (!url) {
     return
   }
-  const url = `/api/v1/logistics/cvs-map?type=${encodeURIComponent(subType)}`
-  const features = 'width=900,height=700,resizable=yes,scrollbars=yes'
-  opening.value = true
-  popupRef.value = window.open(url, 'ecpay-cvs-picker', features)
-  if (!popupRef.value) {
-    opening.value = false
-    errorText.value = '無法開啟選店視窗，請允許彈出視窗後再試'
-    return
-  }
-
-  // poll 偵測使用者手動關閉視窗（沒選店就關 → postMessage 不會觸發）
-  stopClosedPoll()
-  closedPollHandle = window.setInterval(() => {
-    if (!popupRef.value || popupRef.value.closed) {
-      opening.value = false
-      stopClosedPoll()
-    }
-  }, 500)
+  // 父層必須在這個事件裡同步 saveCvsRedirect()（寫 sessionStorage）
+  emit('before-redirect')
+  window.location.assign(url)
 }
 
 function clearStore() {
   emit('update:storeId', '')
   emit('update:storeName', '')
-  lastSelectedAddress.value = null
-  lastSelectedPhone.value = null
 }
 </script>
 
@@ -129,7 +47,8 @@ function clearStore() {
         <div class="selected-info">
           <div class="selected-name">{{ storeName }}</div>
           <div class="selected-meta">門市代碼 {{ storeId }}</div>
-          <div v-if="lastSelectedAddress" class="selected-addr">{{ lastSelectedAddress }}</div>
+          <div v-if="selectedAddress" class="selected-addr">{{ selectedAddress }}</div>
+          <div v-if="selectedPhone" class="selected-addr">{{ selectedPhone }}</div>
         </div>
         <button type="button" class="clear-btn" @click="clearStore" aria-label="清除門市">
           <X :size="14" />
@@ -138,12 +57,10 @@ function clearStore() {
       <button
         type="button"
         class="open-btn open-btn-secondary"
-        :disabled="opening"
         @click="openPicker"
       >
-        <Loader2 v-if="opening" :size="14" class="spin" />
-        <MapPin v-else :size="14" />
-        <span>{{ opening ? '正在開啟選店視窗…' : '重新選擇門市' }}</span>
+        <MapPin :size="14" />
+        <span>重新選擇門市</span>
       </button>
     </template>
 
@@ -151,18 +68,15 @@ function clearStore() {
       v-else
       type="button"
       class="open-btn"
-      :disabled="opening"
       @click="openPicker"
     >
-      <Loader2 v-if="opening" :size="14" class="spin" />
-      <MapPin v-else :size="14" />
-      <span>{{ opening ? '正在開啟選店視窗…' : '選擇門市' }}</span>
+      <MapPin :size="14" />
+      <span>選擇門市</span>
     </button>
 
     <p class="hint">
-      會跳出 ECpay 選店視窗，挑好門市後資料會自動帶回。
+      將同分頁開啟 ECpay 選店畫面，挑好門市後會自動返回此頁面（已輸入的收件人 / 電話會保留）。
     </p>
-    <p v-if="errorText" class="err">{{ errorText }}</p>
   </div>
 </template>
 
@@ -189,11 +103,10 @@ function clearStore() {
   transition: background 150ms, border-color 150ms;
   align-self: flex-start;
 }
-.open-btn:hover:not(:disabled) {
+.open-btn:hover {
   background: var(--color-accent-tint);
   border-color: var(--color-accent-deep);
 }
-.open-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .open-btn :deep(svg) { stroke: currentColor; stroke-width: 1.5; fill: none; }
 
 /* 已選店時的「重新選擇」按鈕 — 較不搶眼，避免跟「已選門市」視覺衝突 */
@@ -206,14 +119,11 @@ function clearStore() {
   font-size: 12px;
   margin-top: 8px;
 }
-.open-btn-secondary:hover:not(:disabled) {
+.open-btn-secondary:hover {
   background: var(--color-paper-deep);
   border-color: var(--color-accent);
   color: var(--color-accent);
 }
-
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .selected-card {
   display: grid;
@@ -281,13 +191,6 @@ function clearStore() {
 .hint {
   font-size: 11px;
   color: var(--color-ink-muted);
-  margin: 0;
-  letter-spacing: 0.04em;
-}
-
-.err {
-  font-size: 12px;
-  color: var(--color-state-danger);
   margin: 0;
   letter-spacing: 0.04em;
 }

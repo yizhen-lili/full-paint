@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { ArrowLeft, Loader2, MapPin, Store, Plus, Pencil, Trash2, Star } from 'lucide-vue-next'
@@ -7,6 +7,7 @@ import SectionMasthead from '@/shared/components/SectionMasthead.vue'
 import * as profileApi from '../api'
 import type { ShippingProfile, ShippingProfileInput, ShippingType, ApiError } from '../api'
 import ShippingProfileForm from '../components/ShippingProfileForm.vue'
+import { consumeCvsRedirect, saveCvsRedirect } from '../cvsRedirect'
 
 import BackLink from '@/shared/components/BackLink.vue'
 const queryClient = useQueryClient()
@@ -29,19 +30,68 @@ const editingProfile = computed<ShippingProfile | null>(() => {
 
 const apiError = ref<string | null>(null)
 
+// ── CVS redirect 還原 ────────────────────────────────────────────────────
+// ShippingProfileForm 透過 template ref 拿到 snapshotForm()；overrideValues
+// 用來在 mount 後把 cvs 結果 + sessionStorage 暫存的 form draft 套回去。
+const formRef = ref<InstanceType<typeof ShippingProfileForm> | null>(null)
+const overrideValues = ref<Partial<ShippingProfileInput> | null>(null)
+const cvsSelectedAddress = ref<string | null>(null)
+const cvsSelectedPhone = ref<string | null>(null)
+
+onMounted(() => {
+  const consumed = consumeCvsRedirect(window.location.search)
+  if (!consumed) return
+  // sessionStorage 帶回的 editingId（'new' 或 uuid）— 若沒有則 fallback 到 'new'
+  editingId.value = consumed.editContext.editingId ?? 'new'
+  if (consumed.error) {
+    apiError.value = consumed.error
+    // 仍把 form draft 還原，讓 user 不用重打字
+    overrideValues.value = { ...consumed.formDraft }
+    return
+  }
+  if (consumed.cvs) {
+    overrideValues.value = {
+      ...consumed.formDraft,
+      store_id: consumed.cvs.storeId,
+      store_name: consumed.cvs.storeName || consumed.formDraft.store_name,
+    }
+    cvsSelectedAddress.value = consumed.cvs.address || null
+    cvsSelectedPhone.value = consumed.cvs.phone || null
+  }
+})
+
+function handleBeforeCvsRedirect() {
+  const draft = formRef.value?.snapshotForm()
+  if (!draft) return
+  saveCvsRedirect({
+    formDraft: draft,
+    editContext: { page: 'shipping-profiles', editingId: editingId.value },
+    returnTo: '/profile/shipping-profiles',
+  })
+}
+
+function resetCvsState() {
+  overrideValues.value = null
+  cvsSelectedAddress.value = null
+  cvsSelectedPhone.value = null
+}
+
 function openNew() {
   apiError.value = null
+  resetCvsState()
   editingId.value = 'new'
 }
 
 function openEdit(p: ShippingProfile) {
   apiError.value = null
+  resetCvsState()
   editingId.value = p.id
 }
 
 function cancelForm() {
   editingId.value = null
   apiError.value = null
+  resetCvsState()
 }
 
 const createMut = useMutation({
@@ -49,6 +99,7 @@ const createMut = useMutation({
   onSuccess: () => {
     queryClient.invalidateQueries({ queryKey: ['shipping-profiles'] })
     editingId.value = null
+    resetCvsState()
   },
 })
 
@@ -58,6 +109,7 @@ const updateMut = useMutation({
   onSuccess: () => {
     queryClient.invalidateQueries({ queryKey: ['shipping-profiles'] })
     editingId.value = null
+    resetCvsState()
   },
 })
 
@@ -168,11 +220,16 @@ const SHIPPING_TYPE_LABEL: Record<ShippingType, string> = {
         </div>
 
         <ShippingProfileForm
+          ref="formRef"
           :initial="editingProfile"
           :submitting="submitting"
           :error-text="apiError"
+          :override-values="overrideValues"
+          :cvs-selected-address="cvsSelectedAddress"
+          :cvs-selected-phone="cvsSelectedPhone"
           @submit="handleSubmit"
           @cancel="cancelForm"
+          @before-cvs-redirect="handleBeforeCvsRedirect"
         />
       </section>
 

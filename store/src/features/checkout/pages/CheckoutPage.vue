@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { Loader2, MapPin, Store, Tag, Check, Plus } from 'lucide-vue-next'
@@ -11,6 +11,7 @@ import {
 import * as profileApi from '@/features/profile/api'
 import ShippingProfileForm from '@/features/profile/components/ShippingProfileForm.vue'
 import type { ShippingProfileInput } from '@/features/profile/api'
+import { consumeCvsRedirect, saveCvsRedirect } from '@/features/profile/cvsRedirect'
 import type { ShippingType, ShippingPreference, ApiError } from '@/features/cart/api'
 
 const router = useRouter()
@@ -38,6 +39,7 @@ const createProfileMut = useMutation({
     selectedProfileId.value = created.id
     showAddForm.value = false
     addError.value = null
+    resetCvsState()
   },
 })
 
@@ -58,6 +60,49 @@ function startAddProfile() {
 function cancelAddProfile() {
   showAddForm.value = false
   addError.value = null
+  resetCvsState()
+}
+
+// ── CVS redirect 還原 ────────────────────────────────────────────────────
+const addFormRef = ref<InstanceType<typeof ShippingProfileForm> | null>(null)
+const overrideValues = ref<Partial<ShippingProfileInput> | null>(null)
+const cvsSelectedAddress = ref<string | null>(null)
+const cvsSelectedPhone = ref<string | null>(null)
+
+function resetCvsState() {
+  overrideValues.value = null
+  cvsSelectedAddress.value = null
+  cvsSelectedPhone.value = null
+}
+
+onMounted(() => {
+  const consumed = consumeCvsRedirect(window.location.search)
+  if (!consumed) return
+  showAddForm.value = true
+  if (consumed.error) {
+    addError.value = consumed.error
+    overrideValues.value = { ...consumed.formDraft }
+    return
+  }
+  if (consumed.cvs) {
+    overrideValues.value = {
+      ...consumed.formDraft,
+      store_id: consumed.cvs.storeId,
+      store_name: consumed.cvs.storeName || consumed.formDraft.store_name,
+    }
+    cvsSelectedAddress.value = consumed.cvs.address || null
+    cvsSelectedPhone.value = consumed.cvs.phone || null
+  }
+})
+
+function handleBeforeCvsRedirect() {
+  const draft = addFormRef.value?.snapshotForm()
+  if (!draft) return
+  saveCvsRedirect({
+    formDraft: draft,
+    editContext: { page: 'checkout' },
+    returnTo: '/checkout',
+  })
 }
 
 // 自動選預設 profile
@@ -239,11 +284,16 @@ function profileSummary(p: profileApi.ShippingProfile): string {
                 <h3 class="inline-form-title">新增收件資料</h3>
               </div>
               <ShippingProfileForm
+                ref="addFormRef"
                 :submitting="createProfileMut.isPending.value"
                 :error-text="addError"
                 :compact="true"
+                :override-values="overrideValues"
+                :cvs-selected-address="cvsSelectedAddress"
+                :cvs-selected-phone="cvsSelectedPhone"
                 @submit="submitNewProfile"
                 @cancel="cancelAddProfile"
+                @before-cvs-redirect="handleBeforeCvsRedirect"
               />
             </div>
           </template>

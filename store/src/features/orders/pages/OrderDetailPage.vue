@@ -19,6 +19,7 @@ import { useOrderSse } from '../useOrderSse'
 import type { ApiError, UpdateShippingPayload } from '../api'
 import ShippingProfileForm from '@/features/profile/components/ShippingProfileForm.vue'
 import type { ShippingProfileInput } from '@/features/profile/api'
+import { consumeCvsRedirect, saveCvsRedirect } from '@/features/profile/cvsRedirect'
 import InfoDrawer from '@/features/info/InfoDrawer.vue'
 
 const refundInfoOpen = ref(false)
@@ -212,9 +213,57 @@ async function submitModifyShipping(data: ShippingProfileInput) {
   try {
     await updateShippingMut.mutateAsync(payload)
     showModifyShipping.value = false
+    resetCvsState()
   } catch (e) {
     modifyShippingErr.value = (e as ApiError).detail || '修改失敗'
   }
+}
+
+// ── CVS redirect 還原 ────────────────────────────────────────────────────
+const modifyFormRef = ref<InstanceType<typeof ShippingProfileForm> | null>(null)
+const overrideShippingValues = ref<Partial<ShippingProfileInput> | null>(null)
+const cvsSelectedAddress = ref<string | null>(null)
+const cvsSelectedPhone = ref<string | null>(null)
+
+function resetCvsState() {
+  overrideShippingValues.value = null
+  cvsSelectedAddress.value = null
+  cvsSelectedPhone.value = null
+}
+
+function closeModifyShipping() {
+  showModifyShipping.value = false
+  resetCvsState()
+}
+
+onMounted(() => {
+  const consumed = consumeCvsRedirect(window.location.search)
+  if (!consumed) return
+  showModifyShipping.value = true
+  if (consumed.error) {
+    modifyShippingErr.value = consumed.error
+    overrideShippingValues.value = { ...consumed.formDraft }
+    return
+  }
+  if (consumed.cvs) {
+    overrideShippingValues.value = {
+      ...consumed.formDraft,
+      store_id: consumed.cvs.storeId,
+      store_name: consumed.cvs.storeName || consumed.formDraft.store_name,
+    }
+    cvsSelectedAddress.value = consumed.cvs.address || null
+    cvsSelectedPhone.value = consumed.cvs.phone || null
+  }
+})
+
+function handleBeforeCvsRedirect() {
+  const draft = modifyFormRef.value?.snapshotForm()
+  if (!draft) return
+  saveCvsRedirect({
+    formDraft: draft,
+    editContext: { page: 'order-detail', orderId: orderId.value },
+    returnTo: `/orders/${orderId.value}`,
+  })
 }
 
 // 取消訂單
@@ -806,24 +855,29 @@ function specSummary(spec: Record<string, unknown>): string {
           <div
             v-if="showModifyShipping && shippingProfileFromOrder"
             class="modal-overlay"
-            @click.self="showModifyShipping = false"
+            @click.self="closeModifyShipping"
           >
             <div class="modal modify-modal">
               <div class="modal-head">
                 <h3>修改出貨資訊</h3>
-                <button type="button" class="modal-close" @click="showModifyShipping = false">
+                <button type="button" class="modal-close" @click="closeModifyShipping">
                   <X :size="16" />
                 </button>
               </div>
               <p class="modal-hint">付款被管理員確認後將無法自行修改。配送方式不可更動。</p>
               <ShippingProfileForm
+                ref="modifyFormRef"
                 :initial="shippingProfileFromOrder"
                 :submitting="updateShippingMut.isPending.value"
                 :error-text="modifyShippingErr"
                 :compact="true"
                 :lock-shipping-type="true"
+                :override-values="overrideShippingValues"
+                :cvs-selected-address="cvsSelectedAddress"
+                :cvs-selected-phone="cvsSelectedPhone"
                 @submit="submitModifyShipping"
-                @cancel="showModifyShipping = false"
+                @cancel="closeModifyShipping"
+                @before-cvs-redirect="handleBeforeCvsRedirect"
               />
             </div>
           </div>

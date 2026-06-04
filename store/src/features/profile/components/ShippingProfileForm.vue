@@ -14,11 +14,18 @@ const props = defineProps<{
   compact?: boolean
   /** 鎖定配送方式 — 修改既有訂單時用（不能改宅配 ↔ 超商，會影響運費 / 需重選門市） */
   lockShippingType?: boolean
+  /** ECpay redirect 還原時用 — 比 initial 後套用，可覆蓋部分欄位（store_id/name 等） */
+  overrideValues?: Partial<ShippingProfileInput> | null
+  /** 已選店的地址 / 電話 — 純顯示用（不送 API），由父層從 cvsRedirect 結果填入 */
+  cvsSelectedAddress?: string | null
+  cvsSelectedPhone?: string | null
 }>()
 
 const emit = defineEmits<{
   submit: [data: ShippingProfileInput]
   cancel: []
+  /** ConvenienceStorePicker 即將 redirect 到 ECpay，父頁面要 saveCvsRedirect() */
+  'before-cvs-redirect': []
 }>()
 
 const authStore = useAuthStore()
@@ -57,9 +64,28 @@ watch(
     } else {
       form.value = initialInput()
     }
+    // 套 overrideValues（cvs redirect 還原用）— 必須在 initial 之後跑
+    if (props.overrideValues) {
+      Object.assign(form.value, props.overrideValues)
+    }
   },
   { immediate: true },
 )
+
+// initial 已設好後，overrideValues 可能再變（譬如 user 在 mount 後 consume cvs）
+watch(
+  () => props.overrideValues,
+  (override) => {
+    if (override) {
+      Object.assign(form.value, override)
+    }
+  },
+)
+
+/** 給父頁面用：在 redirect 前抓最新 form state 寫進 sessionStorage */
+defineExpose({
+  snapshotForm: (): ShippingProfileInput => ({ ...form.value }),
+})
 
 const SHIPPING_TYPE_LABEL: Record<ShippingType, string> = {
   home: '宅配到府',
@@ -159,8 +185,11 @@ function onSubmit() {
         :shipping-type="form.shipping_type"
         :store-id="form.store_id"
         :store-name="form.store_name"
+        :selected-address="cvsSelectedAddress"
+        :selected-phone="cvsSelectedPhone"
         @update:store-id="(v: string) => form.store_id = v"
         @update:store-name="(v: string) => form.store_name = v"
+        @before-redirect="emit('before-cvs-redirect')"
       />
     </template>
 

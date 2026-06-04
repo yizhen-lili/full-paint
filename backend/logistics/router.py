@@ -1,18 +1,22 @@
 """ECpay 物流 router：CVS Map（超商選店）。
 
 兩個 endpoint：
-  - GET  /logistics/cvs-map?type=UNIMARTC2C
+  - GET  /logistics/cvs-map?type=UNIMARTC2C&return=/profile/shipping-profiles
       → 回 HTML（auto-submit form 跳轉到 ECpay map page）
-  - POST /logistics/cvs-callback
-      → 接 ECpay 回傳，驗章後 postMessage 給 opener，close 自己
+        return 路徑會被 echo 到 ServerReplyURL 的 query string，ECpay POST 回時保留。
+  - POST /logistics/cvs-callback?return=/profile/shipping-profiles
+      → 接 ECpay 回傳，驗章後 303 redirect 回 store 同分頁（行動裝置友善）
 """
 import asyncio
+import logging
+import re
 from datetime import UTC, datetime
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
@@ -22,22 +26,80 @@ from logistics import service
 
 router = APIRouter(prefix="/logistics", tags=["logistics"])
 
+log = logging.getLogger(__name__)
 
-def _resolve_server_reply_url(request: Request) -> str:
+
+# 允許 cvs-map / cvs-callback 的 return 路徑白名單（防 open redirect）
+_RETURN_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^/profile/shipping-profiles$"),
+    re.compile(r"^/checkout$"),
+    re.compile(r"^/orders/[0-9a-fA-F-]{36}$"),  # /orders/<uuid>
+)
+
+
+def _validate_return_path(path: str) -> str | None:
+    """驗證 user-provided return path 是否落在白名單。回傳已驗證路徑或 None。
+
+    防範：
+      - 必須 / 開頭、且非 // 開頭（protocol-relative URL）
+      - 不含 ..（path traversal）/ 反斜線 / NUL byte
+      - 必須完全 match 三個白名單之一
+    """
+    if not path or not path.startswith("/") or path.startswith("//"):
+        return None
+    if ".." in path or "\\" in path or "\x00" in path:
+        return None
+    if any(p.fullmatch(path) for p in _RETURN_PATH_PATTERNS):
+        return path
+    return None
+
+
+def _resolve_server_reply_url(request: Request, return_to: str | None = None) -> str:
     """callback URL 解析優先序：
       1. settings.ecpay_server_reply_url（明確設定）
       2. request.base_url 推導出 /api/v1/logistics/cvs-callback
+
+    若帶 return_to 且驗證通過 → 附加 ?return=<encoded> 到 URL；ECpay POST 回時會
+    沿用這個 URL（含 query），讓 callback 知道要 redirect 到哪。
 
     Railway 反向代理 X-Forwarded-Proto 沒被 uvicorn 採信，request.base_url 會回 http；
     強制改成 https，因為 Railway 公開網域只接 https + ECpay 要求 https callback。
     """
     if settings.ecpay_server_reply_url:
-        return settings.ecpay_server_reply_url
-    base = str(request.base_url).rstrip("/")
-    # 修正 Railway 內部 http → 公開 https
-    if base.startswith("http://") and "railway.app" in base:
-        base = "https://" + base[len("http://"):]
-    return f"{base}/api/v1/logistics/cvs-callback"
+        base_url = settings.ecpay_server_reply_url
+    else:
+        base = str(request.base_url).rstrip("/")
+        # 修正 Railway 內部 http → 公開 https
+        if base.startswith("http://") and "railway.app" in base:
+            base = "https://" + base[len("http://"):]
+        base_url = f"{base}/api/v1/logistics/cvs-callback"
+
+    if return_to:
+        # ServerReplyURL 限 200 字元；爆了就靜默丟掉 return（callback 會 fallback / 首頁）
+        candidate = f"{base_url}?return={quote(return_to, safe='/')}"
+        if len(candidate) <= service.MAX_SERVER_REPLY_URL_LEN:
+            return candidate
+        log.warning(
+            "[cvs] ServerReplyURL with return param exceeds %d chars, dropping return",
+            service.MAX_SERVER_REPLY_URL_LEN,
+        )
+    return base_url
+
+
+def _store_base_url() -> str:
+    """前端 store 基底 URL（用於 callback 完成後的 absolute redirect）."""
+    return settings.frontend_url.rstrip("/")
+
+
+def _build_callback_redirect(return_to: str | None, query: dict[str, str]) -> str:
+    """組 callback 結束的 absolute redirect URL（跨 origin：backend → store）.
+
+    return_to 不在白名單或缺失 → 回首頁。
+    """
+    safe_return = _validate_return_path(return_to or "")
+    target_path = safe_return or "/"
+    qs = urlencode(query)
+    return f"{_store_base_url()}{target_path}?{qs}" if qs else f"{_store_base_url()}{target_path}"
 
 
 def _mask(value: str) -> str:
@@ -207,13 +269,24 @@ async def cvs_map_redirect(
     type: str = Query(..., max_length=20, description="LogisticsSubType, e.g. UNIMARTC2C / FAMIC2C"),
     extra: str = Query("", max_length=service.MAX_EXTRA_DATA_LEN,
                        description="ExtraData，最多 20 字元，原值會回 callback"),
+    return_to: str = Query(
+        "",
+        alias="return",
+        max_length=200,
+        description="選店完成後要回到的 store 路徑（白名單：/profile/shipping-profiles / "
+                    "/checkout / /orders/<uuid>），會 echo 進 ServerReplyURL query。",
+    ),
 ) -> HTMLResponse:
     """產出 auto-submit form HTML，瀏覽器一打開就 POST 到 ECpay map 頁面。
 
     所有欄位驗證集中在 service.build_cvs_map_form()，違反 raise ValueError
     這裡轉成 HTTP 400。
     """
-    server_reply_url = _resolve_server_reply_url(request)
+    safe_return = _validate_return_path(return_to) if return_to else None
+    if return_to and not safe_return:
+        # user 傳了 return 但驗不過 — 直接擋，避免 user 以為會回正確頁面
+        raise HTTPException(status_code=400, detail="不允許的 return 路徑")
+    server_reply_url = _resolve_server_reply_url(request, return_to=safe_return)
     try:
         params = service.build_cvs_map_form(
             logistics_sub_type=type,
@@ -267,9 +340,13 @@ async def cvs_map_redirect(
     return HTMLResponse(content=html)
 
 
-@router.post("/cvs-callback", response_class=HTMLResponse)
-async def cvs_map_callback(request: Request) -> HTMLResponse:
-    """接 ECpay 選店結果，用 postMessage 把資料傳給 opener window，並 close 自己。
+@router.post("/cvs-callback")
+async def cvs_map_callback(request: Request):
+    """接 ECpay 選店結果，驗章後 303 redirect 回 store 同分頁。
+
+    舊版用 postMessage 通知 opener window + window.close()，但行動 Safari 因
+    `window.opener` 被清空 + `window.close()` 被拒擋下，導致選完店無法返回。改成
+    同分頁 redirect 後三平台（iOS / Android / Desktop）行為一致。
 
     來源：https://developers.ecpay.com.tw/8795/ ServerReplyURL 回傳參數規格
     """
@@ -347,65 +424,36 @@ async def cvs_map_callback(request: Request) -> HTMLResponse:
         all_params.get("CVSAddress", ""), service.MAX_CVS_ADDRESS_LEN * 2,  # 容錯 2 倍
     )
 
-    # 必要欄位提取（給前端 postMessage）
-    MerchantID = all_params.get("MerchantID", "")
-    MerchantTradeNo = all_params.get("MerchantTradeNo", "")
+    # 必要欄位提取（給 redirect query）
     LogisticsSubType = all_params.get("LogisticsSubType", "")
     CVSStoreID = all_params.get("CVSStoreID", "")
     CVSStoreName = all_params.get("CVSStoreName", "")
     CVSAddress = all_params.get("CVSAddress", "")
     CVSTelephone = all_params.get("CVSTelephone", "")
-    CVSOutSide = all_params.get("CVSOutSide", "")
     ExtraData = all_params.get("ExtraData", "")
-    CheckMacValue = received_mac
 
-    payload = {
-        "type": "ecpay-cvs-selected",
-        "ok": bool(valid and CVSStoreID),
-        "logistics_sub_type": LogisticsSubType,
-        "store_id": CVSStoreID,
-        "store_name": CVSStoreName,
-        "store_address": CVSAddress,
-        "store_phone": CVSTelephone,
-        "store_outside": CVSOutSide,  # '0' / '1' / ''
-        "extra_data": ExtraData,
-    }
-    import json
-    payload_json = json.dumps(payload, ensure_ascii=False)
+    # ── 組 303 redirect URL → 同分頁回到 store ─────────────────────────────
+    return_to_raw = request.query_params.get("return", "")
 
-    html = f"""<!doctype html>
-<html lang="zh-TW">
-<head><meta charset="utf-8" /><title>選店完成</title>
-<style>
-  body {{
-    font-family: -apple-system, "Noto Sans TC", sans-serif;
-    background: #F4EFE2; color: #2E2823;
-    display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; margin: 0;
-    text-align: center;
-  }}
-</style></head>
-<body>
-  <div>
-    <p>已選擇門市，正在返回…</p>
-    <p style="font-size: 12px; color: #6B6660; margin-top: 16px;">
-      若視窗未自動關閉請手動關閉。
-    </p>
-  </div>
-  <script>
-    (function () {{
-      var payload = {payload_json};
-      try {{
-        if (window.opener && !window.opener.closed) {{
-          window.opener.postMessage(payload, '*');
-        }}
-      }} catch (e) {{ /* ignore */ }}
-      setTimeout(function () {{ window.close(); }}, 600);
-    }})();
-  </script>
-</body>
-</html>"""
-    return HTMLResponse(content=html)
+    if not valid:
+        query = {"cvs_error": "invalid", "cvs_sub_type": LogisticsSubType}
+    elif not CVSStoreID:
+        query = {"cvs_error": "missing_store", "cvs_sub_type": LogisticsSubType}
+    else:
+        query = {
+            "cvs_store_id": CVSStoreID,
+            "cvs_store_name": CVSStoreName,
+            "cvs_address": CVSAddress,
+            "cvs_phone": CVSTelephone,
+            "cvs_sub_type": LogisticsSubType,
+        }
+        if ExtraData:
+            query["cvs_extra"] = ExtraData
+
+    redirect_url = _build_callback_redirect(return_to_raw, query)
+    print(f"[ecpay-callback] redirect → {redirect_url}", flush=True)
+    # 303 See Other：把 POST 轉成 GET，避免瀏覽器重發 / 重複觸發
+    return RedirectResponse(url=redirect_url, status_code=303)
 
 
 def _html_escape(s: str) -> str:
