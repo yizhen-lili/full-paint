@@ -4,6 +4,7 @@ import { useRoute, RouterLink } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { Loader2, Check, Copy, AlertCircle } from 'lucide-vue-next'
 import * as ordersApi from '@/features/orders/api'
+import { usePublicSettingsQuery } from '@/features/orders/queries'
 
 const route = useRoute()
 const orderId = computed(() => String(route.query.order || ''))
@@ -15,6 +16,8 @@ const orderQuery = useQuery({
 })
 
 const order = computed(() => orderQuery.data.value ?? null)
+
+const publicSettingsQuery = usePublicSettingsQuery()
 
 // 24h 倒數
 const now = ref(Date.now())
@@ -53,23 +56,22 @@ const countdown = computed(() => {
   return { h: pad(h), m: pad(m), s: pad(s) }
 })
 
-// payment_info 從 backend 的 service.py settings 來，可能在 shipping_snapshot 或別處
-// 這裡先嘗試從 shipping_snapshot 找；後端如果改放別處再調整
+// 從 admin 後台 system_settings 拉匯款資訊（whitelist 見 backend/content/service.py）
+// admin 沒填 → 顯示「—」+ disable 複製按鈕，讓 user 知道是後台未設定而不是頁面壞掉
 const paymentInfo = computed(() => {
-  // backend create_order response 的 payment_info 並未存到 OrderDetail
-  // 這裡 fallback 寫死從 system_settings 預期欄位（admin 可改）
-  // TODO: 將 payment_info 加到 OrderDetail 或新加 endpoint
+  const items = publicSettingsQuery.data.value?.items ?? {}
   return {
-    bank_name: '中華郵政',
-    branch: '永康分行',
-    account_name: 'YIIMUI 易木工作室',
-    account_no: '700-0042312-345-678',
+    bank_name: items.bank_name ?? '',
+    branch: items.bank_branch ?? '',
+    account_name: items.bank_account_name ?? '',
+    account_no: items.bank_account_number ?? '',
     note: '匯款後請至「我的訂單」上傳付款核對表單',
   }
 })
 
 const copyMsg = ref<string | null>(null)
 async function copyAccount() {
+  if (!paymentInfo.value.account_no) return
   try {
     await navigator.clipboard.writeText(paymentInfo.value.account_no)
     copyMsg.value = '已複製'
@@ -155,17 +157,27 @@ async function copyAccount() {
           <dl class="bank">
             <div class="bank-row">
               <dt>銀行</dt>
-              <dd>{{ paymentInfo.bank_name }}<span v-if="paymentInfo.branch"> · {{ paymentInfo.branch }}</span></dd>
+              <dd>
+                <template v-if="paymentInfo.bank_name">
+                  {{ paymentInfo.bank_name }}<span v-if="paymentInfo.branch"> · {{ paymentInfo.branch }}</span>
+                </template>
+                <span v-else class="empty">—</span>
+              </dd>
             </div>
             <div class="bank-row">
               <dt>戶名</dt>
-              <dd>{{ paymentInfo.account_name }}</dd>
+              <dd>{{ paymentInfo.account_name || '—' }}</dd>
             </div>
             <div class="bank-row bank-row-account">
               <dt>帳號</dt>
               <dd>
-                <span class="acc">{{ paymentInfo.account_no }}</span>
-                <button type="button" class="copy" @click="copyAccount">
+                <span class="acc">{{ paymentInfo.account_no || '—' }}</span>
+                <button
+                  type="button"
+                  class="copy"
+                  :disabled="!paymentInfo.account_no"
+                  @click="copyAccount"
+                >
                   <Copy :size="12" />
                   <span>{{ copyMsg ?? '複製' }}</span>
                 </button>
@@ -499,11 +511,19 @@ async function copyAccount() {
   cursor: pointer;
   transition: border-color 150ms, color 150ms;
 }
-.copy:hover {
+.copy:hover:not(:disabled) {
   border-color: var(--color-accent);
+}
+.copy:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .copy :deep(svg) {
   stroke: currentColor; stroke-width: 1.5; fill: none;
+}
+
+.empty {
+  color: var(--color-ink-muted);
 }
 
 .amt {

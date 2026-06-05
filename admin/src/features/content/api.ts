@@ -302,6 +302,12 @@ export const SETTING_LABEL: Record<string, SettingMeta> = {
   // 付款資訊（給客戶看的匯款帳號）
   bank_account_number: { label: '銀行帳號', type: 'text', group: 'payment' },
   bank_name: { label: '銀行名稱', type: 'text', group: 'payment' },
+  bank_branch: {
+    label: '分行（選填）',
+    type: 'text',
+    hint: '中華郵政等不需分行的帳號可留空',
+    group: 'payment',
+  },
   bank_account_name: { label: '匯款戶名', type: 'text', group: 'payment' },
   payment_absolute_deadline_hours: { label: '付款絕對期限（小時）', type: 'number', group: 'payment' },
 

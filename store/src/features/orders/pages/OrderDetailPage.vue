@@ -93,17 +93,24 @@ const countdown = computed(() => {
   }
 })
 
-// Bank info（後端 system_settings 才有；這裡先寫死 fallback）
-const PAYMENT_INFO = {
-  bank_name: '中華郵政',
-  branch: '永康分行',
-  account_name: 'YIIMUI 易木工作室',
-  account_no: '700-0042312-345-678',
-}
+// Bank info — 從 admin 後台 system_settings 拉（whitelist 見 backend/content/service.py）
+// admin 沒填 → 顯示「—」+ disable 複製按鈕。publicSettingsQuery 在下方先宣告了，
+// 為避免 hoisting 問題改成「直接 fetch 一次」或挪 publicSettingsQuery 宣告位置 —
+// 這裡選擇用 getter，等真正讀的時候 publicSettingsQuery 已就緒。
+const paymentInfo = computed(() => {
+  const items = publicSettingsQuery.data.value?.items ?? {}
+  return {
+    bank_name: items.bank_name ?? '',
+    branch: items.bank_branch ?? '',
+    account_name: items.bank_account_name ?? '',
+    account_no: items.bank_account_number ?? '',
+  }
+})
 const copyMsg = ref<string | null>(null)
 async function copyAccount() {
+  if (!paymentInfo.value.account_no) return
   try {
-    await navigator.clipboard.writeText(PAYMENT_INFO.account_no)
+    await navigator.clipboard.writeText(paymentInfo.value.account_no)
     copyMsg.value = '已複製'
     setTimeout(() => (copyMsg.value = null), 1500)
   } catch {
@@ -653,17 +660,27 @@ function specSummary(spec: Record<string, unknown>): string {
             <dl class="bank">
               <div class="bank-row">
                 <dt>銀行</dt>
-                <dd>{{ PAYMENT_INFO.bank_name }} · {{ PAYMENT_INFO.branch }}</dd>
+                <dd>
+                  <template v-if="paymentInfo.bank_name">
+                    {{ paymentInfo.bank_name }}<span v-if="paymentInfo.branch"> · {{ paymentInfo.branch }}</span>
+                  </template>
+                  <span v-else class="empty">—</span>
+                </dd>
               </div>
               <div class="bank-row">
                 <dt>戶名</dt>
-                <dd>{{ PAYMENT_INFO.account_name }}</dd>
+                <dd>{{ paymentInfo.account_name || '—' }}</dd>
               </div>
               <div class="bank-row bank-row-acc">
                 <dt>帳號</dt>
                 <dd>
-                  <span class="acc">{{ PAYMENT_INFO.account_no }}</span>
-                  <button type="button" class="copy-btn" @click="copyAccount">
+                  <span class="acc">{{ paymentInfo.account_no || '—' }}</span>
+                  <button
+                    type="button"
+                    class="copy-btn"
+                    :disabled="!paymentInfo.account_no"
+                    @click="copyAccount"
+                  >
                     <Copy :size="12" />
                     {{ copyMsg ?? '複製' }}
                   </button>
@@ -1610,7 +1627,10 @@ function specSummary(spec: Record<string, unknown>): string {
   color: var(--color-accent);
   cursor: pointer;
 }
+.copy-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .copy-btn :deep(svg) { stroke: currentColor; stroke-width: 1.5; fill: none; }
+
+.bank .empty { color: var(--color-ink-muted); }
 
 /* Actions */
 .actions {

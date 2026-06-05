@@ -45,6 +45,7 @@ async def upsert_page(db: AsyncSession, slug: str, title: str, content: str) -> 
 _PUBLIC_SETTING_KEYS = {
     "bank_account_number",
     "bank_name",
+    "bank_branch",  # 選填；客戶端「銀行 · 分行」顯示用，admin email 不需
     "bank_account_name",
     "product_info_tools",
     "product_info_material",
