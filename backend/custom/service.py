@@ -218,7 +218,15 @@ def _publish_to_customer(request_id: UUID, event_type: str, data: dict) -> None:
     hub.publish_to_customer(request_id, event_type, data)
 
 
-async def _send_email(to: str, subject: str, html: str) -> None:
+async def _send_email(
+    to: str, subject: str, html: str, *, no_reply_to: bool = False,
+) -> None:
+    """寄信 helper。
+
+    no_reply_to=True：不設 Reply-To header — 客戶 Gmail 點「回覆」會回到 from
+    address（Resend 預設不會收到），用於客製訊息類通知，逼客戶走站內回覆。
+    其他類通知（auth/orders 等）仍走 settings.support_email 作為 reply_to。
+    """
     try:
         import resend
         resend.api_key = settings.resend_api_key
@@ -228,7 +236,7 @@ async def _send_email(to: str, subject: str, html: str) -> None:
             "subject": subject,
             "html": html,
         }
-        if settings.support_email:
+        if settings.support_email and not no_reply_to:
             payload["reply_to"] = settings.support_email
         await asyncio.get_running_loop().run_in_executor(
             None,
@@ -236,6 +244,31 @@ async def _send_email(to: str, subject: str, html: str) -> None:
         )
     except Exception as e:
         logger.warning(f"Email send failed to {to}: {e}")
+
+
+def _custom_thread_link(request_id: UUID) -> str:
+    """客戶端站內客製對話頁路徑（要登入；admin 已是 admin app 內路由）。"""
+    return f"{settings.frontend_url}/custom/requests/{request_id}"
+
+
+def _in_app_reply_footer(request_id: UUID) -> str:
+    """所有客製通知 email 統一附此 footer：醒目連結 + 「請勿直接回信」警語。
+
+    目的：把客戶推回站內 `CustomRequestMessage` 對話系統，避免 Gmail 回信
+    繞到 admin 私人信箱（站內看不到、追蹤不到）。
+    """
+    link = _custom_thread_link(request_id)
+    return (
+        f"<hr style=\"margin:24px 0;border:none;border-top:1px solid #ddd;\" />"
+        f"<p style=\"margin:8px 0;\">"
+        f"<a href=\"{link}\" "
+        f"style=\"display:inline-block;padding:10px 18px;"
+        f"background:#8C6E52;color:#fff;text-decoration:none;border-radius:4px;\">"
+        f"👉 點此進站對話回覆</a></p>"
+        f"<p style=\"font-size:11px;color:#888;margin-top:8px;\">"
+        f"⚠️ 請勿直接回覆此 email — 我們的客服系統只追蹤站內訊息，"
+        f"直接回信我們可能看不到。</p>"
+    )
 
 
 async def _get_setting(db: AsyncSession, key: str) -> str | None:
@@ -367,7 +400,9 @@ async def create_custom_request(
         html=(
             f"<p>您的客製申請已收到，預計 {reply_days} 個工作天內回覆報價。</p>"
             f"<p>申請編號：{req.id}</p>"
+            + _in_app_reply_footer(req.id)
         ),
+        no_reply_to=True,
     )
 
     await db.commit()
@@ -842,7 +877,11 @@ async def extend_quote(
     await _send_email(
         to=user.email,
         subject="【易木 YIIMUI】報價已延長",
-        html=f"<p>您已延長報價有效期至 {req.quote_expires_at.strftime('%Y-%m-%d %H:%M')}。</p>",
+        html=(
+            f"<p>您已延長報價有效期至 {req.quote_expires_at.strftime('%Y-%m-%d %H:%M')}。</p>"
+            + _in_app_reply_footer(req.id)
+        ),
+        no_reply_to=True,
     )
 
     await db.commit()
@@ -989,7 +1028,8 @@ async def admin_post_message(
     await _send_email(
         to=user.email,
         subject="【易木 YIIMUI】客製申請有新訊息",
-        html=f"<p>{body_text}</p>",
+        html=f"<p>{body_text}</p>" + _in_app_reply_footer(req.id),
+        no_reply_to=True,
     )
 
     await db.commit()
@@ -1131,7 +1171,9 @@ async def admin_send_quote(
             f"<p>報價金額：NT${float(quoted_price):.0f}</p>"
             f"{note_html}"
             f"<p>請於 24 小時內確認：<a href=\"{quote_link}\">查看報價</a></p>"
+            + _in_app_reply_footer(req.id)
         ),
+        no_reply_to=True,
     )
 
     await db.commit()
@@ -1322,7 +1364,11 @@ async def expire_quotes_async(db: AsyncSession) -> int:
         await _send_email(
             to=user.email,
             subject="【易木 YIIMUI】您的報價已逾期",
-            html=f"<p>您的客製申請 {req.id} 報價已逾期，已自動取消。</p>",
+            html=(
+                f"<p>您的客製申請 {req.id} 報價已逾期，已自動取消。</p>"
+                + _in_app_reply_footer(req.id)
+            ),
+            no_reply_to=True,
         )
 
     await db.commit()

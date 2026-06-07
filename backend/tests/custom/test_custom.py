@@ -517,6 +517,96 @@ async def test_admin_post_message(client, db):
 
 
 @pytest.mark.asyncio
+async def test_admin_post_message_email_has_in_app_reply_link(client, db, monkeypatch):
+    """admin 送訊息後寄給客戶的 email 必須：
+    1. body 含「/custom/requests/{rid}」連結（讓客戶點回站內回覆）
+    2. 不帶 reply_to header（避免回信進 admin 私人信箱）
+    """
+    sent_payloads: list[dict] = []
+
+    async def _capture_send_email(to, subject, html, *, no_reply_to=False):
+        sent_payloads.append({
+            "to": to,
+            "subject": subject,
+            "html": html,
+            "no_reply_to": no_reply_to,
+        })
+
+    monkeypatch.setattr("custom.service._send_email", _capture_send_email)
+
+    await _seed_system_settings(db)
+    await _make_customer(client, db)
+    await _make_admin(db)
+    await _login_customer(client)
+    create_res = await _create_photo_request(client)
+    rid = create_res.json()["id"]
+    client.cookies.clear()
+    await _login_admin(client)
+    res = await client.post(
+        f"{ADMIN_CR_URL}/{rid}/messages",
+        json={"message": "我們將於明天回覆"},
+    )
+    assert res.status_code == 201
+
+    # admin_post_message 之後應該至少送出 1 封 email
+    admin_msg_emails = [
+        p for p in sent_payloads if "客製申請有新訊息" in p["subject"]
+    ]
+    assert len(admin_msg_emails) >= 1, "admin 送訊息應該觸發通知 email"
+    email = admin_msg_emails[0]
+
+    # 1. body 應含進站回覆連結
+    assert f"/custom/requests/{rid}" in email["html"], \
+        "email 必須含 detail 頁連結，讓客戶站內回覆"
+    assert "請勿直接回覆此 email" in email["html"], \
+        "email 必須提醒客戶不要 Gmail 回覆"
+
+    # 2. no_reply_to=True，確保 reply_to 不會被設成 support_email
+    assert email["no_reply_to"] is True, \
+        "客製通知 email 必須走 no_reply_to=True 路徑"
+
+
+@pytest.mark.asyncio
+async def test_admin_send_quote_email_has_in_app_reply_link(client, db, monkeypatch):
+    """quote_sent email 同時要有「查看報價」連結 + 「進站對話」備援連結。"""
+    sent_payloads: list[dict] = []
+
+    async def _capture_send_email(to, subject, html, *, no_reply_to=False):
+        sent_payloads.append({
+            "to": to,
+            "subject": subject,
+            "html": html,
+            "no_reply_to": no_reply_to,
+        })
+
+    monkeypatch.setattr("custom.service._send_email", _capture_send_email)
+
+    await _seed_system_settings(db)
+    await _make_customer(client, db)
+    await _make_admin(db)
+    await _login_customer(client)
+    create_res = await _create_photo_request(client)
+    rid = create_res.json()["id"]
+    client.cookies.clear()
+    await _login_admin(client)
+    res = await client.post(
+        f"{ADMIN_CR_URL}/{rid}/quote",
+        json={"quoted_price": 1500, "detail": "standard"},
+    )
+    assert res.status_code == 200
+
+    quote_emails = [p for p in sent_payloads if "報價已送出" in p["subject"]]
+    assert len(quote_emails) >= 1
+    email = quote_emails[0]
+
+    # 既有的「查看報價」連結（/customer-quote/{token}）仍應存在
+    assert "/customer-quote/" in email["html"]
+    # 新加的「進站對話」備援連結
+    assert f"/custom/requests/{rid}" in email["html"]
+    assert email["no_reply_to"] is True
+
+
+@pytest.mark.asyncio
 async def test_admin_mark_negotiating(client, db):
     await _seed_system_settings(db)
     await _make_customer(client, db)

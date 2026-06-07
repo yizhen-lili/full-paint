@@ -289,6 +289,28 @@ function canExtend() {
             </div>
           </li>
         </ul>
+        <RouterLink
+          :to="`/custom/requests/${summary.custom_request_id}`"
+          class="thread-cta"
+        >
+          前往對話頁回覆 →
+        </RouterLink>
+        <p class="thread-cta-hint">
+          報價頁僅顯示對話紀錄；回覆訊息請至「我的客製申請」對話頁。
+        </p>
+      </section>
+
+      <!-- 沒對話紀錄時也提示一下站內對話入口（避免客戶以為只能 Gmail 回） -->
+      <section v-else class="thread thread-empty">
+        <RouterLink
+          :to="`/custom/requests/${summary.custom_request_id}`"
+          class="thread-cta"
+        >
+          前往對話頁與我們聯絡 →
+        </RouterLink>
+        <p class="thread-cta-hint">
+          需要修改或詢問請至站內對話頁，請勿直接回覆通知信。
+        </p>
       </section>
 
       <!-- 操作按鈕 -->
@@ -629,6 +651,28 @@ function canExtend() {
   display: block; font-family: var(--font-mono);
   font-size: 10px; opacity: 0.7; margin-top: 4px;
 }
+
+.thread-cta {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 10px 18px;
+  background: var(--color-accent);
+  color: var(--color-paper-canvas);
+  text-decoration: none;
+  font-family: var(--font-cn-serif);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  border-radius: var(--radius-xs);
+  transition: background 150ms;
+}
+.thread-cta:hover { background: var(--color-accent-deep); }
+.thread-cta-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--color-ink-muted);
+  letter-spacing: 0.04em;
+}
+.thread-empty { padding-top: 8px; }
 
 .actions {
   display: flex; flex-direction: column; gap: 12px;
