@@ -61,6 +61,9 @@ class CustomRequestDetailResponse(BaseModel):
     revision_count: int
     parent_request_id: UUID | None
     order_id: UUID | None
+    # 若 order_id 有值，回傳該訂單目前的狀態（給 store 端判斷對話該不該關）
+    # quote_confirmed 後 CustomRequest 永不再變，只能靠 linked order 判定「整個流程」是否走完
+    linked_order_status: str | None = None
     created_at: datetime
     quoted_at: datetime | None
     rejected_at: datetime | None

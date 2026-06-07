@@ -71,6 +71,8 @@ export interface CustomRequestDetail {
   revision_count: number
   parent_request_id: string | null
   order_id: string | null
+  /** linked order 的當前狀態（order_id 有值才會帶）— 用來判斷對話是否該關 */
+  linked_order_status?: string | null
   created_at: string
   quoted_at: string | null
   rejected_at: string | null

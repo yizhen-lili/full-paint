@@ -289,11 +289,41 @@ function goToQuote() {
   )
 }
 
-const composerVisible = computed(() =>
-  ['quote_pending', 'negotiating', 'quote_sent', 'draft_revision'].includes(
-    detail.value?.status ?? '',
-  ),
-)
+// 對話開關規則（2026-06-04 user 確認）：
+// - 報價階段 → 開
+// - quote_rejected / quote_expired → 關（沒下單就結束了）
+// - quote_confirmed → 看 linked Order；只有 5 個終態才關（client 想問退款進度時 chat 仍開）
+const ACTIVE_QUOTE_STATUSES = ['quote_pending', 'negotiating', 'quote_sent', 'draft_revision']
+const TERMINAL_ORDER_STATUSES = [
+  'completed', 'cancelled', 'payment_expired', 'refunded', 'partially_refunded',
+]
+
+const composerVisible = computed(() => {
+  const s = detail.value?.status
+  if (!s) return false
+  if (ACTIVE_QUOTE_STATUSES.includes(s)) return true
+  if (['quote_rejected', 'quote_expired'].includes(s)) return false
+  if (s === 'quote_confirmed') {
+    const os = detail.value?.linked_order_status
+    return !os || !TERMINAL_ORDER_STATUSES.includes(os)
+  }
+  return false
+})
+
+const closedHint = computed<string>(() => {
+  const s = detail.value?.status
+  if (s === 'quote_rejected') return '您已拒絕此次報價，本對話已關閉。如需重新申請請至客製頁面。'
+  if (s === 'quote_expired') return '報價已逾期、本申請自動關閉。如仍有興趣請重新申請。'
+  if (s === 'quote_confirmed') {
+    const os = detail.value?.linked_order_status
+    if (os === 'completed') return '訂單已完成，本次客製對話已結束。若有售後問題請至訂單頁聯絡客服。'
+    if (os === 'cancelled') return '訂單已取消，本次對話已關閉。'
+    if (os === 'payment_expired') return '訂單因未付款已過期取消，本次對話已關閉。'
+    if (os === 'refunded') return '訂單已退款，本次對話已關閉。如需追問請至訂單頁聯絡客服。'
+    if (os === 'partially_refunded') return '訂單已完成（含部分退款），本次客製對話已結束。'
+  }
+  return '此申請已關閉，無法繼續發訊息。'
+})
 </script>
 
 <template>
@@ -503,7 +533,7 @@ const composerVisible = computed(() =>
             傳送
           </button>
         </form>
-        <p v-else class="closed-hint">此申請已關閉，無法繼續發訊息。</p>
+        <p v-else class="closed-hint">{{ closedHint }}</p>
         <p v-if="sendError" class="error">{{ sendError }}</p>
       </section>
     </template>

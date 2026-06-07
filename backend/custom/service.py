@@ -1265,6 +1265,16 @@ async def _request_detail(db: AsyncSession, req: CustomRequest) -> dict:
         }
         for m in msgs_result.scalars().all()
     ]
+    # 拿 linked Order 狀態（用於 store 端判斷對話是否該關閉）
+    # quote_confirmed 後 CustomRequest 凍結，必須讀 Order 才知道流程是否走完
+    linked_order_status: str | None = None
+    if req.order_id is not None:
+        order_status_row = await db.execute(
+            select(Order.status).where(Order.id == req.order_id)
+        )
+        order_status_val = order_status_row.scalar_one_or_none()
+        if order_status_val is not None:
+            linked_order_status = _enum_val(order_status_val)
     return {
         "id": req.id,
         "user_id": req.user_id,
@@ -1289,6 +1299,7 @@ async def _request_detail(db: AsyncSession, req: CustomRequest) -> dict:
         "revision_count": req.revision_count,
         "parent_request_id": req.parent_request_id,
         "order_id": req.order_id,
+        "linked_order_status": linked_order_status,
         "created_at": req.created_at,
         "quoted_at": req.quoted_at,
         "rejected_at": req.rejected_at,

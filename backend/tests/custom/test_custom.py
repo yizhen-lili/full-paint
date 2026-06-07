@@ -567,6 +567,81 @@ async def test_admin_post_message_email_has_in_app_reply_link(client, db, monkey
 
 
 @pytest.mark.asyncio
+async def test_request_detail_linked_order_status_null_when_no_order(client, db):
+    """新建立的 CustomRequest 沒 order_id → detail 應回 linked_order_status=None。
+
+    store 端 composerVisible 邏輯：linked_order_status 為 None 時、且 status 仍
+    在報價階段 → 開放對話（不會被誤判為終態）。
+    """
+    await _seed_system_settings(db)
+    await _make_customer(client, db)
+    await _login_customer(client)
+    create_res = await _create_photo_request(client)
+    rid = create_res.json()["id"]
+
+    detail_res = await client.get(f"{CR_URL}/{rid}")
+    assert detail_res.status_code == 200
+    body = detail_res.json()
+    assert body["order_id"] is None
+    assert body["linked_order_status"] is None
+
+
+@pytest.mark.asyncio
+async def test_request_detail_includes_linked_order_status(client, db):
+    """quote_confirmed 且 order_id 有值的 CustomRequest → detail 應回對應 Order.status。
+
+    驗證後端 _request_detail 確實有去 query Order 表，store 端可據此判斷對話
+    是否該關（terminal 狀態才關）。
+    """
+    from datetime import datetime
+
+    from orders.models import Order, OrderStatusEnum, ShippingTypeEnum
+
+    await _seed_system_settings(db)
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    create_res = await _create_photo_request(client)
+    rid = create_res.json()["id"]
+
+    # 手動建一張 paid 訂單（非終態），把 CustomRequest 綁過去
+    order = Order(
+        order_number=f"PL-TEST-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        user_id=user.id,
+        status=OrderStatusEnum.paid,
+        subtotal=1500,
+        shipping_fee=120,
+        total=1620,
+        shipping_type=ShippingTypeEnum.home,
+        shipping_snapshot={
+            "recipient_name": "測試", "phone": "0912345678",
+            "city": "台北市", "district": "信義區", "address_detail": "測試路 1 號",
+        },
+    )
+    db.add(order)
+    await db.flush()
+
+    cr_row = await db.execute(
+        select(CustomRequest).where(CustomRequest.id == rid)
+    )
+    cr = cr_row.scalar_one()
+    cr.order_id = order.id
+    cr.status = CustomRequestStatusEnum.quote_confirmed
+    await db.commit()
+
+    detail_res = await client.get(f"{CR_URL}/{rid}")
+    assert detail_res.status_code == 200
+    body = detail_res.json()
+    assert body["order_id"] == str(order.id)
+    assert body["linked_order_status"] == "paid"  # paid 是非終態 → 前端會保持對話開
+
+    # 把訂單改成 completed（終態）→ detail 應反映新狀態
+    order.status = OrderStatusEnum.completed
+    await db.commit()
+    detail_res2 = await client.get(f"{CR_URL}/{rid}")
+    assert detail_res2.json()["linked_order_status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_admin_send_quote_email_has_in_app_reply_link(client, db, monkeypatch):
     """quote_sent email 同時要有「查看報價」連結 + 「進站對話」備援連結。"""
     sent_payloads: list[dict] = []
