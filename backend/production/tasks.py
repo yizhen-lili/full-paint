@@ -764,6 +764,36 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
                 "run_post_process_job: %s completed (palette %d colors)",
                 job_id, result["num_colors_used"],
             )
+
+            # 5. 若 user 之前已完整對應且 finalize 過 → 自動 re-finalize，
+            # 讓 template_final.svg / filled_template_final.png 跟著新模板重生，
+            # 避免 PaletteMappingPage 同時顯示「即時預覽=新算法版」vs「最新版=舊實體色版」
+            # 兩張不同的圖。finalize_template 已 idempotent（重跑只覆寫 latest、不動
+            # original_*）。失敗只 log warning，post-process 本身仍 success。
+            if job.finalized_at is not None:
+                try:
+                    from palette.service import finalize_template  # noqa: PLC0415
+                    await finalize_template(db=session, job_id=job.id)
+                    logger.info(
+                        "run_post_process_job: %s auto re-finalize completed",
+                        job_id,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    # finalize_template 可能在 archive 之後、commit 之前 raise，
+                    # 留下 pending changes（如已寫的 original_* 欄位）。顯式 rollback
+                    # 把 session 歸位，避免外層 AsyncSession 退出時 silent rollback。
+                    try:
+                        await session.rollback()
+                    except Exception as rb:  # noqa: BLE001
+                        logger.warning(
+                            "run_post_process_job: %s rollback after re-finalize"
+                            " failure also failed: %s",
+                            job_id, rb,
+                        )
+                    logger.warning(
+                        "run_post_process_job: %s auto re-finalize failed — %s: %s",
+                        job_id, type(e).__name__, e,
+                    )
     finally:
         await engine_db.dispose()
 

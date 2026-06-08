@@ -592,10 +592,12 @@ async def test_run_post_process_merge_color_success(db):
 
 
 @pytest.mark.asyncio
-async def test_run_post_process_post_processed_at_newer_than_finalized_at(db):
-    """先 finalize、再 post-process → post_processed_at 應更新到比 finalized_at 新。
+async def test_run_post_process_auto_refinalizes_when_finalized_at_set(db):
+    """先 finalize、再 post-process → 自動觸發 re-finalize。
 
-    前端 isFinalStale 條件：post_processed_at > finalized_at → 顯示新算法版 + 警告。
+    避免 PaletteMappingPage 同時顯示「即時預覽=新算法版」vs「最新版=舊實體色版」
+    兩張不同的圖。re-finalize 後 finalized_at 會被刷新到 post_processed_at 之後、
+    UI isFinalStale 變 false、兩張圖對齊。
     """
     from datetime import UTC, datetime, timedelta
 
@@ -609,7 +611,46 @@ async def test_run_post_process_post_processed_at_newer_than_finalized_at(db):
     assert finalized_at_before is not None
 
     with _patch_post_process_engine() as _, \
-         patch("production.tasks._upload_file") as mock_upload:
+         patch("production.tasks._upload_file") as mock_upload, \
+         patch("palette.service.finalize_template") as mock_finalize:
+        mock_upload.side_effect = [
+            "gs://test-bucket/x/template_new.svg",
+            "gs://test-bucket/x/filled_new.png",
+            "gs://test-bucket/x/snapped_new.png",
+        ]
+        mock_finalize.return_value = {
+            "output_labels_count": 2,
+            "template_final_url": "gs://test-bucket/x/template_final_NEW.svg",
+            "palette_final_url": "gs://test-bucket/x/palette_final_NEW.json",
+        }
+        await _run_post_process_async(
+            str(job.id),
+            {"polygon_id": "r5", "target_template_id": 2},
+        )
+
+    # auto re-finalize 必須被觸發、且傳的是同一筆 job_id（keyword args）
+    assert mock_finalize.called
+    _, _, called_kwargs = mock_finalize.mock_calls[0]
+    assert called_kwargs.get("job_id") == job.id
+
+    refreshed = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job.id)
+    )).scalar_one()
+    await db.refresh(refreshed)
+
+    # post_processed_at 必有
+    assert refreshed.post_processed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_post_process_skips_refinalize_when_never_finalized(db):
+    """從未 finalize 過（finalized_at IS NULL）的 job → post-process 不該自動 re-finalize。"""
+    job = await _seed_completed_job(db)
+    assert job.finalized_at is None  # seed 不寫 finalized_at
+
+    with _patch_post_process_engine() as _, \
+         patch("production.tasks._upload_file") as mock_upload, \
+         patch("palette.service.finalize_template") as mock_finalize:
         mock_upload.side_effect = [
             "gs://test-bucket/x/template_new.svg",
             "gs://test-bucket/x/filled_new.png",
@@ -620,15 +661,53 @@ async def test_run_post_process_post_processed_at_newer_than_finalized_at(db):
             {"polygon_id": "r5", "target_template_id": 2},
         )
 
+    # 沒 finalized 過 → 不該 trigger re-finalize（不打擾還沒做完顏色對應的 job）
+    assert not mock_finalize.called
+
+    refreshed = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job.id)
+    )).scalar_one()
+    await db.refresh(refreshed)
+    assert refreshed.status == JobStatusEnum.completed
+    assert refreshed.post_processed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_post_process_succeeds_even_if_refinalize_fails(db):
+    """auto re-finalize 內部 raise → post-process 本身仍 success、status='completed'、
+    post_processed_at 仍寫入；user 可手動再按「完成顏色對應」看 specific error。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    job = await _seed_completed_job(db)
+    job.finalized_at = datetime.now(UTC) - timedelta(hours=1)
+    await db.commit()
+    await db.refresh(job)
+
+    with _patch_post_process_engine() as _, \
+         patch("production.tasks._upload_file") as mock_upload, \
+         patch("palette.service.finalize_template") as mock_finalize:
+        mock_upload.side_effect = [
+            "gs://test-bucket/x/template_new.svg",
+            "gs://test-bucket/x/filled_new.png",
+            "gs://test-bucket/x/snapped_new.png",
+        ]
+        mock_finalize.side_effect = RuntimeError("finalize 內部 boom")
+
+        # 不應該 raise
+        await _run_post_process_async(
+            str(job.id),
+            {"polygon_id": "r5", "target_template_id": 2},
+        )
+
     refreshed = (await db.execute(
         select(ProductionJob).where(ProductionJob.id == job.id)
     )).scalar_one()
     await db.refresh(refreshed)
 
-    # finalize 時間沒變，post_processed_at 是新打的、必然 > finalized_at
-    assert refreshed.finalized_at == finalized_at_before
+    # post-process 本身仍 success（re-finalize 失敗不污染主流程）
+    assert refreshed.status == JobStatusEnum.completed
     assert refreshed.post_processed_at is not None
-    assert refreshed.post_processed_at > refreshed.finalized_at
 
 
 @pytest.mark.asyncio
