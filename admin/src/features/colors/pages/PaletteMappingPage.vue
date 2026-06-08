@@ -37,7 +37,7 @@ import CopyMappingsDialog from '../components/CopyMappingsDialog.vue'
 import PalettePreviewCanvas from '../components/PalettePreviewCanvas.vue'
 import RgbCalibrationDialog from '../components/RgbCalibrationDialog.vue'
 
-import { useBatchPostProcessMutation, useJobQuery } from '@/features/production/queries'
+import { PJ_KEYS, useBatchPostProcessMutation, useJobQuery } from '@/features/production/queries'
 import { getJobSignedUrl, type BatchOperation } from '@/features/production/api'
 import PostProcessPanel from '@/features/production/components/PostProcessPanel.vue'
 
@@ -306,6 +306,18 @@ async function fetchSvgUrl() {
   } finally {
     svgUrlLoading.value = false
   }
+}
+
+// PostProcessPanel「手動重抓」用 — 比 fetchSvgUrl 更徹底：
+//   1. invalidate jobData 強制 refetch（更新 post_processed_at 等時間戳）
+//   2. invalidate palette-mappings 強制 refetch
+//   3. 再呼叫 fetchSvgUrl 拿最新 signed URL
+// 等 jobData refetch 完，watch(post_processed_at) 也會被觸發、做為 backup。
+async function forceRefreshSvg() {
+  if (!jobId.value) return
+  await qc.invalidateQueries({ queryKey: PJ_KEYS.detail(jobId.value) })
+  qc.invalidateQueries({ queryKey: PM_KEYS.mappings(jobId.value) })
+  await fetchSvgUrl()
 }
 
 // 進入頁面 / status 變回 completed（post-process 跑完）→ 重抓新 SVG signed URL
@@ -829,8 +841,9 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
         :pending="batchPostProcessMut.isPending.value"
         :type-filter="null"
         :last-updated-at="jobData.post_processed_at ?? jobData.created_at"
+        :has-post-processed="!!jobData.post_processed_at"
         @confirm-batch="onPostProcessSubmit"
-        @refresh="fetchSvgUrl"
+        @refresh="forceRefreshSvg"
       />
     </div>
   </section>

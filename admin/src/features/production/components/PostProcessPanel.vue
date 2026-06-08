@@ -56,8 +56,10 @@ const props = withDefaults(
     /** SVG 對應的「模板版本時間戳」— 顯示給 admin 看「我現在編輯的是哪版」
      *  通常傳 job.post_processed_at（沒做過 post-process 則 fallback 到 created_at） */
     lastUpdatedAt?: string | null
+    /** 是否做過至少一次 post-process（決定時間戳要不要標「原始版」） */
+    hasPostProcessed?: boolean
   }>(),
-  { svgUrl: null, typeFilter: null, lastUpdatedAt: null },
+  { svgUrl: null, typeFilter: null, lastUpdatedAt: null, hasPostProcessed: false },
 )
 
 const emit = defineEmits<{
@@ -464,12 +466,18 @@ function opDisplay(op: BatchOperation): {
           <Crosshair :size="12" :stroke-width="1.5" />
           <span>點選 template 上的格子</span>
           <span v-if="lastUpdatedAt" class="ml-3 text-ink-muted">
-            · 目前版本 {{ fmtUpdatedAt(lastUpdatedAt) }}
+            ·
+            <template v-if="hasPostProcessed">
+              最近一次調整 {{ fmtUpdatedAt(lastUpdatedAt) }}
+            </template>
+            <template v-else>
+              原始版本（尚未做過合併 / 消邊界）{{ fmtUpdatedAt(lastUpdatedAt) }}
+            </template>
           </span>
           <button
             type="button"
             class="ml-2 text-accent underline hover:text-accent-hover"
-            title="重新從伺服器抓最新模板 SVG"
+            title="清掉 cache、重抓 job 最新狀態 + SVG"
             @click="emit('refresh')"
           >手動重抓</button>
         </div>
