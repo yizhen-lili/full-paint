@@ -301,3 +301,65 @@ def test_no_recognizable_polygons_falls_back_to_renumber():
     # fallback: text content 應該變成 "7"
     texts = _parse_texts(out)
     assert "7" in texts
+
+
+# ── enable_tiny_merge 開關（雙版本 SVG 給 admin 對比 UI 用） ────────────────
+
+def test_enable_tiny_merge_false_returns_empty_merge_records():
+    """enable_tiny_merge=False 時 — 跳過 _merge_tiny_polygons、merge_records 必為空。
+
+    finalize 雙版本用：False 跑出來的「未合併版」是主版本，給 user 看細緻版；
+    True 跑出來的「合併版」是 preview，給 admin 對比看「按確認合併會變什麼」。
+    """
+    # 建一個含微小 polygon 的 SVG：tid 1（小、area<60）+ tid 2（大、area>60）
+    # 兩個鄰接、color 相近（LAB<30），預期 enable=True 時會被合進去
+    palette_with_small = [
+        {"template_id": 1, "rgb": [240, 240, 240], "pixels": 10},   # tint 接近白
+        {"template_id": 2, "rgb": [220, 220, 220], "pixels": 5000}, # tint 也接近白
+    ]
+    palette_final = [
+        {"output_label": 1, "rgb": [240, 240, 240]},
+        {"output_label": 2, "rgb": [220, 220, 220]},
+    ]
+    svg = _make_svg([
+        # tid 1：tiny（2×2 = 4 px²）
+        (_tint(240, 240, 240), [(0, 0), (2, 0), (2, 2), (0, 2)]),
+        # tid 2：large（50×50 = 2500 px²）緊鄰 tid 1
+        (_tint(220, 220, 220), [(2, 0), (52, 0), (52, 50), (2, 50)]),
+    ])
+
+    # False 路徑：merge_records 必為空
+    _, records_off = regenerate_merged_svg(
+        svg, {1: 1, 2: 2}, palette_with_small, palette_final,
+        enable_tiny_merge=False,
+    )
+    assert records_off == []
+
+
+def test_enable_tiny_merge_true_default_still_detects_tiny_polygons():
+    """enable_tiny_merge=True（預設）— 跟既有行為一樣，會偵測 + 合併 tiny polygon。
+
+    這是 regression test：避免重構動到既有 finalize 雙版本機制的 True 那一邊。
+    """
+    palette_with_small = [
+        {"template_id": 1, "rgb": [240, 240, 240], "pixels": 10},
+        {"template_id": 2, "rgb": [220, 220, 220], "pixels": 5000},
+    ]
+    palette_final = [
+        {"output_label": 1, "rgb": [240, 240, 240]},
+        {"output_label": 2, "rgb": [220, 220, 220]},
+    ]
+    svg = _make_svg([
+        (_tint(240, 240, 240), [(0, 0), (2, 0), (2, 2), (0, 2)]),
+        (_tint(220, 220, 220), [(2, 0), (52, 0), (52, 50), (2, 50)]),
+    ])
+    # True 路徑（預設）：應偵測到 tiny polygon、回 record（含 polygon_id）
+    _, records_on = regenerate_merged_svg(
+        svg, {1: 1, 2: 2}, palette_with_small, palette_final,
+    )
+    # 至少一筆 record（tiny tid 1 合進 tid 2）
+    assert len(records_on) >= 1
+    rec = records_on[0]
+    assert rec["tiny_template_id"] == 1
+    assert rec["target_template_id"] == 2
+    assert "polygon_id" in rec

@@ -163,6 +163,14 @@ async def init_schema() -> None:
                 "ALTER TABLE production_jobs "
                 "ADD COLUMN IF NOT EXISTS pending_auto_merges JSONB"
             ))
+            # 「合併建議套用後」preview SVG — finalize 同時產出兩版線稿（未合併版 =
+            # 主 template_final_url、合併版 = 這欄）。給 admin 在「自動合併建議」
+            # 面板做左右對比用，pending_auto_merges 空時為 NULL。filled_template_final
+            # 不需要雙版（兩者填色相同）。
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS template_final_merged_preview_url VARCHAR"
+            ))
             # Module 22：首頁置頂商品（homepage_order 越小越前面；NULL = 不上首頁；上限 12 由 service layer 驗證）
             await conn.execute(text(
                 "ALTER TABLE products "

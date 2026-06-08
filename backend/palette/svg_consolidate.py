@@ -214,6 +214,8 @@ def regenerate_merged_svg(
     label_map: dict[int, int],
     palette_json: list[dict],
     palette_final: list[dict],
+    *,
+    enable_tiny_merge: bool = True,
 ) -> tuple[bytes, list[dict]]:
     """把原 template.svg 依 label_map 重新分組合併，產出「實體色版」SVG。
 
@@ -223,10 +225,19 @@ def regenerate_merged_svg(
         palette_json:  pbn_gen 原始 palette_json（含 template_id 與 algorithm rgb，
                        用來把 polygon 的 fill 反查回 template_id）
         palette_final: finalize 產出的色號對照表（含 output_label, rgb, hex 等）
+        enable_tiny_merge: True（預設）= 跑 _merge_tiny_polygons 把微小色塊
+                       in-memory 改 template_id 合進鄰居（產「合併版」），
+                       merge_records 回偵測到的清單。
+                       False = 跳過、保留所有原 template_id（產「未合併版」），
+                       merge_records 回 []。仍會做同 output_label 相鄰 polygon
+                       的 unary_union（消除假邊界）。
+                       finalize 同時呼叫兩次給對比 UI 用：False=主版本、True=preview，
+                       記得從 True 那次取 merge_records 寫進 pending_auto_merges。
 
     回傳：(新 SVG bytes, merge_records)
         merge_records: 微小色塊 auto-merge 建議清單 [{tiny_template_id,
-        target_template_id, tiny_area}, ...]；DB 不動，給上層存 pending_auto_merges。
+        target_template_id, tiny_area, polygon_id}, ...]；DB 不動，給上層存
+        pending_auto_merges。enable_tiny_merge=False 時為 []。
 
     錯誤處理：shapely 未安裝 → 自動 fallback 到 renumber_svg_labels（純文字替換，
     但仍可用、回 ([], )）；單一 polygon 解析失敗 → skip，整體仍輸出。
@@ -320,7 +331,8 @@ def regenerate_merged_svg(
             sample_stroke_width = sw
 
     # ── Step 3b：微小色塊 auto-merge（in-memory only）
-    merge_records = _merge_tiny_polygons(all_polygons)
+    # enable_tiny_merge=False 時跳過、產「未合併版」給對比 UI 當主版本
+    merge_records = _merge_tiny_polygons(all_polygons) if enable_tiny_merge else []
 
     # ── Step 3c：建 polygons_by_label（已套用 merge 後的 template_id）
     polygons_by_label: dict[int, list] = defaultdict(list)

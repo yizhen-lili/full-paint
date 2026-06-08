@@ -142,8 +142,15 @@ async def update_mapping(
     # 同色 no-op 不觸發失效，避免 admin 誤點不變色就被迫重產
     if is_color_change and job.finalized_at is not None:
         job.finalized_at = None
+        # 換色 → 既有「合併建議」跟「合併版 preview」都失效（基於舊 mapping 算的、
+        # polygon_id 雖在 SVG 仍存在，但「合進哪個 target」的色彩判斷已過期）。
+        # 一起清掉避免 admin 在 stale UI 上做 confirm 決定（reviewer 必修項）。
+        if job.pending_auto_merges or job.template_final_merged_preview_url:
+            _delete_merged_preview_blob(job_id)
+            job.pending_auto_merges = None
+            job.template_final_merged_preview_url = None
         logger.info(
-            "update_mapping: job %s finalized_at 已清空（template_id=%s 換色）",
+            "update_mapping: job %s finalized_at + 合併建議已清空（template_id=%s 換色）",
             job_id, template_id,
         )
 
@@ -344,7 +351,11 @@ async def confirm_pending_merges(db: AsyncSession, job_id: UUID) -> dict:
 
     pending_count = len(pending)
     # 清掉 pending（避免下次 finalize 又把舊的回寫）
+    # preview URL 跟 pending 同生命週期 — 一起清掉避免 UI 殘留指向舊 SVG
+    # GCS blob 也一併刪掉避免 Firebase orphan（reviewer 必修項）
+    _delete_merged_preview_blob(job_id)
     job.pending_auto_merges = None
+    job.template_final_merged_preview_url = None
     await db.commit()
 
     logger.info(
@@ -370,6 +381,10 @@ async def reject_pending_merges(db: AsyncSession, job_id: UUID) -> dict:
     job = await _get_job_or_404(db, job_id)
     pending_count = len(job.pending_auto_merges or [])
     job.pending_auto_merges = None
+    # preview URL 跟 pending 同生命週期 — reject 後也一起清，避免 UI 殘留對比
+    # GCS blob 也一併刪掉避免 Firebase orphan（reviewer 必修項）
+    _delete_merged_preview_blob(job_id)
+    job.template_final_merged_preview_url = None
     await db.commit()
     logger.info(
         "reject_pending_merges: job=%s rejected=%d pending",
@@ -501,19 +516,42 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
 
     # 5. SVG 合併 — 拉 template.svg → 同 output_label 的多邊形 Shapely union
     #    → 渲染為新 SVG（消除同色相鄰假邊界）→ 上傳 final
+    #
+    # 跑兩次：主版本 (未套 tiny merge，user 要的細緻版) + preview (套 tiny merge，
+    # 給 admin 對比看「按確認合併會變什麼樣」)。 merge_records 從合併版取得。
     bucket = get_bucket()
     svg_path = _gs_path(job.svg_url, bucket.name)
     svg_blob = bucket.blob(svg_path)
     svg_bytes = svg_blob.download_as_bytes()
-    final_svg_bytes, auto_merge_records = regenerate_merged_svg(
-        svg_bytes, label_map, job.palette_json, palette_final,
-    )
 
+    # 主版本：未合併（細緻）
+    final_svg_bytes, _ = regenerate_merged_svg(
+        svg_bytes, label_map, job.palette_json, palette_final,
+        enable_tiny_merge=False,
+    )
     final_svg_path = f"production_jobs/{job_id}/template_final.svg"
     bucket.blob(final_svg_path).upload_from_string(
         final_svg_bytes, content_type="image/svg+xml",
     )
     template_final_url = f"gs://{bucket.name}/{final_svg_path}"
+
+    # preview：合併版 + 拿 merge_records 給 pending_auto_merges
+    merged_preview_svg_bytes, auto_merge_records = regenerate_merged_svg(
+        svg_bytes, label_map, job.palette_json, palette_final,
+        enable_tiny_merge=True,
+    )
+    template_final_merged_preview_url: str | None = None
+    if auto_merge_records:
+        # 只在有 tiny merge 建議時才上傳 preview，避免空建議時浪費 storage
+        preview_svg_path = (
+            f"production_jobs/{job_id}/template_final_merged_preview.svg"
+        )
+        bucket.blob(preview_svg_path).upload_from_string(
+            merged_preview_svg_bytes, content_type="image/svg+xml",
+        )
+        template_final_merged_preview_url = (
+            f"gs://{bucket.name}/{preview_svg_path}"
+        )
 
     # 6. 上傳 palette_final.json（legend 用）
     palette_final_path = f"production_jobs/{job_id}/palette_final.json"
@@ -543,6 +581,9 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     job.palette_final_url = palette_final_url
     if filled_template_final_url:
         job.filled_template_final_url = filled_template_final_url
+    # preview URL 跟 pending_auto_merges 同生命週期：有建議 → 兩者皆有；
+    # 空建議 → 兩者皆 None。confirm/reject 後也應該被一起清掉（既有 endpoints 已處理）。
+    job.template_final_merged_preview_url = template_final_merged_preview_url
     job.finalized_at = datetime.now(UTC)
     # 自動合併建議：svg_consolidate 偵測到的微小色塊建議清單，待 admin 確認後寫 DB
     # 空清單 → 設 None（NULL）讓前端用 ?.length 判斷無 pending
@@ -639,6 +680,30 @@ def _gs_path(url: str, bucket_name: str) -> str:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+def _delete_merged_preview_blob(job_id: UUID) -> None:
+    """刪 GCS 上「合併建議套用後」preview SVG，避免 confirm/reject/換色清掉 DB
+    URL 之後 Firebase 物件殘留（reviewer 必修項：Firebase orphan）。
+
+    Best-effort：bucket 取得失敗、blob 不存在、刪除失敗都只 log 不 raise。
+    """
+    try:
+        from core.firebase import get_bucket  # noqa: PLC0415
+
+        bucket = get_bucket()
+        path = f"production_jobs/{job_id}/template_final_merged_preview.svg"
+        blob = bucket.blob(path)
+        if blob.exists():
+            blob.delete()
+            logger.info(
+                "_delete_merged_preview_blob: deleted %s for job %s", path, job_id,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "_delete_merged_preview_blob: failed for job %s — %s: %s",
+            job_id, type(e).__name__, e,
+        )
+
 
 def _copy_to_archive(bucket, job_id: UUID, filename: str) -> None:
     """把當前 finalize 檔（latest）server-side rewrite 到 archive/ 路徑當原始版。

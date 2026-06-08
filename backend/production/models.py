@@ -122,6 +122,13 @@ class ProductionJob(Base):
     # 結構：[{"tiny_template_id": int, "target_template_id": int, "tiny_area": float}]
     # NULL = 沒有 pending（從未 finalize / 已 confirm / 已 reject / 沒有 tiny polygons）
     pending_auto_merges = Column(JSONB, nullable=True)
+    # 「合併建議套用後」SVG preview：finalize 同時產出兩版線稿 — 主版本
+    # template_final_url 是「未套用 tiny merge」（保留所有原 polygon、user 要的細緻版），
+    # 這個欄位是「已套用 tiny merge」的 preview 線稿。admin 在「自動合併建議」面板看
+    # 左右對比後決定 confirm/reject。filled_template_final.png 不需要雙版（兩者實體
+    # 色填色相同：pixel-replace algorithm_rgb→physical_color 跟 polygon 合併無關）。
+    # NULL = 沒有 pending（同 pending_auto_merges、空時不顯示 preview）。
+    template_final_merged_preview_url = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     batch_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

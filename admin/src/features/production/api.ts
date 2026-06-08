@@ -137,6 +137,11 @@ export interface JobDetail extends JobListItem {
     target_template_id: number
     tiny_area: number
   }[] | null
+  /** 「合併建議套用後」SVG preview — 跟 pending_auto_merges 同生命週期。
+   *  主版本 template_final_url = 「未套用 tiny merge」（細緻版）；這欄是「已套用」的 preview。
+   *  admin 在「自動合併建議」面板看左右對比決定 confirm/reject。
+   *  null = 沒有 pending（同 pending_auto_merges）。 */
+  template_final_merged_preview_url: string | null
   // F06-B 用：palette_mappings、sam_points、polygons、mask_url 等暫不入型別
 }
 

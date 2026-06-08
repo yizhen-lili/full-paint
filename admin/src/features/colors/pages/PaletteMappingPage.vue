@@ -715,8 +715,8 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
             自動合併建議（{{ jobData.pending_auto_merges.length }} 個小色塊 · 涵蓋 {{ groupedMerges.length }} 個 template）
           </h3>
           <p class="text-[12px] text-ink-muted leading-[1.6]">
-            系統偵測到一些太小、難以辨識色號的色塊，已在上方「最新版」模板<b>視覺上</b>合進
-            色差最近的鄰居（這時候 DB 還沒動）。
+            系統偵測到一些太小、難以辨識色號的色塊。上方「最新版」模板<b>保留</b>所有原本色塊
+            （即你看到的細緻版）；下方「合併後預覽」展示<b>若按下「確認合併」</b>之後會變成的樣子。
             <br />
             點「確認合併寫入 DB」會用 <b>per-polygon</b> 方式處理 —
             只把這些小色塊精準改成鄰居色，<b>不會動原 template 的大色塊</b>，
@@ -728,6 +728,49 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
           >
             ⚠ 部分舊資料沒有 polygon_id 欄位（之前的 bug 版本產生的），無法精準
             per-polygon 合併。請按「放棄這次建議」清掉、再重按「完成對應」即可重新偵測。
+          </div>
+
+          <!-- 左右對比：當前未合併 vs 合併後預覽 -->
+          <div
+            v-if="jobData.template_final_merged_preview_url"
+            class="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3"
+          >
+            <div class="space-y-1">
+              <div class="flex items-center gap-2 px-1">
+                <Archive :size="13" :stroke-width="1.5" class="text-ink-muted" />
+                <span class="text-[12px] font-medium text-ink-strong">目前模板（未套用建議）</span>
+              </div>
+              <Card class="!p-2">
+                <div class="aspect-square rounded-[var(--radius-xs)] border border-line-hairline bg-paper-canvas overflow-auto flex items-center justify-center">
+                  <img
+                    :src="jobData.template_final_url"
+                    alt="未合併 template_final.svg"
+                    class="max-w-full max-h-full object-contain"
+                  />
+                </div>
+                <p class="text-[10px] text-ink-muted mt-1.5 px-0.5 leading-[1.5]">
+                  保留所有原色塊。按「放棄這次建議」可保持這個版本。
+                </p>
+              </Card>
+            </div>
+            <div class="space-y-1">
+              <div class="flex items-center gap-2 px-1">
+                <Sparkles :size="13" :stroke-width="1.5" class="text-accent" />
+                <span class="text-[12px] font-medium text-ink-strong">合併後預覽（套用建議）</span>
+              </div>
+              <Card class="!p-2">
+                <div class="aspect-square rounded-[var(--radius-xs)] border border-accent/40 bg-paper-canvas overflow-auto flex items-center justify-center">
+                  <img
+                    :src="jobData.template_final_merged_preview_url"
+                    alt="合併版 template_final_merged_preview.svg"
+                    class="max-w-full max-h-full object-contain"
+                  />
+                </div>
+                <p class="text-[10px] text-ink-muted mt-1.5 px-0.5 leading-[1.5]">
+                  小色塊已合進鄰居。按「確認合併」會把「最新版」變成這個樣子。
+                </p>
+              </Card>
+            </div>
           </div>
           <ul class="mt-2 text-[12px] space-y-1 max-h-[200px] overflow-y-auto pr-1">
             <li

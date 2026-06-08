@@ -132,6 +132,9 @@ class JobDetailResponse(BaseModel):
     # finalize 產生的「自動合併建議」清單；admin 確認 / 拒絕後清空
     # 結構：[{tiny_template_id, target_template_id, tiny_area}, ...]
     pending_auto_merges: list | None = None
+    # 「合併建議套用後」SVG preview — 跟 pending_auto_merges 同生命週期：
+    # finalize 偵測到 tiny merge 時兩者一起寫；confirm/reject 一起清。
+    template_final_merged_preview_url: str | None = None
     created_at: datetime
     approved_at: datetime | None
 
@@ -174,6 +177,11 @@ class JobDetailResponse(BaseModel):
     @field_validator("original_filled_template_final_url", mode="before")
     @classmethod
     def _convert_orig_filled_final(cls, v: Any) -> Any:
+        return _resolve_filled_url(v)
+
+    @field_validator("template_final_merged_preview_url", mode="before")
+    @classmethod
+    def _convert_template_final_merged_preview(cls, v: Any) -> Any:
         return _resolve_filled_url(v)
 
 
