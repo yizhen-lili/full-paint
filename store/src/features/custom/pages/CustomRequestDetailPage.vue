@@ -12,6 +12,8 @@ import {
   usePostCustomMessageMutation,
   useUpdateCustomPhotoMutation,
 } from '../queries'
+import { useCancelOrderMutation } from '@/features/orders/queries'
+import type { ApiError } from '@/features/orders/api'
 import { useCustomRequestSse } from '../composables/useCustomRequestSse'
 import { usePendingFormStorage } from '../composables/usePendingFormStorage'
 import { uploadCustomPhoto } from '../upload'
@@ -289,6 +291,36 @@ function goToQuote() {
   )
 }
 
+// ── 取消訂單（quote_confirmed + linked_order_status=pending_payment 才顯示）─
+// 訂單詳情頁有同款按鈕，但 user 在客製頁時不會跑去訂單頁找；這裡做就近入口。
+// 後端 POST /orders/{id}/cancel 既有：guard 為 order.status == pending_payment、
+// 會自動回補庫存 + 釋放優惠券 + 通知 admin（既有 E24 邏輯）。
+const linkedOrderId = computed(() => detail.value?.order_id ?? '')
+const cancelOrderMut = useCancelOrderMutation(linkedOrderId)
+const canCancelLinkedOrder = computed(
+  () => detail.value?.status === 'quote_confirmed'
+    && detail.value?.linked_order_status === 'pending_payment'
+    && !!detail.value?.order_id,
+)
+
+async function cancelLinkedOrder() {
+  if (!canCancelLinkedOrder.value) return
+  const ok = window.confirm(
+    '確定取消這筆客製訂單？\n\n'
+    + '取消後製作排程會釋放，若想重新下單需要重新申請報價。\n'
+    + '已扣的優惠券會自動回補可用狀態。',
+  )
+  if (!ok) return
+  try {
+    await cancelOrderMut.mutateAsync('客戶於客製申請頁取消')
+    // useCancelOrderMutation 只 invalidate orders query；客製 detail query
+    // 不在它的 onSuccess 內，要手動觸發 refresh 讓 banner + composer 更新
+    queryClient.invalidateQueries({ queryKey: customQueryKeys.detail(requestId.value) })
+  } catch (e) {
+    alert((e as ApiError).detail || '取消失敗，請稍後再試')
+  }
+}
+
 // 對話開關規則（2026-06-04 user 確認）：
 // - 報價階段 → 開
 // - quote_rejected / quote_expired → 關（沒下單就結束了）
@@ -376,14 +408,27 @@ const closedHint = computed<string>(() => {
           <h3 class="banner-title">{{ banner.title }}</h3>
           <p v-if="banner.body" class="banner-body">{{ banner.body }}</p>
         </div>
-        <button
-          v-if="banner.ctaLabel && banner.ctaTo"
-          type="button"
-          class="banner-cta"
-          @click="banner.ctaTo"
-        >
-          {{ banner.ctaLabel }} →
-        </button>
+        <div class="banner-actions">
+          <button
+            v-if="banner.ctaLabel && banner.ctaTo"
+            type="button"
+            class="banner-cta"
+            @click="banner.ctaTo"
+          >
+            {{ banner.ctaLabel }} →
+          </button>
+          <!-- quote_confirmed + 未付款才提供取消入口；付款後到訂單頁走退款流程 -->
+          <button
+            v-if="canCancelLinkedOrder"
+            type="button"
+            class="banner-cta-secondary"
+            :disabled="cancelOrderMut.isPending.value"
+            @click="cancelLinkedOrder"
+          >
+            <Loader2 v-if="cancelOrderMut.isPending.value" :size="14" class="spin" />
+            <span>{{ cancelOrderMut.isPending.value ? '取消中…' : '取消訂單' }}</span>
+          </button>
+        </div>
       </aside>
 
       <!-- ── 申請快照（照片 + 規格）─────────────────────────────────── -->
@@ -695,6 +740,12 @@ const closedHint = computed<string>(() => {
   margin: 0;
   color: var(--color-ink-default);
 }
+.banner-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 .banner-cta {
   display: inline-flex;
   align-items: center;
@@ -711,6 +762,26 @@ const closedHint = computed<string>(() => {
   transition: background 150ms;
 }
 .banner-cta:hover { background: var(--color-accent-deep); }
+.banner-cta-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border: 1px solid var(--color-ink-strong);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-ink-strong);
+  font-family: var(--font-cn-serif);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 150ms, color 150ms, border-color 150ms;
+}
+.banner-cta-secondary:hover {
+  background: var(--color-ink-strong);
+  color: var(--color-paper-canvas);
+}
+.banner-cta-secondary:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .banner-revision {
   background: var(--color-paper-surface);
