@@ -714,6 +714,16 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
             # finalize 結果是否已過期（過期 → 顯示新算法版 + 提示重新 finalize）
             from datetime import UTC, datetime  # noqa: PLC0415
             job.post_processed_at = datetime.now(UTC)
+
+            # 部分 op 被跳過（polygon_id 找不到）— log 出來方便 admin debug，
+            # 但不會中斷整批；其他 op 仍正常套用、svg_url + post_processed_at 都寫入。
+            skipped = result.get("skipped_ops", [])
+            if skipped:
+                logger.warning(
+                    "post_process %s: %d ops skipped (polygon_id 不在 SVG 中)；"
+                    "頭 3 筆 %s",
+                    job_id, len(skipped), skipped[:3],
+                )
             if job.notes and _PHASE2B_NOTE_PREFIX in job.notes:
                 cleaned = "\n".join(
                     line for line in job.notes.split("\n")
@@ -817,6 +827,7 @@ def _run_post_process_engine_and_upload(
             "snapped_rgb_url": snapped_url,
             "palette_data": engine_result["palette_data"],
             "num_colors_used": engine_result["num_colors_used"],
+            "skipped_ops": engine_result.get("skipped_ops", []),
         }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

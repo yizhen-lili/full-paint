@@ -19,6 +19,7 @@ from production.engine import (
     _extract_polygon_points,
     _polygon_to_mask,
     apply_region_replacement,
+    apply_region_replacements,
     get_polygon_rgb,
 )
 from production.models import (
@@ -251,20 +252,119 @@ def test_apply_region_replacement_does_not_pollute_neighbors():
         assert (0, 0, 255) in rgbs, f"藍色不見了：{rgbs}"
 
 
-def test_apply_region_replacement_unknown_polygon_id_raises():
+def test_apply_region_replacement_unknown_polygon_id_skips_not_raises():
+    """單一 op + 找不到的 polygon → 不應 raise（避免外層 batch fail），改 skip。
+
+    2026-06-08 修正：此前會 raise ValueError 中斷整批；現改成 skip + 紀錄。
+    """
     with tempfile.TemporaryDirectory() as tmp:
         img_path = os.path.join(tmp, "snap.png")
         svg = os.path.join(tmp, "t.svg")
         _write_two_color_image(img_path, 80, 80)
         _write_test_svg(svg, [("r0", [(0, 0), (10, 0), (5, 5)])], 80, 80)
-        with pytest.raises(ValueError, match="找不到 polygon"):
-            apply_region_replacement(
-                img_path, svg, os.path.join(tmp, "out"),
-                polygon_ids=["r99"],
-                tgt_rgb=(0, 0, 255),
-                canvas_w_cm=30, canvas_h_cm=30,
-                min_brush_diam_cm=0.5, min_ratio_multiplier=0.3,
-            )
+        result = apply_region_replacement(
+            img_path, svg, os.path.join(tmp, "out"),
+            polygon_ids=["r99"],
+            tgt_rgb=(0, 0, 255),
+            canvas_w_cm=30, canvas_h_cm=30,
+            min_brush_diam_cm=0.5, min_ratio_multiplier=0.3,
+        )
+        # 仍正常產出 SVG，但記下 skipped
+        assert os.path.exists(result["svg_path"])
+        assert len(result["skipped_ops"]) == 1
+        assert result["skipped_ops"][0]["polygon_ids"] == ["r99"]
+
+
+# ── apply_region_replacements (batch): skip 行為測試 ─────────────────────
+
+
+def test_apply_region_replacements_skips_op_with_unknown_polygon():
+    """batch 內某個 op 的 polygon_ids 全找不到 → 該 op 被 skip 記下、其他 op 仍正常套用。
+
+    這修了 worker log 上「op #N polygon mask 為空」會讓整批 fail 的 bug。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        snapped = os.path.join(tmp, "snap.png")
+        svg = os.path.join(tmp, "t.svg")
+        _write_two_color_image(snapped, 80, 80)
+        _write_test_svg(svg, [
+            ("r0", [(0, 0), (40, 0), (40, 40), (0, 40)]),
+        ], 80, 80)
+
+        result = apply_region_replacements(
+            snapped, svg, os.path.join(tmp, "out"),
+            ops=[
+                {"polygon_ids": ["r0"], "tgt_rgb": (0, 0, 255)},    # OK
+                {"polygon_ids": ["r999"], "tgt_rgb": (255, 0, 0)},  # missing
+            ],
+            canvas_w_cm=30, canvas_h_cm=30,
+            min_brush_diam_cm=0.5, min_ratio_multiplier=0.3,
+        )
+        # 仍正常產出
+        assert os.path.exists(result["svg_path"])
+        assert os.path.exists(result["filled_path"])
+        # 第 2 個 op 被 skip
+        assert "skipped_ops" in result
+        assert len(result["skipped_ops"]) == 1
+        skipped = result["skipped_ops"][0]
+        assert skipped["idx"] == 1
+        assert skipped["polygon_ids"] == ["r999"]
+
+
+def test_apply_region_replacements_all_ops_skipped_still_returns():
+    """batch 全部 op 的 polygon 都找不到 → 仍 return 正常結果（等同 no-op）。
+
+    Worker 接到後仍會走正常 commit path、寫 svg_url + post_processed_at，避免
+    silent rollback 把整個 job 卡 failed 狀態。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        snapped = os.path.join(tmp, "snap.png")
+        svg = os.path.join(tmp, "t.svg")
+        _write_two_color_image(snapped, 80, 80)
+        _write_test_svg(svg, [
+            ("r0", [(0, 0), (40, 0), (40, 40), (0, 40)]),
+        ], 80, 80)
+
+        result = apply_region_replacements(
+            snapped, svg, os.path.join(tmp, "out"),
+            ops=[
+                {"polygon_ids": ["r99"], "tgt_rgb": (255, 0, 0)},
+                {"polygon_ids": ["r88"], "tgt_rgb": (0, 255, 0)},
+            ],
+            canvas_w_cm=30, canvas_h_cm=30,
+            min_brush_diam_cm=0.5, min_ratio_multiplier=0.3,
+        )
+        assert os.path.exists(result["svg_path"])
+        assert len(result["skipped_ops"]) == 2
+
+
+def test_apply_region_replacements_partial_polygon_missing_still_applies():
+    """單一 op 的 polygon_ids 部分找得到部分找不到 → 該 op 仍套用、只 union 找得到的 mask。
+
+    記下哪些 polygon_id missing 給 caller log。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        snapped = os.path.join(tmp, "snap.png")
+        svg = os.path.join(tmp, "t.svg")
+        _write_two_color_image(snapped, 80, 80)
+        _write_test_svg(svg, [
+            ("r0", [(0, 0), (20, 0), (20, 20), (0, 20)]),
+        ], 80, 80)
+
+        result = apply_region_replacements(
+            snapped, svg, os.path.join(tmp, "out"),
+            ops=[
+                {"polygon_ids": ["r0", "r99"], "tgt_rgb": (0, 0, 255)},
+            ],
+            canvas_w_cm=30, canvas_h_cm=30,
+            min_brush_diam_cm=0.5, min_ratio_multiplier=0.3,
+        )
+        assert os.path.exists(result["svg_path"])
+        # op 仍 partial 套用 → 也算 skip 紀錄裡（給 admin 看 missing list）
+        assert len(result["skipped_ops"]) == 1
+        skipped = result["skipped_ops"][0]
+        assert skipped["polygon_ids"] == ["r0", "r99"]
+        assert skipped.get("missing_polygon_ids") == ["r99"]
 
 
 # ── _resolve_post_process_op tests（要 SVG + snapped 真實檔）─────────────────

@@ -477,18 +477,38 @@ def apply_region_replacements(
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     img_h, img_w = img_rgb.shape[:2]
 
-    # 2. 按順序套用每個 op
+    # 2. 按順序套用每個 op；找不到的 polygon_id（被前面 op 合掉、或 batch 來源
+    #    過時）→ skip 該 op 並記錄，不要 raise 中斷整批。
+    skipped_ops: list[dict] = []
     for idx, op in enumerate(ops):
         polygon_ids = op["polygon_ids"]
         tgt_rgb = op["tgt_rgb"]
         union_mask = np.zeros((img_h, img_w), dtype=bool)
+        missing_pids: list[str] = []
         for pid in polygon_ids:
-            pts = _extract_polygon_points(svg_path, pid)
+            try:
+                pts = _extract_polygon_points(svg_path, pid)
+            except ValueError:
+                # polygon_id 不在當前 SVG（多半是被前面 op 合掉）→ 略過此 pid
+                missing_pids.append(pid)
+                continue
             union_mask = union_mask | _polygon_to_mask(pts, img_w, img_h)
         if not union_mask.any():
-            raise ValueError(
-                f"op #{idx} polygon mask 為空（polygon_ids={polygon_ids}）"
-            )
+            # 整個 op 沒有任何可套用的 polygon → skip op、記下、繼續下一個
+            skipped_ops.append({
+                "idx": idx,
+                "polygon_ids": polygon_ids,
+                "reason": "all polygons missing or mask empty",
+            })
+            continue
+        if missing_pids:
+            # 部分 polygon 找不到、但仍有可套用的 — 該 op 仍會套用 union 後的 mask
+            skipped_ops.append({
+                "idx": idx,
+                "polygon_ids": polygon_ids,
+                "reason": f"partial: {len(missing_pids)} of {len(polygon_ids)} polygons missing",
+                "missing_polygon_ids": missing_pids,
+            })
         img_rgb[union_mask] = np.array(tgt_rgb, dtype=np.uint8)
 
     # 3. 構造 PbnGen，餵改完的圖
@@ -532,6 +552,9 @@ def apply_region_replacements(
         "image_width": img_w,
         "image_height": img_h,
         "min_radius_px": round(min_radius_px, 3),
+        # 被略過的 ops（polygon_id 找不到等）— 讓 caller 看到「哪些操作沒生效」
+        # 不會中斷整批；caller 可 log warning 或顯示給 admin。
+        "skipped_ops": skipped_ops,
     }
 
 
