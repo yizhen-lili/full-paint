@@ -1,12 +1,12 @@
-# Railway 配置 — paint-web service（master 分支）
+# Railway 配置 — paint-worker service（deploy/worker 分支）
 #
-# paint-web Railway service 連 master 分支：
-#   Settings → Source → Branch = master
-#
-# paint-worker Railway service 連 deploy/worker 分支（railway.toml 不同：startCommand = start_worker.sh）：
+# paint-worker Railway service 連 deploy/worker 分支：
 #   Settings → Source → Branch = deploy/worker
 #
-# 兩分支只差 railway.toml 的 startCommand 一行，code 透過定期 git merge 同步。
+# paint-web Railway service 連 master 分支（railway.toml 不同：startCommand = start_web.sh）：
+#   Settings → Source → Branch = master
+#
+# 兩分支只差 railway.toml 的 startCommand 一行，同步走 reset --hard master + force push。
 
 [build]
 builder = "dockerfile"
@@ -14,7 +14,7 @@ dockerfilePath = "backend/Dockerfile"
 rootDirectory = "."
 
 [deploy]
-startCommand = "bash scripts/start_web.sh"
+startCommand = "bash scripts/start_worker.sh"
 
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
