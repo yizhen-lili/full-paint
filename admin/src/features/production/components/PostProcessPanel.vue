@@ -53,14 +53,26 @@ const props = withDefaults(
     /** 'merge_color' / 'eliminate_border' = 鎖單一模式（給 Dialog 兩按鈕用）
      *  null = 顯示模式切換 tab（給 mapping page 整合用） */
     typeFilter?: OperationType | null
+    /** SVG 對應的「模板版本時間戳」— 顯示給 admin 看「我現在編輯的是哪版」
+     *  通常傳 job.post_processed_at（沒做過 post-process 則 fallback 到 created_at） */
+    lastUpdatedAt?: string | null
   }>(),
-  { svgUrl: null, typeFilter: null },
+  { svgUrl: null, typeFilter: null, lastUpdatedAt: null },
 )
 
 const emit = defineEmits<{
   /** 全部 ops 一起送出（batch 端點） */
   confirmBatch: [payload: BatchOperation[]]
+  /** admin 按「手動重抓」→ 父層重 fetch svgUrl */
+  refresh: []
 }>()
+
+function fmtUpdatedAt(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 // ── 狀態 ────────────────────────────────────────────────────────────────────
 // 當前操作模式：typeFilter 鎖定時只能一個；null 時 admin 可切換
@@ -437,12 +449,29 @@ function opDisplay(op: BatchOperation): {
       <span>{{ warn }}</span>
     </p>
 
+    <!-- 編輯面板說明：避免 admin 跟「實體色版最終模板」線圖搞混 -->
+    <p class="text-[11px] text-ink-muted leading-relaxed">
+      🔧 這是 <strong class="text-ink-default">編輯用工作面板</strong>，數字是演算法原始的
+      <code class="px-1 py-0.5 bg-paper-subtle rounded font-mono">template_id</code>（每個演算法色塊都一個）。
+      編輯完回上方「實體色版最終模板」再按「完成顏色對應」，系統會把對應同物理色的多個 template_id
+      合併成 <strong class="text-ink-default">output_label</strong>（客戶印出來看到的版本）。
+    </p>
+
     <!-- SVG 預覽（template.svg inline，可點 polygon） -->
     <div v-if="svgUrl">
       <div class="flex items-center justify-between text-[12px] text-ink-muted mb-1">
         <div class="flex items-center gap-1">
           <Crosshair :size="12" :stroke-width="1.5" />
           <span>點選 template 上的格子</span>
+          <span v-if="lastUpdatedAt" class="ml-3 text-ink-muted">
+            · 目前版本 {{ fmtUpdatedAt(lastUpdatedAt) }}
+          </span>
+          <button
+            type="button"
+            class="ml-2 text-accent underline hover:text-accent-hover"
+            title="重新從伺服器抓最新模板 SVG"
+            @click="emit('refresh')"
+          >手動重抓</button>
         </div>
         <div class="flex items-center gap-1">
           <button

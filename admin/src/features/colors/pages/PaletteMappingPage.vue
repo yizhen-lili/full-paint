@@ -152,6 +152,15 @@ const filledTemplateUrl = computed(() => {
     ?? null
 })
 
+// finalize 後合併編號 (output_label) 的「不重複數量」— 給 helper text 顯示「1 ~ N 號」
+const uniqueOutputLabelCount = computed<number>(() => {
+  const labels = new Set<number>()
+  for (const m of mappings.value) {
+    if (m.output_label != null) labels.add(m.output_label)
+  }
+  return labels.size
+})
+
 function onCanvasPick(templateId: number) {
   const m = mappings.value.find((x) => x.template_id === templateId)
   if (m) openPicker(m)
@@ -315,6 +324,21 @@ watch(
   { immediate: true },
 )
 
+// 保險：每次 post_processed_at 變動（必然有新值）→ 重抓 SVG + invalidate mappings
+// 既有 status watch 可能因 polling 太快、completed→processing→completed 中間時刻
+// 被 skip 而漏 fire；改用時間戳更可靠。
+watch(
+  () => jobData.value?.post_processed_at,
+  (newVal, oldVal) => {
+    if (newVal && newVal !== oldVal && jobData.value?.status === 'completed') {
+      fetchSvgUrl()
+      if (jobId.value) {
+        qc.invalidateQueries({ queryKey: PM_KEYS.mappings(jobId.value) })
+      }
+    }
+  },
+)
+
 async function onPostProcessSubmit(operations: BatchOperation[]) {
   apiError.value = null
   try {
@@ -460,7 +484,10 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
     <!-- 左：canvas 預覽 -->
     <Card>
-      <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-3">即時預覽</h2>
+      <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-1">即時預覽</h2>
+      <p class="text-[11px] text-ink-muted mb-3 leading-relaxed">
+        填色預覽 — finalize 完顯示「實體色版」（同色合併），未 finalize 或模板剛更新顯示「演算法量化版」。
+      </p>
       <PalettePreviewCanvas
         :image-url="filledTemplateUrl"
         :mappings="mappings"
@@ -555,6 +582,15 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
       </span>
     </button>
 
+    <p v-if="finalSvgExpanded" class="text-[12px] text-ink-muted px-1 mt-3 leading-relaxed">
+      👤 這是 <strong class="text-ink-default">客戶印出來會看到的線圖</strong>。
+      數字是「<strong class="text-ink-default">合併後的物理色編號</strong>」（共 {{ uniqueOutputLabelCount }} 號）—
+      同一個物理色的所有區塊都標相同數字，方便客戶按色號上色。
+      <br />
+      跟下方「合併色塊 / 消除邊界線」面板顯示的<strong>演算法原始編號 template_id</strong>
+      （數量會多很多）是不同概念。
+    </p>
+
     <div
       v-if="finalSvgExpanded"
       class="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4"
@@ -575,7 +611,7 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
         <template v-if="jobData.original_template_final_url">
           <Card>
             <div class="flex items-center justify-between mb-2">
-              <span class="text-[12px] text-ink-muted">線圖（合併編號）</span>
+              <span class="text-[12px] text-ink-muted">線圖（output_label 合併編號 · 客戶印出來看到的）</span>
               <a
                 :href="jobData.original_template_final_url"
                 target="_blank" rel="noopener"
@@ -625,7 +661,7 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
 
         <Card>
           <div class="flex items-center justify-between mb-2">
-            <span class="text-[12px] text-ink-muted">線圖（合併編號）</span>
+            <span class="text-[12px] text-ink-muted">線圖（output_label 合併編號 · 客戶印出來看到的）</span>
             <a
               :href="jobData.template_final_url"
               target="_blank" rel="noopener"
@@ -792,7 +828,9 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
         :svg-url="svgUrl"
         :pending="batchPostProcessMut.isPending.value"
         :type-filter="null"
+        :last-updated-at="jobData.post_processed_at ?? jobData.created_at"
         @confirm-batch="onPostProcessSubmit"
+        @refresh="fetchSvgUrl"
       />
     </div>
   </section>
