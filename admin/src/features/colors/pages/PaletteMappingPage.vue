@@ -128,13 +128,29 @@ const mappings = computed(() => data.value?.mappings ?? [])
 
 // 抓 job 細節給 canvas 預覽 + finalize 後的最終模板 preview 用
 const { data: jobData } = useJobQuery(jobId)
+
+// finalize 之後若又做過 post-process（按「更新模板」），filled_template_final_url
+// 是舊模板的快照，admin 看到會誤以為自己沒更新成功。判斷方式：post-process 完成
+// 時間 > finalize 時間 → final 過期 → 改顯示算法量化版 filled_template_url（新模板）
+const isFinalStale = computed<boolean>(() => {
+  const finAt = jobData.value?.finalized_at
+  const ppAt = jobData.value?.post_processed_at
+  if (!finAt) return false      // 從未 finalize → 沒 stale 問題
+  if (!ppAt) return false       // 從未 post-process → final 仍 fresh
+  return new Date(ppAt) > new Date(finAt)
+})
+
 // post-finalize 優先顯示「實體色版」(filled_template_final.png：同色合併、實物色 RGB)
+// 但 final 過期時（post-process 比 finalize 新）必須顯示新算法版，避免 admin 看舊圖
 // fallback 到演算法版 filled_template_url（未 finalize / 生成失敗時）
-const filledTemplateUrl = computed(() =>
-  jobData.value?.filled_template_final_url
+const filledTemplateUrl = computed(() => {
+  if (isFinalStale.value) {
+    return jobData.value?.filled_template_url ?? null
+  }
+  return jobData.value?.filled_template_final_url
     ?? jobData.value?.filled_template_url
-    ?? null,
-)
+    ?? null
+})
 
 function onCanvasPick(templateId: number) {
   const m = mappings.value.find((x) => x.template_id === templateId)
@@ -430,7 +446,18 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
     <p class="text-[13px] text-ink-muted">此 job 尚無調色盤資料（製作未完成？）</p>
   </Card>
 
-  <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+  <template v-else>
+    <!-- 模板更新後實體色版過期警告：admin 在 finalize 之後又做 post-process，
+         目前 canvas 顯示的是新算法版（最新模板），但實體色版還是舊模板的 → 提醒重新 finalize -->
+    <div
+      v-if="isFinalStale"
+      class="mb-4 rounded-md border border-aux-rice-mid bg-aux-rice-light/40 p-3 text-[13px] text-ink-strong"
+    >
+      ⚠️ 模板已重新製作，目前顯示的是「演算法量化版」（最新模板）。
+      原本的實體色版已不對應新模板，請按下方「完成顏色對應」重新 finalize 取得新的實體色版。
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
     <!-- 左：canvas 預覽 -->
     <Card>
       <h2 class="font-display text-ink-strong text-[18px] leading-[26px] mb-3">即時預覽</h2>
@@ -503,7 +530,8 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
         </div>
       </div>
     </Card>
-  </div>
+    </div>
+  </template>
 
   <!-- 實體色版最終模板（finalize 後才出現；點開內聯看合併編號 + 物理色填色）-->
   <section

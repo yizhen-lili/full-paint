@@ -463,6 +463,8 @@ def _patch_post_process_engine(extra_patches: dict | None = None):
 @pytest.mark.asyncio
 async def test_run_post_process_merge_color_success(db):
     job = await _seed_completed_job(db)
+    # 跑前確認 seed 沒有 post_processed_at（初次 production 不算 post-process）
+    assert job.post_processed_at is None
 
     with _patch_post_process_engine() as _, \
          patch("production.tasks._upload_file") as mock_upload:
@@ -485,6 +487,48 @@ async def test_run_post_process_merge_color_success(db):
     assert refreshed.num_colors_used == 2
     assert len(refreshed.palette_json) == 2
     assert refreshed.svg_url.startswith("gs://")
+    # post-process 成功後必須打時間戳，前端用此判定 finalize 結果是否已過期
+    assert refreshed.post_processed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_post_process_post_processed_at_newer_than_finalized_at(db):
+    """先 finalize、再 post-process → post_processed_at 應更新到比 finalized_at 新。
+
+    前端 isFinalStale 條件：post_processed_at > finalized_at → 顯示新算法版 + 警告。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    job = await _seed_completed_job(db)
+    # 模擬上次 finalize 是 1 小時前的事
+    job.finalized_at = datetime.now(UTC) - timedelta(hours=1)
+    job.filled_template_final_url = "gs://test-bucket/x/filled_final_OLD.png"
+    await db.commit()
+    await db.refresh(job)
+    finalized_at_before = job.finalized_at
+    assert finalized_at_before is not None
+
+    with _patch_post_process_engine() as _, \
+         patch("production.tasks._upload_file") as mock_upload:
+        mock_upload.side_effect = [
+            "gs://test-bucket/x/template_new.svg",
+            "gs://test-bucket/x/filled_new.png",
+            "gs://test-bucket/x/snapped_new.png",
+        ]
+        await _run_post_process_async(
+            str(job.id),
+            {"polygon_id": "r5", "target_template_id": 2},
+        )
+
+    refreshed = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job.id)
+    )).scalar_one()
+    await db.refresh(refreshed)
+
+    # finalize 時間沒變，post_processed_at 是新打的、必然 > finalized_at
+    assert refreshed.finalized_at == finalized_at_before
+    assert refreshed.post_processed_at is not None
+    assert refreshed.post_processed_at > refreshed.finalized_at
 
 
 @pytest.mark.asyncio

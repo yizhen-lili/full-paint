@@ -104,6 +104,11 @@ class ProductionJob(Base):
     # 是演算法量化色預覽）。
     filled_template_final_url = Column(String, nullable=True)
     finalized_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # post-process（admin 在 palette 頁按「更新模板」）最後一次成功完成的時間。
+    # 與 finalized_at 比對：若 post_processed_at > finalized_at → finalize 結果已過期，
+    # admin UI 需顯示「演算法量化版（新模板）」而非「實體色版（舊模板的）」。
+    # NULL = 從未 post-process 過（首次 production 完成不算 post-process）。
+    post_processed_at = Column(TIMESTAMP(timezone=True), nullable=True)
     # 「原始版」備份（第一次成功 finalize 後被搬到 archive/ 路徑保留）。
     # 之後 admin 再按完成對應、覆蓋 latest 的同時，原始版欄位不被觸碰 — 給 admin
     # 比對「我這次調得比上次好還是更糟」。NULL = 從未 archive 過。

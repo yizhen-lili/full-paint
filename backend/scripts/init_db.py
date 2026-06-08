@@ -152,6 +152,12 @@ async def init_schema() -> None:
                 "ALTER TABLE production_jobs "
                 "ADD COLUMN IF NOT EXISTS original_finalized_at TIMESTAMP WITH TIME ZONE"
             ))
+            # post-process 完成時間（admin 在 palette 頁按「更新模板」）—
+            # > finalized_at 時表示「先 finalize 後改模板、實體色版已過期」，UI 要顯示新算法版
+            await conn.execute(text(
+                "ALTER TABLE production_jobs "
+                "ADD COLUMN IF NOT EXISTS post_processed_at TIMESTAMP WITH TIME ZONE"
+            ))
             # 待確認的自動合併建議（svg_consolidate 偵測到微小色塊建議 → admin 確認後寫 DB）
             await conn.execute(text(
                 "ALTER TABLE production_jobs "

@@ -710,6 +710,10 @@ async def _run_post_process_async(job_id: str, params: dict) -> None:
             job.palette_json = result["palette_data"]
             job.num_colors_used = result["num_colors_used"]
             job.status = JobStatusEnum.completed
+            # 標記 post-process 完成時間 — admin UI 用此跟 finalized_at 比對判斷
+            # finalize 結果是否已過期（過期 → 顯示新算法版 + 提示重新 finalize）
+            from datetime import UTC, datetime  # noqa: PLC0415
+            job.post_processed_at = datetime.now(UTC)
             if job.notes and _PHASE2B_NOTE_PREFIX in job.notes:
                 cleaned = "\n".join(
                     line for line in job.notes.split("\n")

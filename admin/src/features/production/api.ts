@@ -118,6 +118,9 @@ export interface JobDetail extends JobListItem {
    *  vs filled_template_url 是演算法量化色，這版是真實塗色後效果 */
   filled_template_final_url: string | null
   finalized_at: string | null
+  /** post-process（admin 在 palette 頁按「更新模板」）最後一次完成的時間。
+   *  > finalized_at 表示「先 finalize 後改模板、實體色版已過期」，UI 顯示新算法版 + 提示重新 finalize。 */
+  post_processed_at: string | null
   /** 「原始版」備份：第二次以上 finalize 時，把上次的 latest 搬到 archive/ 路徑保留。
    *  NULL = 從未 archive 過（第一次 finalize / 從未 finalize）。
    *  給 admin 比對「我這次調得比較好還是變差」用，不能還原。 */

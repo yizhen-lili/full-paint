@@ -121,6 +121,8 @@ class JobDetailResponse(BaseModel):
     palette_final_url: str | None = None
     filled_template_final_url: str | None = None
     finalized_at: datetime | None = None
+    # post-process 完成時間（與 finalized_at 比對判定 final 是否已過期）
+    post_processed_at: datetime | None = None
     # 「原始版」備份（第二次以上 finalize 時把當前 latest 搬到 archive/ 留著）
     # NULL = 從未 archive 過（第一次 finalize / 從未 finalize）
     original_template_final_url: str | None = None
