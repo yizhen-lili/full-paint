@@ -58,6 +58,19 @@ async def _make_order(db, user, *, status=OrderStatusEnum.pending_payment,
     return order
 
 
+async def test_checkout_csp_allows_inline_submit_and_ecpay_form_action(client, db):
+    """checkout 頁需要 inline script 自動提交 + form-action 到 ECpay 金流域名，
+    CSP 不可落到 default-src 'none'（否則表單送不出去，卡在中轉頁）。"""
+    user = await _make_customer_and_login(client, db)
+    order = await _make_order(db, user)
+
+    res = await client.get(f"/api/v1/payment/ecpay/checkout/{order.id}")
+    csp = res.headers.get("content-security-policy", "")
+    assert "'unsafe-inline'" in csp
+    assert "payment-stage.ecpay.com.tw" in csp or "payment.ecpay.com.tw" in csp
+    assert "default-src 'none'" not in csp
+
+
 async def test_checkout_dry_run_creates_transaction(client, db):
     user = await _make_customer_and_login(client, db)
     order = await _make_order(db, user)

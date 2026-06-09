@@ -18,22 +18,25 @@ from collections.abc import Awaitable, Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-
 # Swagger / ReDoc 需要的路徑 — CSP 放寬
 _DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
 
-# ECpay 物流相關 HTML 端點 — 需要 inline script 自動提交表單 + form-action 到 ECpay 域名
-# /cvs-map：產 auto-submit form POST 到 ECpay 電子地圖
-# /cvs-callback：ECpay 選店完成 POST 回來，inline script 用 postMessage 把資料傳給 opener window
+# ECpay 相關 HTML 端點 — 需要 inline script 自動提交表單 + form-action 到 ECpay 域名
+# 物流 /cvs-map：產 auto-submit form POST 到 ECpay 電子地圖
+# 物流 /cvs-callback：ECpay 選店完成 POST 回來，inline script 用 postMessage 傳給 opener
+# 金流 /payment/ecpay/checkout：產 auto-submit form POST 到 ECpay AioCheckOut 付款頁
 _ECPAY_HTML_PATHS = (
     "/api/v1/logistics/cvs-map",
     "/api/v1/logistics/cvs-callback",
+    "/api/v1/payment/ecpay/checkout",
 )
 
-# ECpay 物流環境的兩個 endpoint 域名（form 會 POST 到這兩個之一）
+# ECpay 各服務 endpoint 域名（form 會 POST 到其中之一）— 物流 + 金流
 _ECPAY_LOGISTICS_ORIGINS = (
     "https://logistics.ecpay.com.tw",
     "https://logistics-stage.ecpay.com.tw",
+    "https://payment.ecpay.com.tw",
+    "https://payment-stage.ecpay.com.tw",
 )
 
 
