@@ -200,6 +200,11 @@ def build_aio_checkout_params(
 ATM_CODE_ISSUED_RTN_CODE = 2
 CVS_CODE_ISSUED_RTN_CODE = 10100073
 
+# 超商代碼/條碼為「稍後付款」，取號後把訂單付款期限延長給顧客時間去超商繳費。
+# 用同一個系統設定 payment_absolute_deadline_hours（預設 48h = 2 天）作單一真實來源，
+# 避免硬編碼與訂單建立時的絕對上限政策漂移。設定缺值時 fallback 48h。
+DEFAULT_PAYMENT_DEADLINE_HOURS = 48
+
 
 def is_payment_success(rtn_code: int | None) -> bool:
     """ReturnURL：RtnCode == 1 才是真正付款成功（唯一可標 paid 的依據）。"""
@@ -356,7 +361,8 @@ async def process_return_webhook(db: AsyncSession, params: dict[str, str]) -> st
         user = (await db.execute(
             select(User).where(User.id == order.user_id)
         )).scalar_one()
-        await _apply_paid_side_effects(db, order, user)
+        # ECpay 自動付款：發 admin 通知（非 admin 手動確認，需主動告知備貨）
+        await _apply_paid_side_effects(db, order, user, notify_admin=True)
         await db.commit()
         _publish_order_status_changed(order)
     else:
@@ -388,10 +394,10 @@ async def process_payment_info_webhook(db: AsyncSession, params: dict[str, str])
 
     取號成功 ≠ 付款成功（RtnCode 為 2 / 10100073，不是 1）。**絕不標 paid。**
     存虛擬帳號 / 繳費代碼 + 期限，transaction → awaiting_atm，訂單維持 pending_payment，
-    payment_deadline 對齊 min(現有, ExpireDate)，寄帳號 email。回 "1|OK"。
+    payment_deadline 延長到 created_at + 絕對上限（只延長不縮短），寄帳號 email。回 "1|OK"。
     """
     from auth.models import User
-    from orders.service import _send_email
+    from orders.service import _send_email, get_system_setting
 
     if not verify_check_mac_value(params):
         logger.warning("[ecpay-payment-info] CheckMacValue 驗證失敗")
@@ -437,13 +443,20 @@ async def process_payment_info_webhook(db: AsyncSession, params: dict[str, str])
     ):
         txn.status = PaymentTransactionStatusEnum.awaiting_atm
 
-    # 對齊訂單付款期限：取 min（不延長，維持我方庫存保留政策；逾期未付走 Celery + 孤兒款項處理）
+    # 超商「稍後付款」：把訂單付款期限延長到 created_at + 絕對上限
+    # （payment_absolute_deadline_hours，預設 48h），給顧客時間去超商繳費。只延長不縮短。
+    # 期限內未繳 → Celery 自動逾期取消。用同一系統設定作單一真實來源，避免政策漂移。
     order = (await db.execute(
         select(Order).where(Order.id == txn.order_id).with_for_update()
     )).scalar_one_or_none()
-    if order is not None and expire is not None and order.payment_deadline:
-        if expire < order.payment_deadline:
-            order.payment_deadline = expire
+    if order is not None and order.created_at:
+        deadline_hours = int(
+            await get_system_setting(db, "payment_absolute_deadline_hours")
+            or str(DEFAULT_PAYMENT_DEADLINE_HOURS)
+        )
+        extended = order.created_at + timedelta(hours=deadline_hours)
+        if order.payment_deadline is None or order.payment_deadline < extended:
+            order.payment_deadline = extended
 
     await db.commit()
 

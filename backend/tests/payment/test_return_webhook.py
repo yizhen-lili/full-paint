@@ -204,7 +204,23 @@ async def test_custom_order_notifies_admin(db):
     notif = (await db.execute(
         select(AdminNotification).where(AdminNotification.reference_id == order.id)
     )).scalars().all()
+    # 客製訂單發 custom_order_paid（不重複發 order_paid）
     assert any(n.type == "custom_order_paid" for n in notif)
+    assert not any(n.type == "order_paid" for n in notif)
+
+
+async def test_regular_order_ecpay_paid_notifies_admin(db):
+    """一般訂單經 ECpay 自動付款 → 發 order_paid admin 通知（提醒備貨出貨）。"""
+    from notifications.models import AdminNotification
+    _, order, txn = await _make_order_with_txn(db, custom=False)
+    params = _signed_return_params(txn)
+
+    await service.process_return_webhook(db, params)
+
+    notif = (await db.execute(
+        select(AdminNotification).where(AdminNotification.reference_id == order.id)
+    )).scalars().all()
+    assert any(n.type == "order_paid" and n.requires_action for n in notif)
 
 
 async def test_race_guard_already_expired_notifies_admin(db):

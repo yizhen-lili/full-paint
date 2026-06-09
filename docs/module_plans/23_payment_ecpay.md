@@ -275,7 +275,9 @@ E23（逾期）/ E24 / E25 對 ecpay 訂單行為不變，僅逾期時順帶把 
 
 ### 已決（階段 2 實作時敲定）
 - ✅ **取號成功 RtnCode**：ATM=2、CVS/BARCODE=10100073（已驗證 ECpay 文件 /16557/，寫成常數 `ATM_CODE_ISSUED_RTN_CODE` / `CVS_CODE_ISSUED_RTN_CODE`）。
-- ✅ **ExpireDate 政策**：不送自訂 ExpireDate/StoreExpireDate（用 ECpay 預設）；取號 webhook 收到 ExpireDate 後把 `order.payment_deadline = min(現有, ExpireDate)`——維持我方庫存保留政策（24-48h），不為未付款訂單長期保留庫存。逾期未繳走 Celery 取消 + awaiting_atm→expired；逾期後才繳費＝孤兒款項，發 admin 通知人工退款。
+- ✅ **ExpireDate 政策（2026-06-09 #2 更新）**：不送自訂 ExpireDate/StoreExpireDate（CVS 單位分鐘/BARCODE 單位天，無單一安全值）。取號 webhook 收到後把 `order.payment_deadline = created_at + 2 天`（`CVS_PAYMENT_DEADLINE_DAYS=2`，= 既有 48h 絕對上限），給顧客時間去超商繳費。2 天未繳走 Celery 逾期取消（逾期 email + 回補庫存 + awaiting_atm→expired）→ 顧客需重新下單。殘留邊界：ECpay 代碼預設效期可能 > 2 天，若 2 天後才繳＝孤兒款項，發 `ecpay_paid_after_close` admin 通知人工退款。
+- ✅ **付款方式限定（2026-06-09 #2）**：ECpay 只開 信用卡/ApplePay/超商代碼/條碼；IgnorePayment 一律排除 ATM/WebATM，>2萬再加 CVS/BARCODE。
+- ✅ **一般訂單付款通知（2026-06-09 #2）**：一般訂單經 ECpay 自動付款發 admin `order_paid` 通知（`_apply_paid_side_effects(notify_admin=True)`）；手動確認不發。
 
 ### 仍待確認 / 實作時查證
 3. **電子發票**：本次**不做**，列階段 4。

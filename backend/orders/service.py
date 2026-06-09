@@ -1504,7 +1504,7 @@ _VALID_STATUS_TRANSITIONS = {
 
 
 async def _apply_paid_side_effects(
-    db: AsyncSession, order: Order, user: User
+    db: AsyncSession, order: Order, user: User, *, notify_admin: bool = False
 ) -> None:
     """訂單轉為 paid 的共用副作用（EVENT_MATRIX E21）。
 
@@ -1512,6 +1512,9 @@ async def _apply_paid_side_effects(
     都呼叫此函數，確保兩條路徑副作用完全一致：設 status=paid + paid_at、為每個
     order_item 建 production_progress、客製訂單發 custom_order_paid 通知、寄付款
     確認 email。
+
+    notify_admin=True（ECpay 自動付款路徑）：因為不是 admin 手動確認，需主動發 admin
+    通知讓他知道有訂單已付款待備貨（手動確認路徑 admin 本人操作，預設不重複發）。
 
     呼叫端負責：前置 guard（order.status == pending_payment）、commit、SSE 發布。
     """
@@ -1531,6 +1534,16 @@ async def _apply_paid_side_effects(
             db,
             type="custom_order_paid",
             message=f"客製訂單 {order.order_number} 已付款，請進入備貨流程",
+            reference_type="order",
+            reference_id=order.id,
+            requires_action=True,
+        )
+    elif notify_admin:
+        # 一般訂單經 ECpay 自動付款 → 主動通知 admin 備貨出貨（手動確認路徑不發，避免自己通知自己）
+        await create_notification(
+            db,
+            type="order_paid",
+            message=f"訂單 {order.order_number} 已線上付款，請備貨出貨",
             reference_type="order",
             reference_id=order.id,
             requires_action=True,

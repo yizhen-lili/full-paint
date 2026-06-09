@@ -124,24 +124,43 @@ async def test_cvs_code_issued_stores_payment_no(db):
     assert txn_r.payment_no == "LLL123456789"
 
 
-async def test_deadline_aligned_to_earlier_expire(db):
-    # 訂單付款期限 5 天後；ExpireDate 設明天 → payment_deadline 應縮到 ExpireDate
-    _, order, txn = await _make_order_with_txn(db, deadline_hours=120)
-    tomorrow = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y/%m/%d")
+async def test_deadline_extended_to_2_days(db):
+    """超商取號後，訂單付款期限延長到 created_at + 2 天（給顧客時間去超商繳費）。"""
+    # 一般 24h 期限訂單
+    _, order, txn = await _make_order_with_txn(db, deadline_hours=24)
+    original_deadline = order.payment_deadline
     params = _sign({
         "MerchantID": "3002607",
         "MerchantTradeNo": txn.merchant_trade_no,
-        "RtnCode": "2",
-        "BankCode": "812",
-        "vAccount": "9103522099999999",
-        "ExpireDate": tomorrow,
+        "RtnCode": "10100073",  # 超商代碼取號
+        "PaymentNo": "LLL999888777",
+        "ExpireDate": "2026/06/12 23:59:59",
     })
 
     await service.process_payment_info_webhook(db, params)
 
     order_r = (await db.execute(select(Order).where(Order.id == order.id))).scalar_one()
-    # deadline 已被縮短到 ExpireDate（< 原本 5 天）
-    assert order_r.payment_deadline < datetime.now(UTC) + timedelta(days=5)
+    # 期限被延長（> 原本 24h），約 created_at + 2 天
+    assert order_r.payment_deadline > original_deadline
+    assert order_r.payment_deadline > datetime.now(UTC) + timedelta(hours=36)
+
+
+async def test_deadline_not_shortened_if_already_longer(db):
+    """取號時若現有 deadline 已比絕對上限長，不縮短（只延長不縮短）。"""
+    _, order, txn = await _make_order_with_txn(db, deadline_hours=72)
+    original_deadline = order.payment_deadline
+    params = _sign({
+        "MerchantID": "3002607",
+        "MerchantTradeNo": txn.merchant_trade_no,
+        "RtnCode": "10100073",
+        "PaymentNo": "LLL111222333",
+        "ExpireDate": "2026/06/12 23:59:59",
+    })
+
+    await service.process_payment_info_webhook(db, params)
+
+    order_r = (await db.execute(select(Order).where(Order.id == order.id))).scalar_one()
+    assert order_r.payment_deadline == original_deadline  # 不被縮短
 
 
 async def test_bad_mac_no_change(db):

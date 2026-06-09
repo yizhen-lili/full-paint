@@ -330,6 +330,7 @@
 - **狀態變更**:`orders.status: pending_payment → paid`(僅當仍 pending_payment;否則見孤兒款項)
 - **DB 寫入**:UPDATE payment_transactions(status=paid,paid_at,ecpay_trade_no,payment_type) + **完全對齊 E21**(orders.paid_at、每 order_item 建 production_progress)
 - **客製訂單額外**:同 E21,INSERT admin_notifications(type=custom_order_paid)
+- **一般訂單額外**:ECpay 自動付款(非 admin 手動確認)→ INSERT admin_notifications(type=order_paid,requires_action=true,「請備貨出貨」);手動確認路徑不發(admin 本人操作)
 - **Email**:客戶付款確認(同 E21)｜**SSE**:推播訂單狀態變化
 - **Idempotency**:transaction 已 paid → 直接回 "1|OK",不重複副作用
 - **孤兒款項**:訂單已非 pending_payment(逾期取消後才付款)→ 不標 paid,INSERT admin_notifications(type=ecpay_paid_after_close,requires_action=true)提示人工退款
@@ -339,8 +340,9 @@
 
 - **觸發者**:ECpay PaymentInfoURL webhook(取號成功,RtnCode≠1)
 - **狀態變更**:訂單**維持 pending_payment**(取號 ≠ 付款)
-- **DB 寫入**:UPDATE payment_transactions(status=awaiting_atm,vaccount/payment_no/expire_date) + UPDATE orders.payment_deadline=MIN(現有,ExpireDate)
-- **Email**:客戶(虛擬帳號/繳費代碼 + 期限)
+- **DB 寫入**:UPDATE payment_transactions(status=awaiting_atm,vaccount/payment_no/expire_date) + UPDATE orders.payment_deadline = created_at + 2 天(超商稍後付款延長期限;= 既有 48h 絕對上限)
+- **Email**:客戶(虛擬帳號/繳費代碼 + 期限);首次取號才寄(重送不重寄)
+- **逾期**:2 天未繳 → 既有 Celery E23 逾期取消(逾期 email + 回補庫存 + awaiting_atm→expired)
 - **來源**:Module 23 階段2
 
 ### E_PAY_FAILED|ECpay 付款失敗(Module 23)
