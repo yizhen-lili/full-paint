@@ -38,17 +38,21 @@
 > **入帳（撥款）說明**：程式碼從頭到尾不經手金錢。錢路徑為 `顧客 → ECpay 代收 → 依撥款週期撥款到 user 綁定的銀行帳戶`。
 > 訂單標 `paid` 僅代表「ECpay 確認顧客已付款」，撥款是 ECpay 後台設定（綁定銀行帳戶 + 撥款週期），非本模組職責。
 
-### Env vars（Railway backend service Variables，金流獨立一組）
+### Env vars（Railway backend service Variables）
 ```
-ECPAY_PAYMENT_MERCHANT_ID=3002607        # sandbox AioCheckOut 公開測試組（待確認，見 §6）
-ECPAY_PAYMENT_HASH_KEY=pwFHCqoQZGmho4w6  # sandbox 公開（待確認）
-ECPAY_PAYMENT_HASH_IV=EkRm7iFT261dpevs   # sandbox 公開（待確認）
-ECPAY_PAYMENT_ENV=stage                   # stage / production
+ECPAY_PAYMENT_MERCHANT_ID=                # 留空 → fallback 沿用物流 ECPAY_MERCHANT_ID
+ECPAY_PAYMENT_HASH_KEY=                   # 留空 → fallback 沿用物流 ECPAY_HASH_KEY
+ECPAY_PAYMENT_HASH_IV=                    # 留空 → fallback 沿用物流 ECPAY_HASH_IV
+ECPAY_PAYMENT_ENV=                        # 留空 → fallback 沿用物流 ECPAY_ENV（stage/production）
 ECPAY_PAYMENT_RETURN_URL=                 # 留空 → service 由 request.base_url 推導
-ECPAY_PAYMENT_CLIENT_BACK_URL=            # 顧客在 ECpay 按「返回商店」的前端 URL
+ECPAY_PAYMENT_CLIENT_BACK_URL=            # 留空 → 用 FRONTEND_URL
 ECPAY_PAYMENT_DRY_RUN=false               # true = 不真打 ECpay
 ```
-正式上線：換成 user 正式金流帳號（HashKey/HashIV 不寫進本文件、不傳輸；比照 Module 20 規矩）。
+**金鑰共用（2026-06-09 user 確認）**：user 的 ECpay 帳號金流與物流為**同一組** MerchantID/HashKey/HashIV。
+`config.py` `_fallback_payment_ecpay_creds` model_validator：金流變數未設時自動沿用物流那組，
+所以正式環境**不必另設** `ECPAY_PAYMENT_*`，物流有什麼金流就用什麼（物流 API 用 MD5、金流 API 用 SHA256，同金鑰各自計算互不影響）。
+若金流為獨立帳號才需明確設定 `ECPAY_PAYMENT_*` 覆蓋。
+> 開發測試若要用 ECpay **公開沙箱金流帳號**（與物流沙箱不同號）：MERCHANT_ID=3002607 / HASH_KEY=pwFHCqoQZGmho4w6 / HASH_IV=EkRm7iFT261dpevs（測試 conftest 用此組）。
 
 ### CheckMacValue 規則（金流 = SHA256）
 1. 參數依 key 字典序升冪排序
