@@ -58,6 +58,7 @@ from notifications.router import router as notifications_router
 from orders.router import router as orders_router
 from paint_requirements.router import router as paint_requirements_router
 from palette.router import router as palette_router
+from payment.router import router as payment_router
 from print_batch.router import router as print_batch_router
 from product.router import router as product_router
 from production.router import router as production_router
@@ -83,6 +84,7 @@ app.include_router(reports_router, prefix="/api/v1")
 app.include_router(print_batch_router, prefix="/api/v1")
 app.include_router(paint_requirements_router, prefix="/api/v1")
 app.include_router(logistics_router, prefix="/api/v1")
+app.include_router(payment_router, prefix="/api/v1")
 
 
 # ── Startup: idempotent reference data seed ─────────────────────────────────

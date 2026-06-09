@@ -351,8 +351,9 @@
 | shipping_type | ENUM('home','seven_eleven','family_mart') | NOT NULL | 取貨方式 |
 | shipping_preference | ENUM('together','separate') | nullable | 含預購項目時的出貨偏好 |
 | shipping_snapshot | JSONB | NOT NULL | 收件資料快照，結構：`{"recipient_name","phone","notify_email","city","district","address_detail","store_id","store_name"}`（宅配時 city/district/address_detail 有值，store_id/store_name 為 null；超商反之。notify_email 為 null 時出貨改用 users.email）|
-| payment_deadline | TIMESTAMP | nullable | 付款期限。初始值 created_at + 24h；flag 時重設為 MIN(now()+24h, created_at + payment_absolute_deadline_hours)；絕對上限不可延超過 created_at + 48h（預設值，可在 system_settings 調整）|
-| paid_at | TIMESTAMP | nullable | 付款確認時間 |
+| payment_method | ENUM('bank_transfer','ecpay') | NOT NULL, DEFAULT 'bank_transfer' | 付款方式：bank_transfer=手動網銀匯款（admin 人工確認）；ecpay=ECpay 線上付款（webhook 自動確認）。既有訂單 backfill 為 bank_transfer（Module 23）|
+| payment_deadline | TIMESTAMP | nullable | 付款期限。初始值 created_at + 24h；flag 時重設為 MIN(now()+24h, created_at + payment_absolute_deadline_hours)；絕對上限不可延超過 created_at + 48h（預設值，可在 system_settings 調整）。ECpay ATM 取號時對齊為 MIN(現有, ExpireDate）|
+| paid_at | TIMESTAMP | nullable | 付款確認時間（admin 確認 or ECpay ReturnURL webhook） |
 | completed_at | TIMESTAMP | nullable | 訂單完成時間 |
 | cancel_reason_code | ENUM('payment_expired','customer_cancelled','admin_cancelled') | nullable | 取消原因分類；僅 status='cancelled' 時有值 |
 | cancel_reason_note | TEXT | nullable | 取消原因自由說明（管理員取消時建議填寫，逾期或客戶取消通常為 null）|
@@ -498,6 +499,34 @@
 | created_at | TIMESTAMP | NOT NULL, DEFAULT now() | 填寫時間 |
 
 > 客戶可多次填寫（填錯可重填）；管理員以最新一筆為準對照銀行帳款。
+
+---
+
+### payment_transactions（Module 23 — ECpay 線上付款）
+
+| 欄位 | 型別 | 限制 | 說明 |
+|------|------|------|------|
+| id | UUID | PK | 主鍵 |
+| order_id | UUID | NOT NULL, FK → orders.id, INDEX | 所屬訂單 |
+| merchant_trade_no | VARCHAR | NOT NULL, UNIQUE | 我方送 ECpay 的單號（PAY+yyMMddHHmmss+4hex，≤20 字）；webhook lookup / idempotency 主鍵 |
+| status | ENUM('created','awaiting_atm','paid','failed','expired') | NOT NULL, DEFAULT 'created' | 交易狀態：created=參數已產生；awaiting_atm=ATM/超商已取號待繳；paid=付款成功；failed=付款失敗；expired=取號後逾期 |
+| amount | NUMERIC(10,2) | NOT NULL | 發起時的「實際送 ECpay 整數金額」快照（order.total 四捨五入）；webhook 比對防竄改 |
+| ecpay_trade_no | VARCHAR | nullable | ECpay 端交易號（TradeNo） |
+| payment_type | VARCHAR | nullable | 實際付款方式（Credit_CreditCard / ATM_TAISHIN / CVS_CVS …） |
+| bank_code | VARCHAR | nullable | ATM 虛擬帳號銀行代碼（取號回傳） |
+| vaccount | VARCHAR | nullable | ATM 虛擬帳號（取號回傳） |
+| payment_no | VARCHAR | nullable | 超商繳費代碼（取號回傳） |
+| expire_date | TIMESTAMP | nullable | 取號繳費期限（ECpay ExpireDate） |
+| last_rtn_code | INTEGER | nullable | 最後一次 webhook RtnCode |
+| last_rtn_msg | VARCHAR | nullable | 最後一次 webhook RtnMsg |
+| raw_callback | JSONB | nullable | 最後一次 webhook 全文（稽核） |
+| paid_at | TIMESTAMP | nullable | 付款成功時間 |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT now() | 建立時間 |
+| updated_at | TIMESTAMP | NOT NULL, DEFAULT now(), onupdate now() | 更新時間 |
+
+> 一張訂單可有多筆（顧客重試付款 / ATM 取號後改信用卡各一筆）。
+> **唯一可標訂單 paid 的路徑** = ReturnURL webhook + 驗章通過 + RtnCode=1 + int(TradeAmt)==int(amount) + 交易存在。
+> bank_code/vaccount/payment_no/expire_date 為階段 2（ATM/超商非同步）使用。
 
 ---
 

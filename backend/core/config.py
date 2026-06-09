@@ -60,9 +60,28 @@ class Settings(BaseSettings):
     # 開發 / UI 驗收期間設 true，避免在正式 ECpay 帳號留真實託運單。
     ecpay_dry_run: bool = False
 
+    # ── ECpay 金流（AioCheckOut / 線上付款）────────────────────────────────
+    # 金流的 MerchantID / HashKey / HashIV（與物流、電子發票都是不同帳號）。
+    # ⚠️ 金流簽章用 SHA256（物流用 MD5）。
+    # 開發測試用官方公開 sandbox 組（3002607）；正式上線換 user 正式帳號。
+    ecpay_payment_merchant_id: str = ""
+    ecpay_payment_hash_key: str = ""
+    ecpay_payment_hash_iv: str = ""
+    # 'stage' = 沙箱（payment-stage.ecpay.com.tw）
+    # 'production' = 正式（payment.ecpay.com.tw）
+    ecpay_payment_env: str = "stage"
+    # ReturnURL（付款成功 server-to-server 權威 webhook）。留空 → 由 request.base_url 推導。
+    ecpay_payment_return_url: str = ""
+    # 顧客在 ECpay 按「返回商店」導回的前端 URL。留空 → 用 frontend_url。
+    ecpay_payment_client_back_url: str = ""
+    # 'true' = 模擬模式（不真導向 ECpay）；開發 / 測試期用。
+    ecpay_payment_dry_run: bool = False
+
     @field_validator(
         "ecpay_merchant_id", "ecpay_hash_key", "ecpay_hash_iv",
         "ecpay_env", "ecpay_server_reply_url",
+        "ecpay_payment_merchant_id", "ecpay_payment_hash_key", "ecpay_payment_hash_iv",
+        "ecpay_payment_env", "ecpay_payment_return_url", "ecpay_payment_client_back_url",
     )
     @classmethod
     def _strip_ecpay(cls, v: str) -> str:

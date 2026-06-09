@@ -55,6 +55,8 @@ class CreateOrderResponse(BaseModel):
     order_number: str
     total: float
     payment_deadline: datetime
+    # bank_transfer：payment_info 帶銀行帳號；ecpay：payment_info={}，前端改導去付款頁
+    payment_method: str = "bank_transfer"
     payment_info: dict
 
 

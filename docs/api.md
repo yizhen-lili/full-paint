@@ -906,11 +906,13 @@ Request: {
   "shipping_preference": "together|separate",
   "user_coupon_id": "uuid|null",
   "promo_code": "string|null",
-  "customer_notes": "string|null"
+  "customer_notes": "string|null",
+  "payment_method": "bank_transfer|ecpay"
 }
 ```
 > SELECT FOR UPDATE 鎖定 physical_colors 計算並立即扣減 stock_ml  
-> 若有下架變體回 409
+> 若有下架變體回 409  
+> payment_method 預設 bank_transfer（向後相容）。=ecpay 時不發銀行帳號 email、payment_info 回 {}；前端拿 order_id 後導去 GET /payment/ecpay/checkout/{order_id}
 
 ```json
 Response 201: {
@@ -918,6 +920,7 @@ Response 201: {
   "order_number": "PL-20260418-000001",
   "total": 694,
   "payment_deadline": "2026-04-19T12:00:00Z",
+  "payment_method": "bank_transfer|ecpay",
   "payment_info": { "bank_name": "string", "bank_account_name": "string", "bank_account_number": "string" }
 }
 ```
@@ -1507,6 +1510,43 @@ Response 200: {
 > 收到「已取貨 / 已投遞」事件 → shipment.status = delivered + delivered_at = now()  
 > 若該訂單所有 shipments 均 delivered → order.status = completed，發完成 email + 觸發回饋券  
 > 其他中間狀態（派送中等）→ 建立 ecpay_status 類型 admin_notification，不改訂單狀態
+
+---
+
+## 模組二十三：金流（ECpay 線上付款）
+
+> 對應 [module_plans/23_payment_ecpay.md](module_plans/23_payment_ecpay.md)、[integration_specs/ecpay_aio_checkout.md](integration_specs/ecpay_aio_checkout.md)。
+> ⚠️ 金流簽章用 SHA256（物流用 MD5）。webhook 一律回純字串 "1|OK" / "0|reason"。
+
+### GET /payment/ecpay/checkout/{order_id}
+**權限**：auth｜回 auto-submit form HTML，導向 ECpay 付款頁；亦為「重新付款」入口
+
+> 前置：order 屬於該 user、status=pending_payment、payment_method=ecpay、未逾期，否則 409；訂單不存在 404  
+> 每次呼叫建立一筆新的 payment_transaction（新 MerchantTradeNo，重試不重用單號）  
+> 回應：`text/html`（hidden form 自動 POST 到 ECpay AioCheckOut；dry_run 模式回模擬頁）
+
+### POST /payment/ecpay/return
+**權限**：public（ECpay server-to-server，驗 SHA256 CheckMacValue）｜**付款成功權威來源，唯一可標 paid**
+
+```
+回應（純字串）：
+  "1|OK"               成功標 paid / 已知失敗 / idempotent 重送
+  "0|CheckMacValueError"  驗章失敗（ECpay 會重送）
+  "0|AmountMismatch"      TradeAmt ≠ 交易金額快照（不標 paid）
+  "0|OrderNotFound"       查無交易 / 訂單
+```
+> 流程：驗章 → 金額比對(int(TradeAmt)==int(amount)快照) → RtnCode==1 → idempotency(已 paid 直接回 OK) → 標 paid（共用 admin 確認付款的全副作用 E21：production_progress、客製通知、email、SSE）  
+> 訂單已非 pending_payment（逾期取消後才付款）→ 不標 paid，發 ecpay_paid_after_close admin 通知（孤兒款項人工退款）
+
+### POST /payment/ecpay/payment-info
+**權限**：public（驗 SHA256 CheckMacValue）｜ATM/超商取號通知（階段 2）
+
+> 取號成功（RtnCode≠1）→ 存虛擬帳號/繳費代碼 + expire_date、transaction=awaiting_atm、訂單維持 pending_payment、對齊 payment_deadline、寄帳號 email。**絕不標 paid。** 回 "1|OK"
+
+### POST /payment/ecpay/result
+**權限**：public｜OrderResultURL，ECpay 付款後瀏覽器 POST 導回
+
+> **不可標 paid**（瀏覽器可竄改）；僅 303 redirect 到前端結果頁 /orders/{order_number}?pay={RtnCode}，DB 狀態以 /return 為準
 
 ---
 

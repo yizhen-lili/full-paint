@@ -119,6 +119,7 @@ async def create_order(
         body.user_coupon_id,
         body.promo_code,
         body.customer_notes,
+        body.payment_method,
     )
 
 

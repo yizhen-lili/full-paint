@@ -40,6 +40,8 @@ class CreateOrderRequest(BaseModel):
     user_coupon_id: UUID | None = None
     promo_code: str | None = None
     customer_notes: str | None = None
+    # 付款方式：bank_transfer（手動匯款，預設）或 ecpay（線上付款）。
+    payment_method: Literal["bank_transfer", "ecpay"] = "bank_transfer"
 
 
 class PaymentSubmissionRequest(BaseModel):

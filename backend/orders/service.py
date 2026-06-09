@@ -21,6 +21,7 @@ from orders.models import (
     Order,
     OrderItem,
     OrderStatusEnum,
+    PaymentMethodEnum,
     PaymentSubmission,
     ProductionProgress,
     ProductionProgressStatusEnum,
@@ -655,6 +656,7 @@ async def create_order(
     user_coupon_id: UUID | None,
     promo_code: str | None,
     customer_notes: str | None,
+    payment_method: str = PaymentMethodEnum.bank_transfer.value,
 ) -> dict:
     """建單：cart 同時含一般商品 + 客製 line 時都處理。
 
@@ -838,6 +840,7 @@ async def create_order(
         shipping_preference=shipping_preference,
         shipping_snapshot=shipping_snapshot,
         payment_deadline=payment_deadline,
+        payment_method=PaymentMethodEnum(payment_method),
         customer_notes=customer_notes,
     )
     db.add(order)
@@ -900,27 +903,34 @@ async def create_order(
             logger.warning("SSE publish for quote_confirmed failed: %s", e)
 
     # 10. Send confirmation email
-    payment_info = await _get_payment_info(db)
+    is_ecpay = PaymentMethodEnum(payment_method) == PaymentMethodEnum.ecpay
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one()
-    await _send_email(
-        to=user.email,
-        subject=f"【易木 YIIMUI】訂單確認 {order_number}",
-        html=(
-            f"<p>感謝您的訂單！訂單編號：{order_number}</p>"
-            f"<p>應付金額：NT${float(total)}</p>"
-            f"<p>付款期限：{payment_deadline.strftime('%Y-%m-%d %H:%M')}</p>"
-            f"<p>匯款帳號：{payment_info.get('bank_name', '')} "
-            f"{payment_info.get('bank_account_number', '')}</p>"
-            f"<p>戶名：{payment_info.get('bank_account_name', '')}</p>"
-        ),
-    )
+    if is_ecpay:
+        # ECpay 線上付款：不發銀行帳號 email。前端建單成功直接導去 ECpay 付款頁
+        # （呼 GET /payment/ecpay/checkout/{order_id}）。payment_info 回 null。
+        payment_info: dict = {}
+    else:
+        payment_info = await _get_payment_info(db)
+        await _send_email(
+            to=user.email,
+            subject=f"【易木 YIIMUI】訂單確認 {order_number}",
+            html=(
+                f"<p>感謝您的訂單！訂單編號：{order_number}</p>"
+                f"<p>應付金額：NT${float(total)}</p>"
+                f"<p>付款期限：{payment_deadline.strftime('%Y-%m-%d %H:%M')}</p>"
+                f"<p>匯款帳號：{payment_info.get('bank_name', '')} "
+                f"{payment_info.get('bank_account_number', '')}</p>"
+                f"<p>戶名：{payment_info.get('bank_account_name', '')}</p>"
+            ),
+        )
 
-    # 10.5 Admin in-app 通知 + email（新訂單成立，等待匯款）
+    # 10.5 Admin in-app 通知（新訂單成立）
+    waiting_msg = "等待線上付款" if is_ecpay else "等待客戶匯款"
     await create_notification(
         db,
         type="new_order",
-        message=f"新訂單 {order_number}（NT$ {float(total):,.0f}）— 等待客戶匯款",
+        message=f"新訂單 {order_number}（NT$ {float(total):,.0f}）— {waiting_msg}",
         reference_type="order",
         reference_id=order.id,
         requires_action=False,
@@ -931,6 +941,7 @@ async def create_order(
         "order_number": order_number,
         "total": float(total),
         "payment_deadline": payment_deadline,
+        "payment_method": payment_method,
         "payment_info": payment_info,
     }
 
@@ -1469,6 +1480,45 @@ _VALID_STATUS_TRANSITIONS = {
 }
 
 
+async def _apply_paid_side_effects(
+    db: AsyncSession, order: Order, user: User
+) -> None:
+    """訂單轉為 paid 的共用副作用（EVENT_MATRIX E21）。
+
+    admin 手動確認付款（admin_update_order_status）與 ECpay ReturnURL webhook
+    都呼叫此函數，確保兩條路徑副作用完全一致：設 status=paid + paid_at、為每個
+    order_item 建 production_progress、客製訂單發 custom_order_paid 通知、寄付款
+    確認 email。
+
+    呼叫端負責：前置 guard（order.status == pending_payment）、commit、SSE 發布。
+    """
+    order.status = OrderStatusEnum.paid
+    order.paid_at = datetime.now(UTC)
+    items_result = await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order.id)
+    )
+    items = list(items_result.scalars().all())
+    for item in items:
+        prog = ProductionProgress(order_item_id=item.id)
+        db.add(prog)
+    # E21 (custom branch): if any item is from a custom request, notify admin
+    is_custom = any(item.custom_request_id is not None for item in items)
+    if is_custom:
+        await create_notification(
+            db,
+            type="custom_order_paid",
+            message=f"客製訂單 {order.order_number} 已付款，請進入備貨流程",
+            reference_type="order",
+            reference_id=order.id,
+            requires_action=True,
+        )
+    await _send_email(
+        to=user.email,
+        subject=f"【易木 YIIMUI】付款確認 {order.order_number}",
+        html=f"<p>您的訂單 {order.order_number} 已確認付款，開始準備生產。</p>",
+    )
+
+
 async def admin_update_order_status(
     db: AsyncSession,
     order_id: UUID,
@@ -1493,30 +1543,9 @@ async def admin_update_order_status(
     user = user_result.scalar_one()
 
     if target == OrderStatusEnum.paid:
-        order.paid_at = datetime.now(UTC)
-        items_result = await db.execute(
-            select(OrderItem).where(OrderItem.order_id == order_id)
-        )
-        items = list(items_result.scalars().all())
-        for item in items:
-            prog = ProductionProgress(order_item_id=item.id)
-            db.add(prog)
-        # E21 (custom branch): if any item is from a custom request, notify admin
-        is_custom = any(item.custom_request_id is not None for item in items)
-        if is_custom:
-            await create_notification(
-                db,
-                type="custom_order_paid",
-                message=f"客製訂單 {order.order_number} 已付款，請進入備貨流程",
-                reference_type="order",
-                reference_id=order.id,
-                requires_action=True,
-            )
-        await _send_email(
-            to=user.email,
-            subject=f"【易木 YIIMUI】付款確認 {order.order_number}",
-            html=f"<p>您的訂單 {order.order_number} 已確認付款，開始準備生產。</p>",
-        )
+        # 共用 ECpay webhook 同一套標 paid 副作用（E21）。order.status 已在上面設為
+        # target，此函數再設一次（同值）以與 webhook 路徑共用同一實作。
+        await _apply_paid_side_effects(db, order, user)
 
     elif target == OrderStatusEnum.completed:
         order.completed_at = datetime.now(UTC)
