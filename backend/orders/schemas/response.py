@@ -147,6 +147,7 @@ class OrderDetailResponse(BaseModel):
     shipping_preference: str | None
     shipping_snapshot: dict
     shipping_locked: bool = False
+    payment_method: str = "bank_transfer"
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None
@@ -200,6 +201,7 @@ class AdminOrderDetailResponse(BaseModel):
     shipping_preference: str | None
     shipping_snapshot: dict
     shipping_locked: bool = False
+    payment_method: str = "bank_transfer"
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None

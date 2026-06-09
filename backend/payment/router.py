@@ -186,20 +186,21 @@ async def ecpay_result(request: Request, db: AsyncSession = Depends(get_db)):
     raw_body = await request.body()
     params = dict(parse_qsl(raw_body.decode("utf-8", errors="replace"), keep_blank_values=True))
     rtn_code = params.get("RtnCode", "")
-    # 找回 order_number 以導向對應結果頁；找不到就導回前端首頁。
-    order_number = ""
+    # 找回 order_id 以導向前端訂單詳情頁（store 路由 /orders/:id 用 UUID）；找不到導回首頁。
+    order_id = ""
     mtn = params.get("MerchantTradeNo", "")
     if mtn:
         from orders.models import PaymentTransaction  # noqa: PLC0415
-        order_number = (await db.execute(
-            select(Order.order_number)
+        oid = (await db.execute(
+            select(Order.id)
             .join(PaymentTransaction, PaymentTransaction.order_id == Order.id)
             .where(PaymentTransaction.merchant_trade_no == mtn)
-        )).scalar_one_or_none() or ""
+        )).scalar_one_or_none()
+        order_id = str(oid) if oid else ""
 
     base = settings.ecpay_payment_client_back_url or settings.frontend_url
-    if order_number:
-        target = f"{base.rstrip('/')}/orders/{order_number}?pay={rtn_code}"
+    if order_id:
+        target = f"{base.rstrip('/')}/orders/{order_id}?pay={rtn_code}"
     else:
         target = f"{base.rstrip('/')}/?pay={rtn_code}"
     return RedirectResponse(url=target, status_code=303)

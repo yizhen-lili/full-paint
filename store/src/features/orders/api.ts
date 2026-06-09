@@ -102,6 +102,7 @@ export interface OrderDetail {
     [k: string]: string | undefined
   }
   shipping_locked: boolean
+  payment_method: 'bank_transfer' | 'ecpay'
   payment_deadline: string | null
   paid_at: string | null
   completed_at: string | null

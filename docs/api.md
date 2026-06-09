@@ -1546,7 +1546,7 @@ Response 200: {
 ### POST /payment/ecpay/result
 **權限**：public｜OrderResultURL，ECpay 付款後瀏覽器 POST 導回
 
-> **不可標 paid**（瀏覽器可竄改）；僅 303 redirect 到前端結果頁 /orders/{order_number}?pay={RtnCode}，DB 狀態以 /return 為準
+> **不可標 paid**（瀏覽器可竄改）；僅 303 redirect 到前端結果頁 /orders/{order_id}?pay={RtnCode}（store 路由用 UUID），DB 狀態以 /return 為準
 
 ---
 

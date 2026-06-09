@@ -12,7 +12,7 @@ import * as profileApi from '@/features/profile/api'
 import ShippingProfileForm from '@/features/profile/components/ShippingProfileForm.vue'
 import type { ShippingProfileInput } from '@/features/profile/api'
 import { consumeCvsRedirect, saveCvsRedirect } from '@/features/profile/cvsRedirect'
-import type { ShippingType, ShippingPreference, ApiError } from '@/features/cart/api'
+import type { ShippingType, ShippingPreference, ApiError, PaymentMethod } from '@/features/cart/api'
 
 const router = useRouter()
 const queryClient = useQueryClient()
@@ -141,6 +141,9 @@ const shippingPreference = ref<ShippingPreference>('together')
 // 客戶備註
 const customerNotes = ref('')
 
+// 付款方式（預設線上付款，引導顧客走 ECpay；仍保留手動匯款選項）
+const paymentMethod = ref<PaymentMethod>('ecpay')
+
 // Checkout preview
 const previewParams = computed(() => ({
   shipping_type: shippingType.value,
@@ -181,8 +184,14 @@ async function placeOrder() {
       shipping_preference: preview.value?.has_preorder ? shippingPreference.value : null,
       promo_code: appliedPromoCode.value,
       customer_notes: customerNotes.value.trim() || null,
+      payment_method: paymentMethod.value,
     })
-    router.push(`/checkout/complete?order=${order.order_id}`)
+    if (paymentMethod.value === 'ecpay') {
+      // 線上付款：整頁導向後端 checkout endpoint，它回 auto-submit form 自動 POST 到 ECpay 付款頁
+      window.location.assign(`/api/v1/payment/ecpay/checkout/${order.order_id}`)
+    } else {
+      router.push(`/checkout/complete?order=${order.order_id}`)
+    }
   } catch (e) {
     const err = e as ApiError
     apiError.value = err.detail || '送出失敗，請稍後再試'
@@ -299,9 +308,28 @@ function profileSummary(p: profileApi.ShippingProfile): string {
           </template>
         </section>
 
-        <section v-if="preview?.has_preorder" class="block">
+        <section class="block">
           <h2 class="block-title">
             <span class="block-no">02</span>
+            付款方式
+          </h2>
+          <div class="radio-row">
+            <label class="radio-card" :class="{ 'radio-active': paymentMethod === 'ecpay' }">
+              <input v-model="paymentMethod" type="radio" value="ecpay" />
+              <span class="radio-title">線上付款</span>
+              <span class="radio-desc">信用卡 / Apple Pay / ATM，立即完成付款</span>
+            </label>
+            <label class="radio-card" :class="{ 'radio-active': paymentMethod === 'bank_transfer' }">
+              <input v-model="paymentMethod" type="radio" value="bank_transfer" />
+              <span class="radio-title">銀行轉帳</span>
+              <span class="radio-desc">手動匯款後上傳付款資訊，由我們確認</span>
+            </label>
+          </div>
+        </section>
+
+        <section v-if="preview?.has_preorder" class="block">
+          <h2 class="block-title">
+            <span class="block-no">03</span>
             預購出貨
           </h2>
           <p class="block-desc">訂單包含預購商品，請選擇出貨方式：</p>
@@ -321,7 +349,7 @@ function profileSummary(p: profileApi.ShippingProfile): string {
 
         <section class="block">
           <h2 class="block-title">
-            <span class="block-no">{{ preview?.has_preorder ? '03' : '02' }}</span>
+            <span class="block-no">{{ preview?.has_preorder ? '04' : '03' }}</span>
             折扣碼
           </h2>
           <div class="promo-row">
@@ -358,7 +386,7 @@ function profileSummary(p: profileApi.ShippingProfile): string {
 
         <section class="block">
           <h2 class="block-title">
-            <span class="block-no">{{ preview?.has_preorder ? '04' : '03' }}</span>
+            <span class="block-no">{{ preview?.has_preorder ? '05' : '04' }}</span>
             訂單備註
             <span class="block-optional">（可選）</span>
           </h2>
@@ -424,7 +452,7 @@ function profileSummary(p: profileApi.ShippingProfile): string {
             @click="placeOrder"
           >
             <Loader2 v-if="createMut.isPending.value" class="spin" />
-            <span>{{ createMut.isPending.value ? '建立訂單中...' : '送出訂單' }}</span>
+            <span>{{ createMut.isPending.value ? '建立訂單中...' : (paymentMethod === 'ecpay' ? '前往付款' : '送出訂單') }}</span>
           </button>
 
           <p v-if="!agreeRefundPolicy" class="legal-hint">

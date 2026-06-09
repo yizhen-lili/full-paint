@@ -30,6 +30,20 @@ const orderId = computed(() => String(route.params.id || ''))
 const orderQuery = useOrderDetailQuery(orderId)
 const order = computed(() => orderQuery.data.value ?? null)
 
+// 付款方式：ecpay 線上付款 vs bank_transfer 手動匯款
+const isEcpay = computed(() => order.value?.payment_method === 'ecpay')
+
+// ECpay /result 導回時帶 ?pay=<RtnCode>（"1"=ECpay 端回報成功；DB 狀態以 webhook 為準）
+const payResultCode = computed(() => {
+  const v = route.query.pay
+  return typeof v === 'string' ? v : null
+})
+
+// 前往 ECpay 付款 / 重新付款：整頁導向後端 checkout endpoint（回 auto-submit form）
+function goToEcpayPayment() {
+  window.location.assign(`/api/v1/payment/ecpay/checkout/${orderId.value}`)
+}
+
 // SSE：訂閱訂單狀態變更（admin 標 paid / 出貨 / webhook 推 ECpay 狀態 / 退款）
 // query invalidate 由 useOrderSse 內部處理
 const sseToast = ref<string | null>(null)
@@ -654,8 +668,32 @@ function specSummary(spec: Record<string, unknown>): string {
             </div>
           </div>
 
-          <!-- Bank info（待付款狀態）-->
-          <div v-if="order.status === 'pending_payment'" class="summary-card">
+          <!-- ECpay 線上付款（待付款 + ecpay）-->
+          <div v-if="order.status === 'pending_payment' && isEcpay" class="summary-card">
+            <h2 class="summary-title">線上付款</h2>
+            <p v-if="payResultCode === '1'" class="pay-note pay-note-ok">
+              付款已送出，正在確認中…確認後此頁狀態會自動更新。
+            </p>
+            <p v-else-if="payResultCode" class="pay-note pay-note-warn">
+              這次付款未完成，可重新付款。
+            </p>
+            <p v-else class="pay-note">
+              請前往付款（信用卡 / Apple Pay / ATM），完成後訂單將自動確認。
+            </p>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="expired"
+              @click="goToEcpayPayment"
+            >
+              <Wallet :size="14" />
+              <span>{{ payResultCode ? '重新付款' : '前往付款' }}</span>
+            </button>
+            <p v-if="expired" class="pay-note pay-note-warn">付款期限已過，無法付款。</p>
+          </div>
+
+          <!-- Bank info（待付款狀態，手動匯款）-->
+          <div v-if="order.status === 'pending_payment' && !isEcpay" class="summary-card">
             <h2 class="summary-title">匯款資訊</h2>
             <dl class="bank">
               <div class="bank-row">
@@ -692,7 +730,7 @@ function specSummary(spec: Record<string, unknown>): string {
           <!-- Actions -->
           <div class="actions">
             <button
-              v-if="order.status === 'pending_payment' && !showPaymentForm"
+              v-if="order.status === 'pending_payment' && !isEcpay && !showPaymentForm"
               type="button"
               class="btn-primary"
               @click="openPaymentForm"
@@ -1531,6 +1569,15 @@ function specSummary(spec: Record<string, unknown>): string {
   color: var(--color-ink-strong);
   margin: 0 0 16px;
 }
+
+.pay-note {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-ink-soft, #6b6258);
+  margin: 0 0 14px;
+}
+.pay-note-ok { color: #4a7c59; }
+.pay-note-warn { color: #a8443a; }
 
 .summary-rows .srow {
   display: flex;

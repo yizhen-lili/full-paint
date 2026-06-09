@@ -1056,6 +1056,7 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
         "shipping_preference": order.shipping_preference,
         "shipping_snapshot": order.shipping_snapshot,
         "shipping_locked": bool(order.shipping_locked),
+        "payment_method": order.payment_method,
         "payment_deadline": order.payment_deadline,
         "paid_at": order.paid_at,
         "completed_at": order.completed_at,
