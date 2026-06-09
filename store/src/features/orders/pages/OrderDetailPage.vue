@@ -726,7 +726,7 @@ function specSummary(spec: Record<string, unknown>): string {
                 這次付款未完成，可重新付款。
               </p>
               <p v-else class="pay-note">
-                請前往付款（信用卡 / Apple Pay / ATM / 超商），完成後訂單將自動確認。
+                請前往付款（信用卡 / Apple Pay / 超商代碼），完成後訂單將自動確認。
               </p>
               <button
                 type="button"

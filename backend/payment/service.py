@@ -113,15 +113,26 @@ def sanitize_item_name(titles: list[str]) -> str:
 
 # ── AioCheckOut 參數組裝 ──────────────────────────────────────────────────────
 
-def resolve_ignore_payment(total_amount: int, choose_payment: str) -> str:
-    """金額超過超商代碼/條碼上限（NT$20,000）時，回 "CVS#BARCODE" 以 IgnorePayment 排除，
-    避免顧客選了超商付款卻被 ECpay 退件；信用卡/ATM 不受影響。
+# 產品決策（user 2026-06-09）：只開「信用卡 / Apple Pay / 超商代碼 / 超商條碼」，
+# 排除「ATM 虛擬帳號」與「網路ATM(WebATM / 網路銀行)」。
+ALWAYS_IGNORE_PAYMENTS = ("ATM", "WebATM")
 
-    僅在 ChoosePayment=ALL 時需要（單選 Credit/ATM 等不會出現超商選項）。
+
+def resolve_ignore_payment(total_amount: int, choose_payment: str) -> str:
+    """組 IgnorePayment（ChoosePayment=ALL 時排除不開放的付款方式，以 # 分隔）。
+
+    - 一律排除 ATM / WebATM（產品決策）。
+    - 金額超過超商代碼/條碼上限（NT$20,000）時，額外排除 CVS / BARCODE，
+      避免顧客選了超商付款卻被 ECpay 退件（此時只剩信用卡 / Apple Pay）。
+
+    僅 ChoosePayment=ALL 時有意義（單選不會列出多種方式）。
     """
-    if choose_payment == "ALL" and total_amount > MAX_TOTAL_AMOUNT:
-        return "CVS#BARCODE"
-    return ""
+    if choose_payment != "ALL":
+        return ""
+    ignore = list(ALWAYS_IGNORE_PAYMENTS)
+    if total_amount > MAX_TOTAL_AMOUNT:
+        ignore += ["CVS", "BARCODE"]
+    return "#".join(ignore)
 
 
 def build_aio_checkout_params(

@@ -80,24 +80,31 @@ def test_charge_amount_rounds_to_integer(total, expected):
 
 # ── 階段2：IgnorePayment / 取號碼 / ExpireDate 解析 ──────────────────────────
 
-def test_resolve_ignore_payment_excludes_cvs_over_limit():
-    # ALL + 超過 2 萬 → 排除超商/條碼
-    assert service.resolve_ignore_payment(20001, "ALL") == "CVS#BARCODE"
+def test_resolve_ignore_payment_under_limit_excludes_atm_webatm():
+    # ALL + 未超上限 → 排除 ATM/WebATM（產品決策），保留信用卡/ApplePay/超商
+    result = service.resolve_ignore_payment(20000, "ALL")
+    assert set(result.split("#")) == {"ATM", "WebATM"}
+    assert "CVS" not in result and "BARCODE" not in result
 
 
-def test_resolve_ignore_payment_under_limit_empty():
-    assert service.resolve_ignore_payment(20000, "ALL") == ""
+def test_resolve_ignore_payment_over_limit_also_excludes_cvs_barcode():
+    # ALL + 超過 2 萬 → 額外排除超商/條碼（只剩信用卡/ApplePay）
+    result = service.resolve_ignore_payment(20001, "ALL")
+    assert set(result.split("#")) == {"ATM", "WebATM", "CVS", "BARCODE"}
 
 
 def test_resolve_ignore_payment_non_all_empty():
-    # 單選信用卡時不會有超商選項，不需 ignore
+    # 單選時不會列多種方式，不需 ignore
     assert service.resolve_ignore_payment(99999, "Credit") == ""
 
 
-def test_build_all_over_limit_sets_ignore_payment():
-    p = service.build_aio_checkout_params(**_base_kwargs(total_amount=30000, choose_payment="ALL"))
-    assert p.get("IgnorePayment") == "CVS#BARCODE"
+def test_build_all_sets_ignore_payment_and_signs_it():
+    p = service.build_aio_checkout_params(**_base_kwargs(total_amount=1260, choose_payment="ALL"))
+    assert set(p["IgnorePayment"].split("#")) == {"ATM", "WebATM"}
     assert service.verify_check_mac_value(p) is True  # IgnorePayment 也納入簽章
+
+    p2 = service.build_aio_checkout_params(**_base_kwargs(total_amount=30000, choose_payment="ALL"))
+    assert set(p2["IgnorePayment"].split("#")) == {"ATM", "WebATM", "CVS", "BARCODE"}
 
 
 @pytest.mark.parametrize("code,expected", [(2, True), (10100073, True), (1, False), (None, False)])

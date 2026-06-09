@@ -317,7 +317,7 @@ function profileSummary(p: profileApi.ShippingProfile): string {
             <label class="radio-card" :class="{ 'radio-active': paymentMethod === 'ecpay' }">
               <input v-model="paymentMethod" type="radio" value="ecpay" />
               <span class="radio-title">線上付款</span>
-              <span class="radio-desc">信用卡 / Apple Pay / ATM，立即完成付款</span>
+              <span class="radio-desc">信用卡 / Apple Pay / 超商代碼繳費</span>
             </label>
             <label class="radio-card" :class="{ 'radio-active': paymentMethod === 'bank_transfer' }">
               <input v-model="paymentMethod" type="radio" value="bank_transfer" />
