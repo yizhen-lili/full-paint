@@ -57,6 +57,10 @@ def _result_url(request: Request) -> str:
     return f"{_base_url(request)}/api/v1/payment/ecpay/result"
 
 
+def _payment_info_url(request: Request) -> str:
+    return f"{_base_url(request)}/api/v1/payment/ecpay/payment-info"
+
+
 def _client_back_url(order_number: str) -> str:
     base = settings.ecpay_payment_client_back_url or settings.frontend_url
     return f"{base.rstrip('/')}/orders/{order_number}"
@@ -138,7 +142,8 @@ async def ecpay_checkout(
             return_url=_return_url(request),
             order_result_url=_result_url(request),
             client_back_url=_client_back_url(order.order_number),
-            choose_payment="Credit",  # 階段 1 先只開信用卡；階段 2 放開 ALL
+            payment_info_url=_payment_info_url(request),
+            choose_payment="ALL",  # 信用卡 / ApplePay / 網路ATM / ATM / 超商代碼 / 條碼
         )
     except ValueError as e:
         # 設定錯誤（MerchantID 未設等）→ 500，不留半截 transaction
@@ -173,6 +178,15 @@ async def ecpay_return(request: Request, db: AsyncSession = Depends(get_db)):
     raw_body = await request.body()
     params = dict(parse_qsl(raw_body.decode("utf-8", errors="replace"), keep_blank_values=True))
     result = await service.process_return_webhook(db, params)
+    return PlainTextResponse(content=result)
+
+
+@router.post("/payment-info", response_class=PlainTextResponse, response_model=None)
+async def ecpay_payment_info(request: Request, db: AsyncSession = Depends(get_db)):
+    """ECpay PaymentInfoURL：ATM/超商取號通知（存帳號，訂單維持 pending_payment，不標 paid）。"""
+    raw_body = await request.body()
+    params = dict(parse_qsl(raw_body.decode("utf-8", errors="replace"), keep_blank_values=True))
+    result = await service.process_payment_info_webhook(db, params)
     return PlainTextResponse(content=result)
 
 

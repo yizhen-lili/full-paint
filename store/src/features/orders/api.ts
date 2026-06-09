@@ -103,6 +103,15 @@ export interface OrderDetail {
   }
   shipping_locked: boolean
   payment_method: 'bank_transfer' | 'ecpay'
+  ecpay_payment: {
+    status: 'created' | 'awaiting_atm' | 'paid' | 'failed' | 'expired'
+    amount: number
+    payment_type: string | null
+    bank_code: string | null
+    vaccount: string | null
+    payment_no: string | null
+    expire_date: string | null
+  } | null
   payment_deadline: string | null
   paid_at: string | null
   completed_at: string | null

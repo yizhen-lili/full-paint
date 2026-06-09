@@ -44,6 +44,20 @@ function goToEcpayPayment() {
   window.location.assign(`/api/v1/payment/ecpay/checkout/${orderId.value}`)
 }
 
+// ATM/超商已取號待繳費：顯示虛擬帳號 / 繳費代碼
+const atmInfo = computed(() => {
+  const p = order.value?.ecpay_payment
+  if (p && p.status === 'awaiting_atm' && (p.vaccount || p.payment_no)) return p
+  return null
+})
+function formatExpire(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('zh-TW', { hour12: false })
+  } catch {
+    return iso
+  }
+}
+
 // SSE：訂閱訂單狀態變更（admin 標 paid / 出貨 / webhook 推 ECpay 狀態 / 退款）
 // query invalidate 由 useOrderSse 內部處理
 const sseToast = ref<string | null>(null)
@@ -671,24 +685,60 @@ function specSummary(spec: Record<string, unknown>): string {
           <!-- ECpay 線上付款（待付款 + ecpay）-->
           <div v-if="order.status === 'pending_payment' && isEcpay" class="summary-card">
             <h2 class="summary-title">線上付款</h2>
-            <p v-if="payResultCode === '1'" class="pay-note pay-note-ok">
-              付款已送出，正在確認中…確認後此頁狀態會自動更新。
-            </p>
-            <p v-else-if="payResultCode" class="pay-note pay-note-warn">
-              這次付款未完成，可重新付款。
-            </p>
-            <p v-else class="pay-note">
-              請前往付款（信用卡 / Apple Pay / ATM），完成後訂單將自動確認。
-            </p>
-            <button
-              type="button"
-              class="btn-primary"
-              :disabled="expired"
-              @click="goToEcpayPayment"
-            >
-              <Wallet :size="14" />
-              <span>{{ payResultCode ? '重新付款' : '前往付款' }}</span>
-            </button>
+
+            <!-- ATM/超商已取號，待繳費 -->
+            <template v-if="atmInfo">
+              <p class="pay-note">請於期限前完成繳費，繳費後訂單將自動確認。</p>
+              <dl class="bank">
+                <div v-if="atmInfo.vaccount" class="bank-row">
+                  <dt>ATM 銀行代碼</dt>
+                  <dd>{{ atmInfo.bank_code || '—' }}</dd>
+                </div>
+                <div v-if="atmInfo.vaccount" class="bank-row bank-row-acc">
+                  <dt>虛擬帳號</dt>
+                  <dd><span class="acc">{{ atmInfo.vaccount }}</span></dd>
+                </div>
+                <div v-if="atmInfo.payment_no" class="bank-row bank-row-acc">
+                  <dt>超商繳費代碼</dt>
+                  <dd><span class="acc">{{ atmInfo.payment_no }}</span></dd>
+                </div>
+                <div v-if="atmInfo.expire_date" class="bank-row">
+                  <dt>繳費期限</dt>
+                  <dd>{{ formatExpire(atmInfo.expire_date) }}</dd>
+                </div>
+              </dl>
+              <button
+                type="button"
+                class="btn-ghost"
+                :disabled="expired"
+                @click="goToEcpayPayment"
+              >
+                <span>改用其他方式付款</span>
+              </button>
+            </template>
+
+            <!-- 尚未取號 / 尚未付款 -->
+            <template v-else>
+              <p v-if="payResultCode === '1'" class="pay-note pay-note-ok">
+                付款已送出，正在確認中…確認後此頁狀態會自動更新。
+              </p>
+              <p v-else-if="payResultCode" class="pay-note pay-note-warn">
+                這次付款未完成，可重新付款。
+              </p>
+              <p v-else class="pay-note">
+                請前往付款（信用卡 / Apple Pay / ATM / 超商），完成後訂單將自動確認。
+              </p>
+              <button
+                type="button"
+                class="btn-primary"
+                :disabled="expired"
+                @click="goToEcpayPayment"
+              >
+                <Wallet :size="14" />
+                <span>{{ payResultCode ? '重新付款' : '前往付款' }}</span>
+              </button>
+            </template>
+
             <p v-if="expired" class="pay-note pay-note-warn">付款期限已過，無法付款。</p>
           </div>
 

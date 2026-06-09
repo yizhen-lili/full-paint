@@ -940,6 +940,8 @@ Response 200: {
   "shipping_fee": 0, "total": 694,
   "shipping_type": "home",
   "shipping_snapshot": { "recipient_name": "...", "phone": "...", "notify_email": null, "city": "台北市", "district": "信義區", "address_detail": "忠孝東路一段1號", "store_id": null, "store_name": null },
+  "payment_method": "bank_transfer|ecpay",
+  "ecpay_payment": null,
   "payment_deadline": "2026-04-19T12:00:00Z",
   "paid_at": null,
   "items": [{

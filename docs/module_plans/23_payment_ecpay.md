@@ -11,10 +11,10 @@
 
 | 階段 | 範圍 | 對應 ECpay API | 狀態 |
 |---|---|---|---|
-| **階段 0** | module plan + integration spec + 規格比對報告 | — | ⏳ 本文件 |
-| **階段 1** | 即時付款（信用卡 / Apple Pay）：config、model、SHA256、checkout form、ReturnURL webhook、抽 `_apply_paid_side_effects`、create_order 分支 | AioCheckOut + ReturnURL | ⏳ |
-| **階段 2** | ATM / 超商非同步：`ChoosePayment=ALL`、PaymentInfoURL webhook、取號 vs 付款區分、Celery 逾期處理、重新付款 | PaymentInfoURL | ⏳ |
-| **階段 3** | 前端串接：結帳付款方式選擇、OrderResultURL redirect、結果頁顯示虛擬帳號、SSE | OrderResultURL | ⏳ |
+| **階段 0** | module plan + integration spec + 規格比對報告 | — | ✅ 完成 |
+| **階段 1** | 即時付款（信用卡 / Apple Pay）：config、model、SHA256、checkout form、ReturnURL webhook、抽 `_apply_paid_side_effects`、create_order 分支 | AioCheckOut + ReturnURL | ✅ 完成（44 tests，reviewer PASS）|
+| **階段 2** | ATM / 超商非同步：`ChoosePayment=ALL`、PaymentInfoURL webhook、取號 vs 付款區分、Celery 逾期處理、IgnorePayment 上限、重新付款 | PaymentInfoURL | ✅ 完成（61 tests）|
+| **階段 3** | 前端串接：結帳付款方式選擇、OrderResultURL redirect、結果頁顯示虛擬帳號、SSE | OrderResultURL | ✅ 完成（vue-tsc pass）|
 | **階段 4（後）** | 電子發票串接（另一組帳號） | B2C 電子發票 | 🟢 視需求 |
 
 **規則：** 每階段完成後 commit + push + user 實測通過才往下；不自動連跑（同 Module 20）。
@@ -273,9 +273,11 @@ E23（逾期）/ E24 / E25 對 ecpay 訂單行為不變，僅逾期時順帶把 
 - ✅ **建單 email**：ecpay 訂單**不發** email，前端建單成功直接導去付款頁（呼 checkout endpoint）；bank_transfer 維持現狀發銀行帳號 email。
 - ✅ **客製訂單**：與一般訂單走同一 create_order 路徑，**同樣開放** ecpay。
 
+### 已決（階段 2 實作時敲定）
+- ✅ **取號成功 RtnCode**：ATM=2、CVS/BARCODE=10100073（已驗證 ECpay 文件 /16557/，寫成常數 `ATM_CODE_ISSUED_RTN_CODE` / `CVS_CODE_ISSUED_RTN_CODE`）。
+- ✅ **ExpireDate 政策**：不送自訂 ExpireDate/StoreExpireDate（用 ECpay 預設）；取號 webhook 收到 ExpireDate 後把 `order.payment_deadline = min(現有, ExpireDate)`——維持我方庫存保留政策（24-48h），不為未付款訂單長期保留庫存。逾期未繳走 Celery 取消 + awaiting_atm→expired；逾期後才繳費＝孤兒款項，發 admin 通知人工退款。
+
 ### 仍待確認 / 實作時查證
-1. **ATM `ExpireDate` / CVS `StoreExpireDate` 設多久**：是否對齊現有 48h 絕對上限。預設先設 ExpireDate=3 天並取 `min(deadline, ExpireDate)`，實作時敲定。
-2. **取號成功的確切 RtnCode**：ATM=2、CVS/BARCODE 依官方文件最終確認（階段 2 實作時查證並寫成常數）。
 3. **電子發票**：本次**不做**，列階段 4。
 4. **超商代碼/條碼上限 NT$20,000**：超過是否動態隱藏該付款方式（階段 2 處理）。
 5. **ApplePay**：ECpay 後台開通 + 網域驗證檔是否含 ApplePay（A 已備，階段 2 切 ALL 時驗證）。

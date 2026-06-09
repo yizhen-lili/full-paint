@@ -133,6 +133,17 @@ class OrderListItemResponse(BaseModel):
         from_attributes = True
 
 
+class EcpayPaymentInfo(BaseModel):
+    """ECpay 線上付款最新交易資訊（給前端顯示 ATM/超商虛擬帳號 + 狀態）。"""
+    status: str
+    amount: float
+    payment_type: str | None = None
+    bank_code: str | None = None
+    vaccount: str | None = None
+    payment_no: str | None = None
+    expire_date: datetime | None = None
+
+
 class OrderDetailResponse(BaseModel):
     id: UUID
     order_number: str
@@ -148,6 +159,7 @@ class OrderDetailResponse(BaseModel):
     shipping_snapshot: dict
     shipping_locked: bool = False
     payment_method: str = "bank_transfer"
+    ecpay_payment: EcpayPaymentInfo | None = None
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None
@@ -202,6 +214,7 @@ class AdminOrderDetailResponse(BaseModel):
     shipping_snapshot: dict
     shipping_locked: bool = False
     payment_method: str = "bank_transfer"
+    ecpay_payment: EcpayPaymentInfo | None = None
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None

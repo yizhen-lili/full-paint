@@ -76,3 +76,46 @@ class _FakeOrder:
 def test_charge_amount_rounds_to_integer(total, expected):
     from decimal import Decimal
     assert service.charge_amount(_FakeOrder(Decimal(total))) == expected
+
+
+# ── 階段2：IgnorePayment / 取號碼 / ExpireDate 解析 ──────────────────────────
+
+def test_resolve_ignore_payment_excludes_cvs_over_limit():
+    # ALL + 超過 2 萬 → 排除超商/條碼
+    assert service.resolve_ignore_payment(20001, "ALL") == "CVS#BARCODE"
+
+
+def test_resolve_ignore_payment_under_limit_empty():
+    assert service.resolve_ignore_payment(20000, "ALL") == ""
+
+
+def test_resolve_ignore_payment_non_all_empty():
+    # 單選信用卡時不會有超商選項，不需 ignore
+    assert service.resolve_ignore_payment(99999, "Credit") == ""
+
+
+def test_build_all_over_limit_sets_ignore_payment():
+    p = service.build_aio_checkout_params(**_base_kwargs(total_amount=30000, choose_payment="ALL"))
+    assert p.get("IgnorePayment") == "CVS#BARCODE"
+    assert service.verify_check_mac_value(p) is True  # IgnorePayment 也納入簽章
+
+
+@pytest.mark.parametrize("code,expected", [(2, True), (10100073, True), (1, False), (None, False)])
+def test_is_code_issued(code, expected):
+    assert service.is_code_issued(code) is expected
+
+
+def test_parse_ecpay_datetime_date_only():
+    dt = service.parse_ecpay_datetime("2026/06/12")
+    assert dt is not None
+    assert (dt.year, dt.month, dt.day, dt.hour) == (2026, 6, 12, 23)  # 純日期視為 23:59:59
+
+
+def test_parse_ecpay_datetime_full():
+    dt = service.parse_ecpay_datetime("2026/06/12 15:30:00")
+    assert dt is not None and dt.hour == 15
+
+
+def test_parse_ecpay_datetime_invalid():
+    assert service.parse_ecpay_datetime("garbage") is None
+    assert service.parse_ecpay_datetime(None) is None

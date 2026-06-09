@@ -23,6 +23,7 @@ from orders.models import (
     OrderStatusEnum,
     PaymentMethodEnum,
     PaymentSubmission,
+    PaymentTransaction,
     ProductionProgress,
     ProductionProgressStatusEnum,
     Shipment,
@@ -1042,6 +1043,26 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
     )
     subs = subs_result.scalars().all()
 
+    # ECpay 線上付款：取最新一筆交易（給前端顯示 ATM/超商虛擬帳號 + 狀態）
+    ecpay_payment = None
+    if order.payment_method == PaymentMethodEnum.ecpay:
+        txn = (await db.execute(
+            select(PaymentTransaction)
+            .where(PaymentTransaction.order_id == order.id)
+            .order_by(PaymentTransaction.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if txn is not None:
+            ecpay_payment = {
+                "status": txn.status,
+                "amount": float(txn.amount),
+                "payment_type": txn.payment_type,
+                "bank_code": txn.bank_code,
+                "vaccount": txn.vaccount,
+                "payment_no": txn.payment_no,
+                "expire_date": txn.expire_date,
+            }
+
     base = {
         "id": order.id,
         "order_number": order.order_number,
@@ -1057,6 +1078,7 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
         "shipping_snapshot": order.shipping_snapshot,
         "shipping_locked": bool(order.shipping_locked),
         "payment_method": order.payment_method,
+        "ecpay_payment": ecpay_payment,
         "payment_deadline": order.payment_deadline,
         "paid_at": order.paid_at,
         "completed_at": order.completed_at,

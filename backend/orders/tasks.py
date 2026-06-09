@@ -23,6 +23,7 @@ async def _check_payment_expired_async():
     from auth.models import User
     from orders.models import CancelReasonCodeEnum, Order, OrderStatusEnum
     from orders.service import _revert_order_effects, _send_email
+    from payment.service import mark_awaiting_transactions_expired
 
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     async with AsyncSession(bind=engine, expire_on_commit=False) as db:
@@ -51,6 +52,9 @@ async def _check_payment_expired_async():
 
                 locked_order.status = OrderStatusEnum.payment_expired
                 locked_order.cancel_reason_code = CancelReasonCodeEnum.payment_expired
+
+                # ECpay ATM/超商取號後未繳費的交易，隨訂單逾期一併標 expired
+                await mark_awaiting_transactions_expired(db, locked_order.id)
 
                 await _revert_order_effects(db, locked_order)
 
