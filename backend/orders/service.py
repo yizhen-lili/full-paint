@@ -357,13 +357,29 @@ async def reorder_expired_order(
     下架、報價過期等）不中斷整體，回報哪些已加入、哪些無法購買。
     """
     result = await db.execute(
-        select(Order).where(Order.id == order_id, Order.user_id == user_id)
+        select(Order)
+        .where(Order.id == order_id, Order.user_id == user_id)
+        .with_for_update()
     )
     order = result.scalar_one_or_none()
     if order is None:
         raise NotFoundError("訂單不存在")
-    if order.status != OrderStatusEnum.payment_expired:
+
+    now = datetime.now(UTC)
+    is_expired = order.status == OrderStatusEnum.payment_expired
+    # pending_payment 但付款期限已過：Celery 尚未掃到（worker 沒跑 / 還沒到排程），
+    # 視同逾期，先就地過期釋放資源（庫存/折扣券、客製退回 quote_sent）再加回購物車。
+    is_pending_past_deadline = (
+        order.status == OrderStatusEnum.pending_payment
+        and order.payment_deadline is not None
+        and order.payment_deadline < now
+    )
+    if not (is_expired or is_pending_past_deadline):
         raise ConflictError("只有逾期未付的訂單可重新下單")
+
+    if is_pending_past_deadline:
+        await expire_pending_order(db, order)
+        await db.commit()
 
     items_result = await db.execute(
         select(OrderItem).where(OrderItem.order_id == order_id)
@@ -689,6 +705,21 @@ async def _revert_custom_requests_for_order(db: AsyncSession, order_id: UUID) ->
         )
         .values(status=CustomRequestStatusEnum.quote_sent, order_id=None)
     )
+
+
+async def expire_pending_order(db: AsyncSession, order: Order) -> None:
+    """把一筆已過付款期限的 pending_payment 訂單就地標記為 payment_expired 並回滾副作用
+    （釋放庫存/折扣券、客製申請退回 quote_sent）。
+
+    等同 Celery check_payment_expired 對單筆訂單做的事；當 Celery 尚未掃到時（例如
+    worker 未運行或還沒到 5 分鐘排程），reorder 可主動觸發。不寄信、不 commit，由呼叫端決定。
+    """
+    from payment.service import mark_awaiting_transactions_expired  # noqa: PLC0415
+
+    order.status = OrderStatusEnum.payment_expired
+    order.cancel_reason_code = CancelReasonCodeEnum.payment_expired
+    await mark_awaiting_transactions_expired(db, order.id)
+    await _revert_order_effects(db, order)
 
 
 async def complete_order(db: AsyncSession, order: Order) -> None:

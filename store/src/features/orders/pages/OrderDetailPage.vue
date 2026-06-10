@@ -112,6 +112,12 @@ const remainingMs = computed(() =>
 )
 const expired = computed(() => deadline.value !== null && remainingMs.value === 0)
 
+// 可重新下單：已逾期狀態，或仍是待付款但付款期限已過（Celery 尚未翻狀態）
+const canReorder = computed(() => {
+  const s = order.value?.status
+  return s === 'payment_expired' || (s === 'pending_payment' && expired.value)
+})
+
 function pad(n: number): string { return String(n).padStart(2, '0') }
 const countdown = computed(() => {
   const ms = remainingMs.value
@@ -544,7 +550,7 @@ function specSummary(spec: Record<string, unknown>): string {
 
       <!-- 逾期未付：提供「重新下單」把品項加回購物車 -->
       <section
-        v-if="order.status === 'payment_expired'"
+        v-if="canReorder"
         class="refund-banner refund-processing"
       >
         <Wallet :size="20" :stroke-width="1.5" class="refund-icon" />

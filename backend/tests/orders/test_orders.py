@@ -1464,6 +1464,80 @@ async def test_reorder_unauthenticated_401(client, db):
 
 
 @pytest.mark.asyncio
+async def test_reorder_pending_past_deadline_expires_and_readds(client, db):
+    """pending_payment 但付款期限已過（Celery 尚未翻狀態）→ 主動過期 + 加回購物車。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.pending_payment,
+        subtotal=500, discount_amount=0, shipping_fee=0, total=500,
+        shipping_type="home", shipping_snapshot={},
+        payment_deadline=datetime.now(UTC) - timedelta(hours=1),
+        created_at=datetime.now(UTC) - timedelta(hours=49),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="過期前訂單", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 200
+    assert res.json()["added_count"] == 1
+
+    # 原訂單應已被就地標記為 payment_expired
+    await db.refresh(order)
+    assert order.status == OrderStatusEnum.payment_expired
+
+    cart = (await client.get(CART_URL)).json()
+    assert any(item["variant_id"] == str(variant.id) for item in cart["items"])
+
+
+@pytest.mark.asyncio
+async def test_reorder_pending_within_deadline_409(client, db):
+    """pending_payment 且付款期限未過 → 不可重新下單，回 409。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.pending_payment,
+        subtotal=500, discount_amount=0, shipping_fee=0, total=500,
+        shipping_type="home", shipping_snapshot={},
+        payment_deadline=datetime.now(UTC) + timedelta(hours=10),
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="未過期", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_reorder_incomplete_item_unavailable(client, db):
     """order_item 既無變體也無客製 → 列為「品項資料不完整」unavailable。"""
     user = await _make_customer(client, db)
