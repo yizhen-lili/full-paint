@@ -19,6 +19,7 @@ from orders.schemas.request import (
     CreateShipmentRequest,
     FlagPaymentSubmissionRequest,
     PaymentSubmissionRequest,
+    ReassignProductionJobRequest,
     RefundRequest,
     UpdateCartItemRequest,
     UpdateProductionProgressRequest,
@@ -33,6 +34,7 @@ from orders.schemas.response import (
     CartItemMutationResponse,
     CartResponse,
     CheckoutPreviewResponse,
+    CleanupCustomAssetsResponse,
     ConfirmReceivedResponse,
     CreateOrderResponse,
     CreateShipmentResponse,
@@ -468,6 +470,36 @@ async def process_refund(
         cancel_reason_note=order.cancel_reason_note,
         returned_item_count=getattr(order, "_returned_item_count", 0),
     )
+
+
+@router.patch(
+    "/admin/orders/{order_id}/items/{item_id}/production-job",
+    response_model=AdminOrderDetailResponse,
+)
+async def reassign_production_job(
+    order_id: UUID,
+    item_id: UUID,
+    body: ReassignProductionJobRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """重做製作：把客製訂單項目改指向新的 production job（指派後舊 job 可刪）。"""
+    return await service.reassign_production_job(
+        db, order_id, item_id, body.production_job_id
+    )
+
+
+@router.post(
+    "/admin/orders/{order_id}/cleanup-custom-assets",
+    response_model=CleanupCustomAssetsResponse,
+)
+async def cleanup_custom_assets(
+    order_id: UUID,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """取消/退款訂單清理：刪客製製作 job + 客戶照片，保留 order_item 記錄。"""
+    return await service.cleanup_custom_order_assets(db, order_id)
 
 
 @router.patch(

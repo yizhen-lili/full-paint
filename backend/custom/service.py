@@ -505,6 +505,40 @@ async def post_customer_message(
     return msg
 
 
+# 客戶上傳照片只會落在這個 prefix（upload_custom_photo）。delete 嚴格限制在此前綴內，
+# 避免 photo_url 被構造成指向其他 blob（products/... 等）造成任意檔案刪除。
+CUSTOM_PHOTO_PREFIX = "custom_photos/"
+
+
+def delete_custom_photo(photo_url: str | None) -> None:
+    """刪除客戶上傳照片的 Firebase blob（best-effort，失敗只 log 不 raise）。
+
+    photo_url 可能是 gs:// / https://storage.googleapis.com/bucket/path / 已簽名 URL（帶 ?query），
+    解析出純 blob path 後刪除（與 production._make_signed_url 同一套解析）。
+
+    ⚠️ 安全：photo_url 來源含 customer 輸入，**只刪 custom_photos/ 前綴內的 blob**，
+    其他路徑一律拒刪（防止被誘導刪除 bucket 內任意檔案）。
+    """
+    if not photo_url:
+        return
+    from core.firebase import get_bucket  # noqa: PLC0415
+    try:
+        bucket = get_bucket()
+        parts = photo_url.split(f"/{bucket.name}/", 1)
+        if len(parts) != 2:
+            logger.warning("delete-custom-photo 無法解析路徑：%s", photo_url)
+            return
+        blob_path = parts[1].split("?", 1)[0]
+        if not blob_path.startswith(CUSTOM_PHOTO_PREFIX):
+            # 非客製照片前綴 → 拒刪（photo_url 可能被竄改指向他處）
+            logger.warning("delete-custom-photo 拒刪非 custom_photos/ 路徑：%s", blob_path)
+            return
+        bucket.blob(blob_path).delete()
+        logger.info("delete-custom-photo deleted blob=%s", blob_path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("delete-custom-photo failed for %s — %s", photo_url, e)
+
+
 async def update_photo(
     db: AsyncSession, user_id: UUID, request_id: UUID, photo_url: str
 ) -> CustomRequest:
@@ -522,8 +556,8 @@ async def update_photo(
             code="PHOTO_LOCKED_AFTER_NEGOTIATING",
         )
 
-    # TODO: 正式上線前以 Firebase Admin SDK 刪除舊照片
-    logger.info(f"Photo replaced for request {request_id}; old: {req.photo_url}")
+    # 換照片時刪掉舊照片的 Firebase blob（避免孤兒檔累積）
+    delete_custom_photo(req.photo_url)
     req.photo_url = photo_url
     await db.commit()
     await db.refresh(req)

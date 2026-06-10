@@ -310,6 +310,13 @@ class RefundResponse(BaseModel):
     returned_item_count: int
 
 
+class CleanupCustomAssetsResponse(BaseModel):
+    """取消/退款訂單清理結果：刪了幾個 job / 幾張照片、哪些 job 因仍被引用而 skip。"""
+    deleted_jobs: int
+    deleted_photos: int
+    skipped_jobs: list[dict]
+
+
 class AdminNotesUpdateResponse(BaseModel):
     id: UUID
     admin_notes: str | None

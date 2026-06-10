@@ -38,7 +38,11 @@ import {
   useUpdateShippingMutation,
   useLockShippingMutation,
   useRefreshShipmentStatusMutation,
+  useReassignProductionJobMutation,
+  useCleanupCustomAssetsMutation,
 } from '../queries'
+import { listJobs, type JobListItem } from '@/features/production/api'
+import type { CleanupCustomAssetsResult } from '../api'
 import type {
   OrderDetail,
   OrderItem,
@@ -285,6 +289,76 @@ const isRefunded = computed(
   () => !!order.value && ['refunded', 'partially_refunded'].includes(order.value.status),
 )
 
+// ── 重做製作（重新指派 job）+ 取消/退款清理 ──────────────────────────────────
+const reassignMut = useReassignProductionJobMutation(orderId.value)
+const cleanupMut = useCleanupCustomAssetsMutation(orderId.value)
+
+const canCleanupCustom = computed(
+  () =>
+    !!order.value &&
+    ['cancelled', 'refunded', 'partially_refunded', 'payment_expired'].includes(
+      order.value.status,
+    ) &&
+    order.value.items.some((i) => !!i.custom_request_id),
+)
+
+// 重做製作 dialog
+const reassignOpen = ref(false)
+const reassignItem = ref<OrderItem | null>(null)
+const reassignJobs = ref<JobListItem[]>([])
+const reassignLoading = ref(false)
+const reassignError = ref<string | null>(null)
+const selectedJobId = ref<string | null>(null)
+
+async function openReassign(item: OrderItem) {
+  reassignItem.value = item
+  selectedJobId.value = null
+  reassignError.value = null
+  reassignJobs.value = []
+  reassignOpen.value = true
+  if (!item.custom_request_id) return
+  reassignLoading.value = true
+  try {
+    const res = await listJobs({ custom_request_id: item.custom_request_id })
+    // 只列「已完成」且非目前指派的 job
+    reassignJobs.value = res.items.filter(
+      (j) => j.status === 'completed' && j.id !== item.production_job_id,
+    )
+  } catch (e) {
+    reassignError.value = (e as { message?: string }).message || '載入製作任務失敗'
+  } finally {
+    reassignLoading.value = false
+  }
+}
+
+async function doReassign() {
+  if (!reassignItem.value || !selectedJobId.value) return
+  reassignError.value = null
+  try {
+    await reassignMut.mutateAsync({
+      itemId: reassignItem.value.id,
+      productionJobId: selectedJobId.value,
+    })
+    reassignOpen.value = false
+  } catch (e) {
+    reassignError.value = (e as { message?: string }).message || '重新指派失敗'
+  }
+}
+
+// 清理 dialog
+const cleanupOpen = ref(false)
+const cleanupError = ref<string | null>(null)
+const cleanupResult = ref<CleanupCustomAssetsResult | null>(null)
+
+async function doCleanup() {
+  cleanupError.value = null
+  try {
+    cleanupResult.value = await cleanupMut.mutateAsync()
+  } catch (e) {
+    cleanupError.value = (e as { message?: string }).message || '清理失敗'
+  }
+}
+
 const remainingHours = computed(() => {
   if (!order.value?.payment_deadline) return null
   const ms = new Date(order.value.payment_deadline).getTime() - Date.now()
@@ -427,6 +501,10 @@ function copyOrderNumber() {
           <XCircle :size="14" :stroke-width="1.5" />
           取消訂單
         </Button>
+        <Button v-if="canCleanupCustom" variant="ghost" @click="cleanupOpen = true">
+          <X :size="14" :stroke-width="1.5" />
+          清理客製照片與製作檔
+        </Button>
       </div>
     </header>
 
@@ -518,6 +596,14 @@ function copyOrderNumber() {
                     <Wrench :size="12" :stroke-width="1.5" />
                     製作圖檔
                   </RouterLink>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 text-ink-muted hover:text-accent transition-colors"
+                    @click="openReassign(item)"
+                  >
+                    <RotateCcw :size="12" :stroke-width="1.5" />
+                    重做製作
+                  </button>
                 </div>
 
                 <ProductionProgressRow
@@ -926,6 +1012,98 @@ function copyOrderNumber() {
             <Loader2 v-if="updateShippingMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
             儲存
           </Button>
+        </div>
+      </template>
+    </Dialog>
+
+    <!-- 重做製作：把訂單改指向新的 production job -->
+    <Dialog :open="reassignOpen" title="重做製作（重新指派）" @close="reassignOpen = false">
+      <div class="space-y-3">
+        <p class="text-[12px] text-ink-muted leading-[1.7]">
+          選一個此客製申請的「已完成」製作任務，把訂單改指向它。指派後製作進度不受影響，
+          舊製作任務即可到「製作管理」刪除（不會刪到客戶上傳的照片）。
+        </p>
+        <div v-if="reassignLoading" class="py-6 flex justify-center text-ink-muted">
+          <Loader2 :size="18" :stroke-width="1.5" class="animate-spin" />
+        </div>
+        <p v-else-if="reassignJobs.length === 0" class="text-[12px] text-ink-muted">
+          沒有其他「已完成」的製作任務可選。請先到「製作管理」為此客製申請建立並完成一個新任務，再回來指派。
+        </p>
+        <ul v-else class="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+          <li v-for="j in reassignJobs" :key="j.id">
+            <label
+              class="flex items-center gap-3 px-3 py-2 border rounded-[var(--radius-xs)] cursor-pointer transition-colors"
+              :class="selectedJobId === j.id ? 'border-accent bg-accent/[0.06]' : 'border-line-hairline hover:border-accent/40'"
+            >
+              <input v-model="selectedJobId" type="radio" :value="j.id" class="accent-[var(--color-accent)]" />
+              <span class="flex-1 min-w-0 text-[12px]">
+                <span class="font-mono text-ink-strong">#{{ j.id.slice(0, 8) }}</span>
+                <span class="text-ink-muted">
+                  · {{ j.difficulty }}/{{ j.detail }} · {{ j.canvas_w_cm }}×{{ j.canvas_h_cm }}cm
+                  <span v-if="j.num_colors_used">· {{ j.num_colors_used }} 色</span>
+                  · {{ fmtDateTime(j.created_at) }}
+                </span>
+              </span>
+            </label>
+          </li>
+        </ul>
+        <p
+          v-if="reassignError"
+          class="px-3 py-2 border border-state-danger/40 bg-[var(--color-state-danger)]/[0.06] text-state-danger text-[12px] rounded-[var(--radius-xs)]"
+        >{{ reassignError }}</p>
+      </div>
+      <template #footer>
+        <div class="flex items-center justify-end gap-2">
+          <Button variant="secondary" @click="reassignOpen = false">取消</Button>
+          <Button
+            variant="primary"
+            :disabled="!selectedJobId || reassignMut.isPending.value"
+            @click="doReassign"
+          >
+            <Loader2 v-if="reassignMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+            指派此任務
+          </Button>
+        </div>
+      </template>
+    </Dialog>
+
+    <!-- 清理客製照片與製作檔（取消/退款訂單）-->
+    <Dialog :open="cleanupOpen" title="清理客製照片與製作檔" @close="cleanupOpen = false">
+      <div class="space-y-3">
+        <template v-if="!cleanupResult">
+          <p class="text-[13px] text-ink-default leading-[1.7]">
+            此訂單已取消/退款。清理會<b>永久刪除</b>本訂單客製項目的製作任務（含產生的圖檔）
+            與<b>客戶上傳的原始照片</b>，只保留訂單記錄（保留「有訂過」的稽核）。
+          </p>
+          <p class="text-[12px] text-state-danger">此動作不可復原。被其他訂單/商品引用的製作任務會自動略過不刪。</p>
+          <p
+            v-if="cleanupError"
+            class="px-3 py-2 border border-state-danger/40 bg-[var(--color-state-danger)]/[0.06] text-state-danger text-[12px] rounded-[var(--radius-xs)]"
+          >{{ cleanupError }}</p>
+        </template>
+        <template v-else>
+          <p class="text-[13px] text-ink-default">清理完成：</p>
+          <ul class="text-[12px] text-ink-muted space-y-1">
+            <li>刪除製作任務：{{ cleanupResult.deleted_jobs }} 個</li>
+            <li>刪除客戶照片：{{ cleanupResult.deleted_photos }} 張</li>
+            <li v-if="cleanupResult.skipped_jobs.length">
+              略過（仍被引用）：{{ cleanupResult.skipped_jobs.length }} 個
+            </li>
+          </ul>
+        </template>
+      </div>
+      <template #footer>
+        <div class="flex items-center justify-end gap-2">
+          <Button v-if="cleanupResult" variant="primary" @click="cleanupOpen = false; cleanupResult = null">
+            關閉
+          </Button>
+          <template v-else>
+            <Button variant="secondary" @click="cleanupOpen = false">取消</Button>
+            <Button variant="danger" :disabled="cleanupMut.isPending.value" @click="doCleanup">
+              <Loader2 v-if="cleanupMut.isPending.value" :size="14" :stroke-width="1.5" class="animate-spin" />
+              確認清理
+            </Button>
+          </template>
         </div>
       </template>
     </Dialog>

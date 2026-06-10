@@ -1049,6 +1049,28 @@ Request: {
 > 若 returned_item_ids 為部分 items → status=partially_refunded；coupon **不回補**；stock 只回補勾選項  
 > 回饋券撤銷依「剩餘金額是否仍 ≥ trigger_threshold」判斷（見 admin_orders.md §5.7）
 
+### PATCH /admin/orders/{id}/items/{item_id}/production-job
+**權限**：admin｜重做製作（重新指派）：把客製訂單項目改指向新的 production job
+
+```json
+Request: { "production_job_id": "uuid" }
+Response 200: AdminOrderDetailResponse
+```
+> 驗證：order_item 屬該 order 且為客製（custom_request_id 非 null）；new_job.custom_request_id 須 == item.custom_request_id 且 status=completed，否則 400  
+> 更新 order_item.production_job_id + custom_request.quoted_production_job_id；production_progress 綁 order_item 不受影響  
+> 指派後舊 job 已無 order_item 引用 → admin 可用 DELETE /admin/production/jobs/{id} 刪除  
+> 不限訂單狀態（含 shipped/completed；business decision，order_item 金額/快照保留不動）
+
+### POST /admin/orders/{id}/cleanup-custom-assets
+**權限**：admin｜取消/退款訂單清理：刪客製製作 job + 客戶照片，保留 order_item 記錄
+
+```json
+Response 200: { "deleted_jobs": 1, "deleted_photos": 1, "skipped_jobs": [{ "job_id": "uuid", "reason": "string" }] }
+```
+> 前置：order.status ∈ {cancelled, refunded, partially_refunded, payment_expired}，否則 400  
+> 每個客製 order_item：SET NULL production_job_id（保留 order_item 稽核）；刪 custom_request 照片（Firebase + photo_url=NULL，僅限 custom_photos/ 前綴）；刪其所有 production job（被 product_variant/print_batch/其他 order 引用者 skip 回報）  
+> order / order_item / custom_request row 保留（只清照片與製作檔）
+
 ### PATCH /admin/orders/{id}/payment-submissions/{sub_id}/flag
 **權限**：admin｜標記付款資訊有誤，寄 email 通知客戶重新填寫
 

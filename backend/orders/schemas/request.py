@@ -205,3 +205,8 @@ class CancelOrderRequest(BaseModel):
 
 class AdminNotesRequest(BaseModel):
     admin_notes: str
+
+
+class ReassignProductionJobRequest(BaseModel):
+    """重做製作：把客製訂單項目改指向新的 production job。"""
+    production_job_id: UUID

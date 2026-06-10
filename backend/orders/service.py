@@ -1486,6 +1486,125 @@ async def admin_get_order(db: AsyncSession, order_id: UUID) -> dict:
     return await _build_order_detail(db, order, is_admin=True)
 
 
+# 訂單清理可操作的「終態」（已取消 / 退款 / 逾期）
+_CLEANUP_ELIGIBLE_STATUSES = {
+    OrderStatusEnum.cancelled,
+    OrderStatusEnum.refunded,
+    OrderStatusEnum.partially_refunded,
+    OrderStatusEnum.payment_expired,
+}
+
+
+async def reassign_production_job(
+    db: AsyncSession, order_id: UUID, item_id: UUID, new_job_id: UUID
+) -> dict:
+    """重做製作（重新指派）：把客製 order_item 改指向新的 production job。
+
+    production_progress 綁 order_item（非 job），故重新指派不影響製作進度。
+    指派後舊 job 已無此 order_item 引用，admin 可用既有 delete job 刪除。
+
+    ⚠️ 不限訂單狀態（user 2026-06-10 明確選擇「任何狀態都可」）。稽核取捨：對 shipped/
+    completed 訂單重新指派後，原本「實際出貨的製作檔」可被覆寫並刪除——這是 user 為了
+    重做彈性接受的取捨。訂單金額/快照（order_item）始終保留，不受影響。
+    """
+    from custom.models import CustomRequest  # noqa: PLC0415
+    from production.models import JobStatusEnum, ProductionJob  # noqa: PLC0415
+
+    item = (await db.execute(
+        select(OrderItem)
+        .where(OrderItem.id == item_id, OrderItem.order_id == order_id)
+        .with_for_update()
+    )).scalar_one_or_none()
+    if item is None:
+        raise NotFoundError("訂單項目不存在")
+    if item.custom_request_id is None:
+        raise BadRequestError("只有客製訂單項目可重新指派製作任務")
+
+    new_job = await db.get(ProductionJob, new_job_id)
+    if new_job is None:
+        raise NotFoundError("製作任務不存在")
+    if new_job.custom_request_id != item.custom_request_id:
+        raise BadRequestError("新製作任務不屬於此客製申請")
+    if new_job.status != JobStatusEnum.completed:
+        raise BadRequestError("只能指派已完成（completed）的製作任務")
+
+    item.production_job_id = new_job_id
+    # 同步客製申請選定的 job（之後參照都用新 job）
+    await db.execute(
+        update(CustomRequest)
+        .where(CustomRequest.id == item.custom_request_id)
+        .values(quoted_production_job_id=new_job_id)
+    )
+    await db.commit()
+
+    order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one()
+    return await _build_order_detail(db, order, is_admin=True)
+
+
+async def cleanup_custom_order_assets(db: AsyncSession, order_id: UUID) -> dict:
+    """取消/退款/逾期訂單的清理：刪客製製作 job + 客戶上傳照片，保留 order_item 記錄。
+
+    只動「製作檔 + 照片」；order / order_item / custom_request row 保留（留「有訂過」稽核）。
+    被其他 order / 商品規格 / 列印批次引用的 job 會 skip 不刪並回報。
+    """
+    from custom.models import CustomRequest  # noqa: PLC0415
+    from custom.service import delete_custom_photo  # noqa: PLC0415
+    from production.models import ProductionJob  # noqa: PLC0415
+    from production.service import delete_job  # noqa: PLC0415
+
+    order = (await db.execute(
+        select(Order).where(Order.id == order_id).with_for_update()
+    )).scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+    if order.status not in _CLEANUP_ELIGIBLE_STATUSES:
+        raise BadRequestError("僅已取消 / 退款 / 逾期的訂單可清理客製資產")
+
+    items = (await db.execute(
+        select(OrderItem).where(
+            OrderItem.order_id == order_id,
+            OrderItem.custom_request_id.isnot(None),
+        )
+    )).scalars().all()
+
+    request_ids = {it.custom_request_id for it in items if it.custom_request_id}
+
+    # 1. 先解除本訂單所有客製 item 對 job 的連結（保留 order_item，金流稽核不破壞）
+    for it in items:
+        it.production_job_id = None
+    await db.commit()
+
+    deleted_jobs, skipped_jobs, deleted_photos = 0, [], 0
+
+    # 2. 逐個 custom_request：刪照片 + 刪其所有 production job
+    for req_id in request_ids:
+        req = await db.get(CustomRequest, req_id)
+        if req is not None and req.photo_url:
+            delete_custom_photo(req.photo_url)
+            req.photo_url = None
+            await db.commit()
+            deleted_photos += 1
+
+        job_rows = (await db.execute(
+            select(ProductionJob.id).where(ProductionJob.custom_request_id == req_id)
+        )).scalars().all()
+        for job_id in job_rows:
+            try:
+                await delete_job(db, job_id)  # 內部 commit + Firebase 清理
+                deleted_jobs += 1
+            except (BadRequestError, NotFoundError) as e:
+                # 仍被其他 order / 商品 / 批次引用 → 不刪，回報讓 admin 知道。
+                # delete_job 在被引用時於任何 DB 寫入「之前」就 raise，session 無 pending
+                # 變更，不需 rollback（rollback 會 expire 全部物件，反而觸發後續 sync load）。
+                skipped_jobs.append({"job_id": str(job_id), "reason": e.detail})
+
+    return {
+        "deleted_jobs": deleted_jobs,
+        "deleted_photos": deleted_photos,
+        "skipped_jobs": skipped_jobs,
+    }
+
+
 # ── admin order actions ───────────────────────────────────────────────────────
 
 _VALID_STATUS_TRANSITIONS = {
