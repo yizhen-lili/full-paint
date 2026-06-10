@@ -293,6 +293,13 @@ const isRefunded = computed(
 const reassignMut = useReassignProductionJobMutation(orderId.value)
 const cleanupMut = useCleanupCustomAssetsMutation(orderId.value)
 
+// 重做製作只在出貨前（待付款/已付款/備貨中）— 已出貨/完成不給，保護已交付製作檔
+const canReassign = computed(
+  () =>
+    !!order.value &&
+    ['pending_payment', 'paid', 'processing'].includes(order.value.status),
+)
+
 const canCleanupCustom = computed(
   () =>
     !!order.value &&
@@ -597,6 +604,7 @@ function copyOrderNumber() {
                     製作圖檔
                   </RouterLink>
                   <button
+                    v-if="canReassign"
                     type="button"
                     class="inline-flex items-center gap-1 text-ink-muted hover:text-accent transition-colors"
                     @click="openReassign(item)"

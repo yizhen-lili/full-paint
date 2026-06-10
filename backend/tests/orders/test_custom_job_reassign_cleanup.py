@@ -109,6 +109,17 @@ async def test_reassign_rejects_job_of_other_request(db):
         await service.reassign_production_job(db, order.id, item.id, other_job.id)
 
 
+async def test_reassign_rejects_shipped_order(db):
+    """已出貨訂單不可重做製作（保護已交付的製作檔）。"""
+    from core.exceptions import BadRequestError
+    _, cr, old_job, order, item = await _make_custom_order(db, order_status=OrderStatusEnum.shipped)
+    new_job = await _make_job(db, cr.id)
+    await db.commit()
+
+    with pytest.raises(BadRequestError, match="出貨前"):
+        await service.reassign_production_job(db, order.id, item.id, new_job.id)
+
+
 async def test_reassign_rejects_non_completed_job(db):
     from core.exceptions import BadRequestError
     _, cr, old_job, order, item = await _make_custom_order(db)

@@ -1059,7 +1059,7 @@ Response 200: AdminOrderDetailResponse
 > 驗證：order_item 屬該 order 且為客製（custom_request_id 非 null）；new_job.custom_request_id 須 == item.custom_request_id 且 status=completed，否則 400  
 > 更新 order_item.production_job_id + custom_request.quoted_production_job_id；production_progress 綁 order_item 不受影響  
 > 指派後舊 job 已無 order_item 引用 → admin 可用 DELETE /admin/production/jobs/{id} 刪除  
-> 不限訂單狀態（含 shipped/completed；business decision，order_item 金額/快照保留不動）
+> **僅限出貨前訂單**（pending_payment / paid / processing），否則 400；已出貨/完成不可重做（保護已交付製作檔）。order_item 金額/快照不動
 
 ### POST /admin/orders/{id}/cleanup-custom-assets
 **權限**：admin｜取消/退款訂單清理：刪客製製作 job + 客戶照片，保留 order_item 記錄

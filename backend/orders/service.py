@@ -1494,6 +1494,14 @@ _CLEANUP_ELIGIBLE_STATUSES = {
     OrderStatusEnum.payment_expired,
 }
 
+# 重做製作只允許「出貨前」的訂單（待付款 / 已付款 / 備貨中）。
+# 已出貨 / 完成的訂單不可重做，避免覆寫並刪除「實際已交付的製作檔」破壞交付記錄。
+_REASSIGN_ELIGIBLE_STATUSES = {
+    OrderStatusEnum.pending_payment,
+    OrderStatusEnum.paid,
+    OrderStatusEnum.processing,
+}
+
 
 async def reassign_production_job(
     db: AsyncSession, order_id: UUID, item_id: UUID, new_job_id: UUID
@@ -1503,12 +1511,20 @@ async def reassign_production_job(
     production_progress 綁 order_item（非 job），故重新指派不影響製作進度。
     指派後舊 job 已無此 order_item 引用，admin 可用既有 delete job 刪除。
 
-    ⚠️ 不限訂單狀態（user 2026-06-10 明確選擇「任何狀態都可」）。稽核取捨：對 shipped/
-    completed 訂單重新指派後，原本「實際出貨的製作檔」可被覆寫並刪除——這是 user 為了
-    重做彈性接受的取捨。訂單金額/快照（order_item）始終保留，不受影響。
+    僅限「出貨前」訂單（pending_payment / paid / processing，見 _REASSIGN_ELIGIBLE_STATUSES）：
+    已出貨 / 完成的訂單不可重做，避免覆寫並刪除已交付的製作檔、破壞交付記錄。
+    訂單金額 / 規格快照（order_item）始終保留，不受影響。
     """
     from custom.models import CustomRequest  # noqa: PLC0415
     from production.models import JobStatusEnum, ProductionJob  # noqa: PLC0415
+
+    order = (await db.execute(
+        select(Order).where(Order.id == order_id)
+    )).scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+    if order.status not in _REASSIGN_ELIGIBLE_STATUSES:
+        raise BadRequestError("只有出貨前（待付款 / 已付款 / 備貨中）的訂單可重做製作")
 
     item = (await db.execute(
         select(OrderItem)
