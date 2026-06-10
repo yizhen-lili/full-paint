@@ -398,11 +398,20 @@ async def reorder_expired_order(
                     db, user_id, item.custom_request_id, item.quantity
                 )
             else:
-                unavailable.append({"title": title, "reason": "品項資料不完整"})
+                unavailable.append({
+                    "title": title, "reason": "品項資料不完整",
+                    "code": None, "custom_request_id": None,
+                })
                 continue
             added.append({"title": title, "quantity": item.quantity})
         except (ConflictError, NotFoundError) as e:
-            unavailable.append({"title": title, "reason": e.detail})
+            # 帶 code 與 custom_request_id：讓前端能對「客製報價過期」精準引導重新申請
+            unavailable.append({
+                "title": title,
+                "reason": e.detail,
+                "code": e.code,
+                "custom_request_id": item.custom_request_id,
+            })
 
     return {
         "added": added,

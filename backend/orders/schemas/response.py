@@ -43,6 +43,10 @@ class ReorderAddedItem(BaseModel):
 class ReorderUnavailableItem(BaseModel):
     title: str
     reason: str
+    # code：失敗原因代碼（如 QUOTE_EXPIRED）；custom_request_id：客製品項才有值，
+    # 供前端引導「重新申請客製」連結。
+    code: str | None = None
+    custom_request_id: UUID | None = None
 
 
 class ReorderResponse(BaseModel):

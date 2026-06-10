@@ -265,9 +265,16 @@ export async function updateShipping(
 }
 
 // ── Reorder（過期訂單重新下單 → 加回購物車）────────────────────────
+export interface ReorderUnavailableItem {
+  title: string
+  reason: string
+  code: string | null
+  custom_request_id: string | null
+}
+
 export interface ReorderResponse {
   added: { title: string; quantity: number }[]
-  unavailable: { title: string; reason: string }[]
+  unavailable: ReorderUnavailableItem[]
   added_count: number
   unavailable_count: number
 }

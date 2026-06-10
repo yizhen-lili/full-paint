@@ -1293,7 +1293,11 @@ async def test_reorder_inactive_variant_unavailable(client, db):
     body = res.json()
     assert body["added_count"] == 0
     assert body["unavailable_count"] == 1
-    assert body["unavailable"][0]["title"] == "已下架畫布"
+    u = body["unavailable"][0]
+    assert u["title"] == "已下架畫布"
+    # 一般商品下架：非客製，code 與 custom_request_id 應為 null
+    assert u["code"] is None
+    assert u["custom_request_id"] is None
 
     cart = (await client.get(CART_URL)).json()
     assert cart["items"] == []
@@ -1447,7 +1451,12 @@ async def test_reorder_custom_item_quote_valid_and_expired(client, db):
 
     res2 = await client.post(f"{ORDERS_URL}/{order2.id}/reorder")
     assert res2.status_code == 200
-    assert res2.json()["unavailable_count"] == 1
+    body2 = res2.json()
+    assert body2["unavailable_count"] == 1
+    # 客製報價過期應帶 code 與 custom_request_id，供前端引導重新申請
+    u = body2["unavailable"][0]
+    assert u["code"] == "QUOTE_EXPIRED"
+    assert u["custom_request_id"] == str(expired_cr.id)
 
 
 @pytest.mark.asyncio

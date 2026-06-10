@@ -17,7 +17,7 @@ import {
   STATUS_TAB,
 } from '../queries'
 import { useOrderSse } from '../useOrderSse'
-import type { ApiError, UpdateShippingPayload } from '../api'
+import type { ApiError, ReorderResponse, UpdateShippingPayload } from '../api'
 import ShippingProfileForm from '@/features/profile/components/ShippingProfileForm.vue'
 import type { ShippingProfileInput } from '@/features/profile/api'
 import { consumeCvsRedirect, saveCvsRedirect } from '@/features/profile/cvsRedirect'
@@ -326,21 +326,16 @@ async function submitCancel() {
   }
 }
 
-// 過期訂單重新下單：把原品項加回購物車 → 導去購物車重新結帳
+// 過期訂單重新下單：把原品項加回購物車，結果用 modal 顯示（含客製報價過期引導）
 const reorderMut = useReorderMutation(orderId)
+const reorderResult = ref<ReorderResponse | null>(null)
+const reorderError = ref('')
 async function handleReorder() {
+  reorderError.value = ''
   try {
-    const res = await reorderMut.mutateAsync()
-    let msg = `已將 ${res.added_count} 項商品加入購物車`
-    if (res.unavailable_count > 0) {
-      msg += `\n${res.unavailable_count} 項商品已下架或報價過期，無法加入`
-    }
-    alert(msg)
-    if (res.added_count > 0) {
-      router.push('/cart')
-    }
+    reorderResult.value = await reorderMut.mutateAsync()
   } catch (e) {
-    alert((e as ApiError).detail || '重新下單失敗')
+    reorderError.value = (e as ApiError).detail || '重新下單失敗'
   }
 }
 
@@ -572,6 +567,7 @@ function specSummary(spec: Record<string, unknown>): string {
           重新下單
         </button>
       </section>
+      <p v-if="reorderError" class="refund-error">{{ reorderError }}</p>
 
       <!-- 進度 stepper（只在主流程狀態顯示；取消/退款相關不顯示） -->
       <section
@@ -998,6 +994,54 @@ function specSummary(spec: Record<string, unknown>): string {
                     <Loader2 v-if="cancelMut.isPending.value" class="spin" />
                     <span>{{ cancelMut.isPending.value ? '取消中...' : '確認取消' }}</span>
                   </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Transition>
+
+        <!-- 重新下單結果 dialog -->
+        <Transition name="modal">
+          <div v-if="reorderResult" class="modal-overlay" @click.self="reorderResult = null">
+            <div class="modal modal-narrow">
+              <header class="modal-head">
+                <h3 class="modal-title">重新下單</h3>
+                <button type="button" class="modal-close" @click="reorderResult = null">
+                  <X :size="16" />
+                </button>
+              </header>
+              <div class="modal-body">
+                <p v-if="reorderResult.added_count > 0" class="reorder-ok">
+                  <Check :size="14" :stroke-width="2" />
+                  已將 {{ reorderResult.added_count }} 項商品加入購物車
+                </p>
+                <template v-if="reorderResult.unavailable.length">
+                  <p class="reorder-sub">以下商品無法加入：</p>
+                  <ul class="reorder-list">
+                    <li
+                      v-for="(u, i) in reorderResult.unavailable"
+                      :key="i"
+                      class="reorder-item"
+                    >
+                      <span class="reorder-item-title">{{ u.title }}</span>
+                      <span class="reorder-item-reason">{{ u.reason }}</span>
+                      <RouterLink
+                        v-if="u.custom_request_id"
+                        :to="`/custom/requests/${u.custom_request_id}`"
+                        class="reorder-reapply"
+                        @click="reorderResult = null"
+                      >重新申請客製 →</RouterLink>
+                    </li>
+                  </ul>
+                </template>
+                <div class="modal-foot">
+                  <button type="button" class="btn-ghost" @click="reorderResult = null">關閉</button>
+                  <RouterLink
+                    v-if="reorderResult.added_count > 0"
+                    to="/cart"
+                    class="btn-primary"
+                    @click="reorderResult = null"
+                  >前往購物車</RouterLink>
                 </div>
               </div>
             </div>
@@ -2036,6 +2080,46 @@ function specSummary(spec: Record<string, unknown>): string {
   color: var(--color-state-warning);
   margin: 0 0 8px;
   letter-spacing: 0.04em;
+}
+
+.reorder-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--color-state-success, #4a7c59);
+  margin: 0 0 10px;
+}
+.reorder-sub {
+  font-size: 13px;
+  color: var(--color-ink-muted, #8a7f6f);
+  margin: 0 0 8px;
+  letter-spacing: 0.04em;
+}
+.reorder-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.reorder-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--color-paper-subtle, #f3ece0);
+  border-radius: 8px;
+}
+.reorder-item-title { font-size: 14px; }
+.reorder-item-reason { font-size: 12px; color: var(--color-state-warning); }
+.reorder-reapply {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--color-brand-walnut, #6b4f3a);
+  text-decoration: underline;
 }
 
 .modal-enter-active, .modal-leave-active {
