@@ -235,7 +235,135 @@ async def test_cleanup_skips_job_still_referenced_by_variant(db):
     assert item_r.production_job_id is None
 
 
-def test_delete_custom_photo_rejects_non_custom_prefix(monkeypatch):
+async def test_delete_job_severs_dead_order_link(db):
+    """製作管理頁刪 job：只被已退款訂單卡住 → 自動斷開連結並刪除（order_item 保留）。"""
+    from production.service import delete_job
+    _, cr, job, order, item = await _make_custom_order(db, order_status=OrderStatusEnum.refunded)
+
+    await delete_job(db, job.id)
+
+    job_r = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job.id)
+    )).scalar_one_or_none()
+    assert job_r is None  # job 已刪
+    item_r = (await db.execute(select(OrderItem).where(OrderItem.id == item.id))).scalar_one()
+    assert item_r is not None  # 訂單項目保留
+    assert item_r.production_job_id is None  # 連結已斷
+
+
+async def test_delete_job_still_blocked_by_live_order(db):
+    """製作管理頁刪 job：被「活訂單」（已付款）引用 → 仍擋（JOB_BLOCKED_BY_ORDER）。"""
+    from core.exceptions import BadRequestError
+    from production.service import delete_job
+    _, cr, job, order, item = await _make_custom_order(db, order_status=OrderStatusEnum.paid)
+
+    with pytest.raises(BadRequestError) as exc:
+        await delete_job(db, job.id)
+    assert exc.value.code == "JOB_BLOCKED_BY_ORDER"
+    # job 未刪、連結未斷
+    job_r = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job.id)
+    )).scalar_one_or_none()
+    assert job_r is not None
+    item_r = (await db.execute(select(OrderItem).where(OrderItem.id == item.id))).scalar_one()
+    assert item_r.production_job_id == job.id
+
+
+async def test_delete_job_dead_order_plus_variant_no_cascade_keeps_link(db):
+    """原子性：job 同時被退款訂單 + 商品規格引用、cascade=False → raise JOB_REFERENCED，
+    且退款 order_item 連結**不可被斷**（sever 未持久化）。"""
+    from core.exceptions import BadRequestError
+    from product.models import Product, ProductVariant
+    from production.service import delete_job
+    _, cr, job, order, item = await _make_custom_order(db, order_status=OrderStatusEnum.refunded)
+    product = Product(title="x", cover_image_url="x")
+    db.add(product)
+    await db.flush()
+    db.add(ProductVariant(
+        product_id=product.id, production_job_id=job.id, price=1000, price_formula_base=500,
+    ))
+    await db.commit()
+
+    with pytest.raises(BadRequestError) as exc:
+        await delete_job(db, job.id)  # cascade=False
+    assert exc.value.code == "JOB_REFERENCED"
+    # 被 variant 擋下時，退款 order_item 連結未被斷、job 未刪
+    item_r = (await db.execute(select(OrderItem).where(OrderItem.id == item.id))).scalar_one()
+    assert item_r.production_job_id == job.id
+    job_r = (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job.id)
+    )).scalar_one_or_none()
+    assert job_r is not None
+
+
+async def test_batch_delete_blocked_job_does_not_pollute_next(db):
+    """批次刪除：一筆被 variant 擋、一筆可刪 → 被擋筆的退款連結不可被後續成功筆 commit 污染。"""
+    from product.models import Product, ProductVariant
+    from production.service import batch_delete_jobs
+    # A：退款訂單 + variant → 被擋
+    _, crA, jobA, orderA, itemA = await _make_custom_order(
+        db, order_status=OrderStatusEnum.refunded
+    )
+    product = Product(title="x", cover_image_url="x")
+    db.add(product)
+    await db.flush()
+    db.add(ProductVariant(
+        product_id=product.id, production_job_id=jobA.id, price=1000, price_formula_base=500,
+    ))
+    # B：純退款訂單 → 可刪
+    _, crB, jobB, orderB, itemB = await _make_custom_order(
+        db, order_status=OrderStatusEnum.refunded
+    )
+    await db.commit()
+    # 先把 id 取成 local（batch 內失敗會 rollback → expire ORM 物件，避免之後 sync load）
+    job_a_id, item_a_id = jobA.id, itemA.id
+    job_b_id, item_b_id = jobB.id, itemB.id
+
+    results = await batch_delete_jobs(db, [job_a_id, job_b_id])
+
+    assert any(r["job_id"] == job_a_id and not r["ok"] for r in results)
+    assert any(r["job_id"] == job_b_id and r["ok"] for r in results)
+    # A 未刪、連結未污染
+    assert (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job_a_id)
+    )).scalar_one_or_none() is not None
+    itemA_r = (await db.execute(select(OrderItem).where(OrderItem.id == item_a_id))).scalar_one()
+    assert itemA_r.production_job_id == job_a_id
+    # B 已刪、連結已斷
+    assert (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job_b_id)
+    )).scalar_one_or_none() is None
+    itemB_r = (await db.execute(select(OrderItem).where(OrderItem.id == item_b_id))).scalar_one()
+    assert itemB_r.production_job_id is None
+
+
+async def test_delete_job_dead_order_plus_variant_cascade_true(db):
+    """已死訂單 + variant + cascade=True → variant 連帶刪、退款連結斷、job 刪成功。"""
+    from product.models import Product, ProductVariant
+    from production.service import delete_job
+    _, cr, job, order, item = await _make_custom_order(db, order_status=OrderStatusEnum.refunded)
+    product = Product(title="x", cover_image_url="x")
+    db.add(product)
+    await db.flush()
+    variant = ProductVariant(
+        product_id=product.id, production_job_id=job.id, price=1000, price_formula_base=500,
+    )
+    db.add(variant)
+    await db.commit()
+
+    await delete_job(db, job.id, cascade=True)
+
+    assert (await db.execute(
+        select(ProductionJob).where(ProductionJob.id == job.id)
+    )).scalar_one_or_none() is None
+    assert (await db.execute(
+        select(ProductVariant).where(ProductVariant.id == variant.id)
+    )).scalar_one_or_none() is None
+    item_r = (await db.execute(select(OrderItem).where(OrderItem.id == item.id))).scalar_one()
+    assert item_r.production_job_id is None
+
+
+async def test_delete_custom_photo_rejects_non_custom_prefix(monkeypatch):
     """安全：photo_url 指向非 custom_photos/ 路徑時拒刪（防任意檔案刪除）。"""
     from custom import service as cs
 
