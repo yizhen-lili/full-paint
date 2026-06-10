@@ -503,7 +503,7 @@ async def delete_product(db: AsyncSession, product_id: UUID) -> None:
     # CASCADE，products → variants 是 CASCADE 但 variants → order_items 不是，硬刪會
     # IntegrityError 500。雖然「draft 不應該有訂單」是設計直覺，但 update_product
     # 沒擋反向 status 轉移（on_sale → draft 合法），不能假設 invariant 成立。
-    from orders.models import OrderItem  # noqa: PLC0415
+    from orders.models import CartItem, OrderItem  # noqa: PLC0415
 
     referenced = await db.execute(
         select(func.count(OrderItem.id))
@@ -512,6 +512,18 @@ async def delete_product(db: AsyncSession, product_id: UUID) -> None:
     )
     if (referenced.scalar() or 0) > 0:
         raise ConflictError("此商品的變體被訂單引用，無法刪除")
+
+    # cart_items.product_variant_id 同為 RESTRICT；products→variants 雖 CASCADE，但
+    # variants→cart_items 不是，購物車引用會在 cascade 時 IntegrityError → 500。先清掉。
+    await db.execute(
+        CartItem.__table__.delete().where(
+            CartItem.product_variant_id.in_(
+                select(ProductVariant.id).where(
+                    ProductVariant.product_id == product_id
+                )
+            )
+        )
+    )
 
     # off_sale 曾上架過，需確認 admin 已主動停用所有變體（避免誤刪有銷售紀錄的）
     # draft 從未上架過 → 不需此檢查（前面已過 OrderItem 引用檢查）
@@ -877,6 +889,23 @@ async def delete_variant(
     variant = result.scalar_one_or_none()
     if not variant:
         raise NotFoundError("規格變體不存在")
+
+    # order_items / cart_items 的 product_variant_id 都沒設 ondelete（預設 RESTRICT），
+    # 硬刪被引用的 variant 會 IntegrityError → 500。
+    from orders.models import CartItem, OrderItem  # noqa: PLC0415
+
+    order_ref = await db.execute(
+        select(func.count(OrderItem.id)).where(
+            OrderItem.product_variant_id == variant_id
+        )
+    )
+    if (order_ref.scalar() or 0) > 0:
+        raise ConflictError("此規格變體已有訂單紀錄，無法刪除，請改為停用")
+
+    # 購物車是暫存性質：先清掉引用此 variant 的 cart_items，再刪 variant。
+    await db.execute(
+        CartItem.__table__.delete().where(CartItem.product_variant_id == variant_id)
+    )
     await db.delete(variant)
     await db.commit()
 
