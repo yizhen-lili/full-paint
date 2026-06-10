@@ -45,6 +45,7 @@ from orders.schemas.response import (
     PaymentSubmissionResponse,
     ProductionProgressResponse,
     RefundResponse,
+    ReorderResponse,
 )
 
 router = APIRouter(tags=["orders"])
@@ -226,6 +227,17 @@ async def cancel_order(
         refund_amount=float(order.refund_amount) if order.refund_amount else None,
         refunded_at=order.refunded_at,
     )
+
+
+@router.post(
+    "/orders/{order_id}/reorder", status_code=200, response_model=ReorderResponse
+)
+async def reorder_expired_order(
+    order_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.reorder_expired_order(db, current_user.id, order_id)
 
 
 @router.post("/orders/{order_id}/confirm-refund", status_code=204, response_model=None)

@@ -73,6 +73,16 @@ export function useConfirmRefundMutation(orderId: MaybeRefOrGetter<string>) {
   })
 }
 
+export function useReorderMutation(orderId: MaybeRefOrGetter<string>) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => ordersApi.reorderExpiredOrder(toValue(orderId)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cart'] })
+    },
+  })
+}
+
 export function useUpdateShippingMutation(orderId: MaybeRefOrGetter<string>) {
   const queryClient = useQueryClient()
   return useMutation({

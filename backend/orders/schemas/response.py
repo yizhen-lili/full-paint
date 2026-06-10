@@ -35,6 +35,23 @@ class CartResponse(BaseModel):
     subtotal: float
 
 
+class ReorderAddedItem(BaseModel):
+    title: str
+    quantity: int
+
+
+class ReorderUnavailableItem(BaseModel):
+    title: str
+    reason: str
+
+
+class ReorderResponse(BaseModel):
+    added: list[ReorderAddedItem]
+    unavailable: list[ReorderUnavailableItem]
+    added_count: int
+    unavailable_count: int
+
+
 class CheckoutPreviewResponse(BaseModel):
     subtotal: float
     # 一般商品 subtotal（免運門檻計算用，排除客製）

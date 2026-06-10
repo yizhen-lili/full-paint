@@ -347,6 +347,55 @@ async def add_cart_custom_item(
     return cart_item
 
 
+async def reorder_expired_order(
+    db: AsyncSession, user_id: UUID, order_id: UUID
+) -> dict:
+    """過期訂單「重新下單」：把原訂單品項加回購物車，由客戶重新結帳成全新訂單。
+
+    過期時庫存/折扣券/客製綁定都已由 _revert_order_effects 回滾，這裡不去復活舊
+    訂單，而是走正常加購流程重新驗算（庫存留給結帳擋）。逐項加購，單項失敗（商品
+    下架、報價過期等）不中斷整體，回報哪些已加入、哪些無法購買。
+    """
+    result = await db.execute(
+        select(Order).where(Order.id == order_id, Order.user_id == user_id)
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+    if order.status != OrderStatusEnum.payment_expired:
+        raise ConflictError("只有逾期未付的訂單可重新下單")
+
+    items_result = await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order_id)
+    )
+    items = list(items_result.scalars().all())
+
+    added: list[dict] = []
+    unavailable: list[dict] = []
+    for item in items:
+        title = item.product_title_snapshot
+        try:
+            if item.product_variant_id is not None:
+                await add_cart_item(db, user_id, item.product_variant_id, item.quantity)
+            elif item.custom_request_id is not None:
+                await add_cart_custom_item(
+                    db, user_id, item.custom_request_id, item.quantity
+                )
+            else:
+                unavailable.append({"title": title, "reason": "品項資料不完整"})
+                continue
+            added.append({"title": title, "quantity": item.quantity})
+        except (ConflictError, NotFoundError) as e:
+            unavailable.append({"title": title, "reason": e.detail})
+
+    return {
+        "added": added,
+        "unavailable": unavailable,
+        "added_count": len(added),
+        "unavailable_count": len(unavailable),
+    }
+
+
 async def update_cart_item(
     db: AsyncSession, user_id: UUID, item_id: UUID, quantity: int
 ) -> CartItem | None:

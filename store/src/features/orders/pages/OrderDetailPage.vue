@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute, RouterLink } from 'vue-router'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import {
   ArrowLeft, Loader2, Check, Copy, Package, AlertCircle, X, Truck, Wallet,
 } from 'lucide-vue-next'
@@ -10,6 +10,7 @@ import {
   useConfirmReceivedMutation,
   useConfirmRefundMutation,
   useCancelOrderMutation,
+  useReorderMutation,
   useUpdateShippingMutation,
   usePublicSettingsQuery,
   STATUS_LABEL,
@@ -25,6 +26,7 @@ import InfoDrawer from '@/features/info/InfoDrawer.vue'
 const refundInfoOpen = ref(false)
 
 const route = useRoute()
+const router = useRouter()
 const orderId = computed(() => String(route.params.id || ''))
 
 const orderQuery = useOrderDetailQuery(orderId)
@@ -318,6 +320,24 @@ async function submitCancel() {
   }
 }
 
+// 過期訂單重新下單：把原品項加回購物車 → 導去購物車重新結帳
+const reorderMut = useReorderMutation(orderId)
+async function handleReorder() {
+  try {
+    const res = await reorderMut.mutateAsync()
+    let msg = `已將 ${res.added_count} 項商品加入購物車`
+    if (res.unavailable_count > 0) {
+      msg += `\n${res.unavailable_count} 項商品已下架或報價過期，無法加入`
+    }
+    alert(msg)
+    if (res.added_count > 0) {
+      router.push('/cart')
+    }
+  } catch (e) {
+    alert((e as ApiError).detail || '重新下單失敗')
+  }
+}
+
 // 進度 stepper（依 status 點亮）
 // 使用者可見的進度時間軸（5 個主階段）+ 對應 timestamps。
 import { Wallet as WalletStep, CheckCircle2, Hammer, Truck as TruckStep, Sparkles as SparklesStep } from 'lucide-vue-next'
@@ -521,6 +541,31 @@ function specSummary(spec: Record<string, unknown>): string {
         </button>
       </section>
       <p v-if="confirmRefundError" class="refund-error">{{ confirmRefundError }}</p>
+
+      <!-- 逾期未付：提供「重新下單」把品項加回購物車 -->
+      <section
+        v-if="order.status === 'payment_expired'"
+        class="refund-banner refund-processing"
+      >
+        <Wallet :size="20" :stroke-width="1.5" class="refund-icon" />
+        <div class="refund-text">
+          <h3 class="refund-title">付款期限已過</h3>
+          <p class="refund-body">
+            此訂單已逾期取消。您可以重新下單，我們會把訂單內仍可購買的商品加回購物車，
+            讓您重新結帳付款。
+          </p>
+        </div>
+        <button
+          type="button"
+          class="refund-cta"
+          :disabled="reorderMut.isPending.value"
+          @click="handleReorder"
+        >
+          <Loader2 v-if="reorderMut.isPending.value" :size="14" class="spin" />
+          <Package v-else :size="14" :stroke-width="1.5" />
+          重新下單
+        </button>
+      </section>
 
       <!-- 進度 stepper（只在主流程狀態顯示；取消/退款相關不顯示） -->
       <section

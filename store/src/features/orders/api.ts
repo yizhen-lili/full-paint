@@ -263,3 +263,17 @@ export async function updateShipping(
     body: JSON.stringify(payload),
   })
 }
+
+// ── Reorder（過期訂單重新下單 → 加回購物車）────────────────────────
+export interface ReorderResponse {
+  added: { title: string; quantity: number }[]
+  unavailable: { title: string; reason: string }[]
+  added_count: number
+  unavailable_count: number
+}
+
+export async function reorderExpiredOrder(orderId: string): Promise<ReorderResponse> {
+  return jsonRequest<ReorderResponse>(`/orders/${orderId}/reorder`, {
+    method: 'POST',
+  })
+}
