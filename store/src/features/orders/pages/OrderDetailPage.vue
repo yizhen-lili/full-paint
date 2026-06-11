@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute, RouterLink } from 'vue-router'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import {
-  ArrowLeft, Loader2, Check, Copy, Package, AlertCircle, X, Truck, Wallet,
+  ArrowLeft, Loader2, Check, Copy, AlertCircle, X, Truck, Wallet,
 } from 'lucide-vue-next'
 import {
   useOrderDetailQuery,
@@ -10,6 +10,7 @@ import {
   useConfirmReceivedMutation,
   useConfirmRefundMutation,
   useCancelOrderMutation,
+  useReviveMutation,
   useUpdateShippingMutation,
   usePublicSettingsQuery,
   STATUS_LABEL,
@@ -25,10 +26,39 @@ import InfoDrawer from '@/features/info/InfoDrawer.vue'
 const refundInfoOpen = ref(false)
 
 const route = useRoute()
+const router = useRouter()
 const orderId = computed(() => String(route.params.id || ''))
 
 const orderQuery = useOrderDetailQuery(orderId)
 const order = computed(() => orderQuery.data.value ?? null)
+
+// 付款方式：ecpay 線上付款 vs bank_transfer 手動匯款
+const isEcpay = computed(() => order.value?.payment_method === 'ecpay')
+
+// ECpay /result 導回時帶 ?pay=<RtnCode>（"1"=ECpay 端回報成功；DB 狀態以 webhook 為準）
+const payResultCode = computed(() => {
+  const v = route.query.pay
+  return typeof v === 'string' ? v : null
+})
+
+// 前往 ECpay 付款 / 重新付款：整頁導向後端 checkout endpoint（回 auto-submit form）
+function goToEcpayPayment() {
+  window.location.assign(`/api/v1/payment/ecpay/checkout/${orderId.value}`)
+}
+
+// ATM/超商已取號待繳費：顯示虛擬帳號 / 繳費代碼
+const atmInfo = computed(() => {
+  const p = order.value?.ecpay_payment
+  if (p && p.status === 'awaiting_atm' && (p.vaccount || p.payment_no)) return p
+  return null
+})
+function formatExpire(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('zh-TW', { hour12: false })
+  } catch {
+    return iso
+  }
+}
 
 // SSE：訂閱訂單狀態變更（admin 標 paid / 出貨 / webhook 推 ECpay 狀態 / 退款）
 // query invalidate 由 useOrderSse 內部處理
@@ -81,6 +111,12 @@ const remainingMs = computed(() =>
   deadline.value === null ? 0 : Math.max(0, deadline.value - now.value),
 )
 const expired = computed(() => deadline.value !== null && remainingMs.value === 0)
+
+// 可重新申請付款：已逾期狀態，或仍是待付款但付款期限已過（Celery 尚未翻狀態）
+const canRevive = computed(() => {
+  const s = order.value?.status
+  return s === 'payment_expired' || (s === 'pending_payment' && expired.value)
+})
 
 function pad(n: number): string { return String(n).padStart(2, '0') }
 const countdown = computed(() => {
@@ -290,6 +326,22 @@ async function submitCancel() {
   }
 }
 
+// 逾期（未取消）訂單重新申請付款：復活成可付款，回到正常付款流程
+const reviveMut = useReviveMutation(orderId)
+const reviveError = ref('')
+async function handleRevive() {
+  reviveError.value = ''
+  try {
+    const res = await reviveMut.mutateAsync()
+    if (res.discount_dropped) {
+      alert('原折扣券已失效，訂單金額已更新為目前應付金額。')
+    }
+    // 復活後訂單變回待付款，query 失效會自動刷新出「前往付款 / 上傳匯款」UI
+  } catch (e) {
+    reviveError.value = (e as ApiError).detail || '重新申請付款失敗'
+  }
+}
+
 // 進度 stepper（依 status 點亮）
 // 使用者可見的進度時間軸（5 個主階段）+ 對應 timestamps。
 import { Wallet as WalletStep, CheckCircle2, Hammer, Truck as TruckStep, Sparkles as SparklesStep } from 'lucide-vue-next'
@@ -494,6 +546,32 @@ function specSummary(spec: Record<string, unknown>): string {
       </section>
       <p v-if="confirmRefundError" class="refund-error">{{ confirmRefundError }}</p>
 
+      <!-- 逾期未付（未取消）：重新申請付款，把訂單復活成可付款 -->
+      <section
+        v-if="canRevive"
+        class="refund-banner refund-processing"
+      >
+        <Wallet :size="20" :stroke-width="1.5" class="refund-icon" />
+        <div class="refund-text">
+          <h3 class="refund-title">付款期限已過</h3>
+          <p class="refund-body">
+            此訂單已超過付款期限。您可以重新申請付款，系統會重設付款期限，
+            讓您直接前往付款，不需重新下單。
+          </p>
+        </div>
+        <button
+          type="button"
+          class="refund-cta"
+          :disabled="reviveMut.isPending.value"
+          @click="handleRevive"
+        >
+          <Loader2 v-if="reviveMut.isPending.value" :size="14" class="spin" />
+          <Wallet v-else :size="14" :stroke-width="1.5" />
+          重新申請付款
+        </button>
+      </section>
+      <p v-if="reviveError" class="refund-error">{{ reviveError }}</p>
+
       <!-- 進度 stepper（只在主流程狀態顯示；取消/退款相關不顯示） -->
       <section
         v-if="!['cancelled', 'refunded', 'partially_refunded', 'refund_processing', 'payment_expired'].includes(order.status)"
@@ -654,8 +732,68 @@ function specSummary(spec: Record<string, unknown>): string {
             </div>
           </div>
 
-          <!-- Bank info（待付款狀態）-->
-          <div v-if="order.status === 'pending_payment'" class="summary-card">
+          <!-- ECpay 線上付款（待付款 + ecpay）-->
+          <div v-if="order.status === 'pending_payment' && isEcpay" class="summary-card">
+            <h2 class="summary-title">線上付款</h2>
+
+            <!-- ATM/超商已取號，待繳費 -->
+            <template v-if="atmInfo">
+              <p class="pay-note">請於期限前完成繳費，繳費後訂單將自動確認。</p>
+              <dl class="bank">
+                <div v-if="atmInfo.vaccount" class="bank-row">
+                  <dt>ATM 銀行代碼</dt>
+                  <dd>{{ atmInfo.bank_code || '—' }}</dd>
+                </div>
+                <div v-if="atmInfo.vaccount" class="bank-row bank-row-acc">
+                  <dt>虛擬帳號</dt>
+                  <dd><span class="acc">{{ atmInfo.vaccount }}</span></dd>
+                </div>
+                <div v-if="atmInfo.payment_no" class="bank-row bank-row-acc">
+                  <dt>超商繳費代碼</dt>
+                  <dd><span class="acc">{{ atmInfo.payment_no }}</span></dd>
+                </div>
+                <div v-if="atmInfo.expire_date" class="bank-row">
+                  <dt>繳費期限</dt>
+                  <dd>{{ formatExpire(atmInfo.expire_date) }}</dd>
+                </div>
+              </dl>
+              <button
+                type="button"
+                class="btn-ghost"
+                :disabled="expired"
+                @click="goToEcpayPayment"
+              >
+                <span>改用其他方式付款</span>
+              </button>
+            </template>
+
+            <!-- 尚未取號 / 尚未付款 -->
+            <template v-else>
+              <p v-if="payResultCode === '1'" class="pay-note pay-note-ok">
+                付款已送出，正在確認中…確認後此頁狀態會自動更新。
+              </p>
+              <p v-else-if="payResultCode" class="pay-note pay-note-warn">
+                這次付款未完成，可重新付款。
+              </p>
+              <p v-else class="pay-note">
+                請前往付款（信用卡 / Apple Pay / 超商代碼），完成後訂單將自動確認。
+              </p>
+              <button
+                type="button"
+                class="btn-primary"
+                :disabled="expired"
+                @click="goToEcpayPayment"
+              >
+                <Wallet :size="14" />
+                <span>{{ payResultCode ? '重新付款' : '前往付款' }}</span>
+              </button>
+            </template>
+
+            <p v-if="expired" class="pay-note pay-note-warn">付款期限已過，無法付款。</p>
+          </div>
+
+          <!-- Bank info（待付款狀態，手動匯款）-->
+          <div v-if="order.status === 'pending_payment' && !isEcpay" class="summary-card">
             <h2 class="summary-title">匯款資訊</h2>
             <dl class="bank">
               <div class="bank-row">
@@ -692,7 +830,7 @@ function specSummary(spec: Record<string, unknown>): string {
           <!-- Actions -->
           <div class="actions">
             <button
-              v-if="order.status === 'pending_payment' && !showPaymentForm"
+              v-if="order.status === 'pending_payment' && !isEcpay && !showPaymentForm"
               type="button"
               class="btn-primary"
               @click="openPaymentForm"
@@ -864,6 +1002,7 @@ function specSummary(spec: Record<string, unknown>): string {
             </div>
           </div>
         </Transition>
+
       </Teleport>
 
       <!-- 修改地址 Modal -->
@@ -1531,6 +1670,15 @@ function specSummary(spec: Record<string, unknown>): string {
   color: var(--color-ink-strong);
   margin: 0 0 16px;
 }
+
+.pay-note {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-ink-soft, #6b6258);
+  margin: 0 0 14px;
+}
+.pay-note-ok { color: #4a7c59; }
+.pay-note-warn { color: #a8443a; }
 
 .summary-rows .srow {
   display: flex;

@@ -35,6 +35,37 @@ class CartResponse(BaseModel):
     subtotal: float
 
 
+class ReorderAddedItem(BaseModel):
+    title: str
+    quantity: int
+
+
+class ReorderUnavailableItem(BaseModel):
+    title: str
+    reason: str
+    # code：失敗原因代碼（如 QUOTE_EXPIRED）；custom_request_id：客製品項才有值，
+    # 供前端引導「重新申請客製」連結。
+    code: str | None = None
+    custom_request_id: UUID | None = None
+
+
+class ReorderResponse(BaseModel):
+    added: list[ReorderAddedItem]
+    unavailable: list[ReorderUnavailableItem]
+    added_count: int
+    unavailable_count: int
+
+
+class ReviveResponse(BaseModel):
+    order_id: UUID
+    order_number: str
+    status: str
+    total: float
+    payment_deadline: datetime
+    # discount_dropped：原折扣券已失效被去除、金額已重算
+    discount_dropped: bool = False
+
+
 class CheckoutPreviewResponse(BaseModel):
     subtotal: float
     # 一般商品 subtotal（免運門檻計算用，排除客製）
@@ -55,6 +86,8 @@ class CreateOrderResponse(BaseModel):
     order_number: str
     total: float
     payment_deadline: datetime
+    # bank_transfer：payment_info 帶銀行帳號；ecpay：payment_info={}，前端改導去付款頁
+    payment_method: str = "bank_transfer"
     payment_info: dict
 
 
@@ -131,6 +164,17 @@ class OrderListItemResponse(BaseModel):
         from_attributes = True
 
 
+class EcpayPaymentInfo(BaseModel):
+    """ECpay 線上付款最新交易資訊（給前端顯示 ATM/超商虛擬帳號 + 狀態）。"""
+    status: str
+    amount: float
+    payment_type: str | None = None
+    bank_code: str | None = None
+    vaccount: str | None = None
+    payment_no: str | None = None
+    expire_date: datetime | None = None
+
+
 class OrderDetailResponse(BaseModel):
     id: UUID
     order_number: str
@@ -145,6 +189,8 @@ class OrderDetailResponse(BaseModel):
     shipping_preference: str | None
     shipping_snapshot: dict
     shipping_locked: bool = False
+    payment_method: str = "bank_transfer"
+    ecpay_payment: EcpayPaymentInfo | None = None
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None
@@ -198,6 +244,8 @@ class AdminOrderDetailResponse(BaseModel):
     shipping_preference: str | None
     shipping_snapshot: dict
     shipping_locked: bool = False
+    payment_method: str = "bank_transfer"
+    ecpay_payment: EcpayPaymentInfo | None = None
     payment_deadline: datetime | None
     paid_at: datetime | None
     completed_at: datetime | None
@@ -291,6 +339,13 @@ class RefundResponse(BaseModel):
     refunded_at: datetime | None
     cancel_reason_note: str | None
     returned_item_count: int
+
+
+class CleanupCustomAssetsResponse(BaseModel):
+    """取消/退款訂單清理結果：刪了幾個 job / 幾張照片、哪些 job 因仍被引用而 skip。"""
+    deleted_jobs: int
+    deleted_photos: int
+    skipped_jobs: list[dict]
 
 
 class AdminNotesUpdateResponse(BaseModel):

@@ -102,6 +102,16 @@ export interface OrderDetail {
     [k: string]: string | undefined
   }
   shipping_locked: boolean
+  payment_method: 'bank_transfer' | 'ecpay'
+  ecpay_payment: {
+    status: 'created' | 'awaiting_atm' | 'paid' | 'failed' | 'expired'
+    amount: number
+    payment_type: string | null
+    bank_code: string | null
+    vaccount: string | null
+    payment_no: string | null
+    expire_date: string | null
+  } | null
   payment_deadline: string | null
   paid_at: string | null
   completed_at: string | null
@@ -251,5 +261,42 @@ export async function updateShipping(
   return jsonRequest<OrderDetail>(`/orders/${orderId}/shipping`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  })
+}
+
+// ── Reorder（過期訂單重新下單 → 加回購物車）────────────────────────
+export interface ReorderUnavailableItem {
+  title: string
+  reason: string
+  code: string | null
+  custom_request_id: string | null
+}
+
+export interface ReorderResponse {
+  added: { title: string; quantity: number }[]
+  unavailable: ReorderUnavailableItem[]
+  added_count: number
+  unavailable_count: number
+}
+
+export async function reorderExpiredOrder(orderId: string): Promise<ReorderResponse> {
+  return jsonRequest<ReorderResponse>(`/orders/${orderId}/reorder`, {
+    method: 'POST',
+  })
+}
+
+// ── Revive（逾期訂單重新申請付款 → 復活成可付款）──────────────────
+export interface ReviveResponse {
+  order_id: string
+  order_number: string
+  status: OrderStatus
+  total: number
+  payment_deadline: string
+  discount_dropped: boolean
+}
+
+export async function reviveExpiredOrder(orderId: string): Promise<ReviveResponse> {
+  return jsonRequest<ReviveResponse>(`/orders/${orderId}/revive`, {
+    method: 'POST',
   })
 }

@@ -73,6 +73,27 @@ export function useConfirmRefundMutation(orderId: MaybeRefOrGetter<string>) {
   })
 }
 
+export function useReorderMutation(orderId: MaybeRefOrGetter<string>) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => ordersApi.reorderExpiredOrder(toValue(orderId)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cart'] })
+    },
+  })
+}
+
+export function useReviveMutation(orderId: MaybeRefOrGetter<string>) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => ordersApi.reviveExpiredOrder(toValue(orderId)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['order', toValue(orderId)] })
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+    },
+  })
+}
+
 export function useUpdateShippingMutation(orderId: MaybeRefOrGetter<string>) {
   const queryClient = useQueryClient()
   return useMutation({

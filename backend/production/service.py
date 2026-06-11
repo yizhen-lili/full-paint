@@ -336,10 +336,10 @@ async def delete_job(
             "若 worker 確認卡死，可改用 force=true 強制刪除（產生的 Firebase 物件可能成 orphan）。"
         )
 
-    # 檢查是否被其他表引用
+    # 檢查是否被其他表引用（已死訂單的 order_item 不算 blocking，見 _check_job_references）
     refs = await _check_job_references(db, job_id)
     if refs:
-        # 任何 order_item 引用 → 不論 cascade 都拒絕（金流稽核紅線）
+        # 仍被「活訂單」order_item 引用 → 不論 cascade 都拒絕（金流稽核紅線）
         if any(group["type"] == "order_item" for group in refs):
             raise BadRequestError(
                 detail="任務被訂單引用，請先處理該訂單（取消 / 退款）再刪除",
@@ -355,6 +355,11 @@ async def delete_job(
             )
         # cascade=True → 把引用先刪掉
         await _cascade_delete_refs(db, refs)
+
+    # 所有引用檢查通過、確定要刪 → 此時才斷開「已死訂單」（取消/退款/逾期）的 order_item
+    # 連結。放在所有 raise「之後」確保：任何被擋的路徑都不會留下 pending 寫入（避免
+    # 「job 沒刪但訂單連結被斷」的不一致，且不污染同 session 後續批次刪除）。
+    await _sever_dead_order_links(db, job_id)
 
     # DB 刪除：先刪子資料再刪 job row（palette_color_mappings FK NOT NULL，
     # 不能 SET NULL；schema 沒 ondelete CASCADE 所以手動 DELETE）
@@ -406,6 +411,9 @@ async def batch_delete_jobs(
             await delete_job(db, job_id, force=force, cascade=cascade)
             results.append({"job_id": job_id, "ok": True, "error": None, "references": None})
         except (BadRequestError, NotFoundError) as e:
+            # 失敗即 rollback：把「一筆失敗 → session 無殘留 pending」做成硬契約，
+            # 不依賴「raise 永遠在寫入前」這個脆弱前提，避免污染後續成功筆的 commit。
+            await db.rollback()
             # 從 AppError.extra 取出結構化 references（若有），讓前端可展示細節
             refs = (e.extra or {}).get("references") if hasattr(e, "extra") else None
             results.append({
@@ -413,12 +421,50 @@ async def batch_delete_jobs(
                 "references": refs,
             })
         except Exception as e:  # noqa: BLE001
+            await db.rollback()
             logger.exception("batch_delete_jobs unexpected error for %s", job_id)
             results.append({
                 "job_id": job_id, "ok": False, "error": f"未預期錯誤：{e}",
                 "references": None,
             })
     return results
+
+
+async def _sever_dead_order_links(db: AsyncSession, job_id: UUID) -> None:
+    """把引用此 job、且訂單已是終態（取消 / 退款 / 部分退款 / 逾期）的 order_item
+    production_job_id SET NULL（flush 不 commit，由 delete_job 統一 commit）。
+
+    這些訂單已死，斷開製作連結不影響金流稽核（order_item 金額 / 快照保留）；目的是讓
+    「只被已退款 / 取消訂單卡住」的 job 能在製作管理頁直接刪除，不必繞到訂單頁清理。
+    活訂單（pending_payment / paid / processing / shipped / completed / refund_processing）
+    的引用不會被斷，仍由 _check_job_references + delete_job 擋住。
+    """
+    from sqlalchemy import update  # noqa: PLC0415
+
+    from orders.models import Order, OrderItem, OrderStatusEnum  # noqa: PLC0415
+
+    dead_statuses = {
+        OrderStatusEnum.cancelled,
+        OrderStatusEnum.refunded,
+        OrderStatusEnum.partially_refunded,
+        OrderStatusEnum.payment_expired,
+    }
+    item_ids = (await db.execute(
+        select(OrderItem.id)
+        .join(Order, OrderItem.order_id == Order.id)
+        .where(OrderItem.production_job_id == job_id, Order.status.in_(dead_statuses))
+    )).scalars().all()
+    if item_ids:
+        await db.execute(
+            update(OrderItem)
+            .where(OrderItem.id.in_(item_ids))
+            .values(production_job_id=None)
+        )
+        await db.flush()
+        logger.info(
+            "delete-job severed %d dead-order order_item link(s) for job %s",
+            len(item_ids), job_id,
+        )
 
 
 async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[dict]:
@@ -438,8 +484,19 @@ async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[dict]:
       ...
     ]
 
-    空 list 代表沒引用，可安全刪。"""
-    from orders.models import Order, OrderItem  # noqa: PLC0415
+    空 list 代表沒引用，可安全刪。
+
+    注意：已死訂單（取消 / 退款 / 逾期）的 order_item **不列為 blocking 引用**——它們會在
+    delete_job 確定要刪時由 _sever_dead_order_links 自動斷開。只有「活訂單」的 order_item
+    才會擋刪（金流稽核紅線）。"""
+    from orders.models import Order, OrderItem, OrderStatusEnum  # noqa: PLC0415
+
+    dead_statuses = {
+        OrderStatusEnum.cancelled,
+        OrderStatusEnum.refunded,
+        OrderStatusEnum.partially_refunded,
+        OrderStatusEnum.payment_expired,
+    }
     from print_batch.models import PrintBatch, PrintBatchItem  # noqa: PLC0415
     from product.models import Product, ProductVariant  # noqa: PLC0415
 
@@ -487,11 +544,14 @@ async def _check_job_references(db: AsyncSession, job_id: UUID) -> list[dict]:
             ],
         })
 
-    # ── order_item：join order 拿 order_number + status（永遠 blocking）──
+    # ── order_item：只列「活訂單」（已死訂單會被自動斷開，不算 blocking）──
     oi_rows = (await db.execute(
         select(OrderItem, Order)
         .join(Order, OrderItem.order_id == Order.id)
-        .where(OrderItem.production_job_id == job_id)
+        .where(
+            OrderItem.production_job_id == job_id,
+            Order.status.notin_(dead_statuses),
+        )
     )).all()
     if oi_rows:
         refs.append({

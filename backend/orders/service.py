@@ -21,7 +21,9 @@ from orders.models import (
     Order,
     OrderItem,
     OrderStatusEnum,
+    PaymentMethodEnum,
     PaymentSubmission,
+    PaymentTransaction,
     ProductionProgress,
     ProductionProgressStatusEnum,
     Shipment,
@@ -345,6 +347,223 @@ async def add_cart_custom_item(
     return cart_item
 
 
+async def reorder_expired_order(
+    db: AsyncSession, user_id: UUID, order_id: UUID
+) -> dict:
+    """過期訂單「重新下單」：把原訂單品項加回購物車，由客戶重新結帳成全新訂單。
+
+    過期時庫存/折扣券/客製綁定都已由 _revert_order_effects 回滾，這裡不去復活舊
+    訂單，而是走正常加購流程重新驗算（庫存留給結帳擋）。逐項加購，單項失敗（商品
+    下架、報價過期等）不中斷整體，回報哪些已加入、哪些無法購買。
+    """
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id, Order.user_id == user_id)
+        .with_for_update()
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+
+    now = datetime.now(UTC)
+    is_expired = order.status == OrderStatusEnum.payment_expired
+    # pending_payment 但付款期限已過：Celery 尚未掃到（worker 沒跑 / 還沒到排程），
+    # 視同逾期，先就地過期釋放資源（庫存/折扣券、客製退回 quote_sent）再加回購物車。
+    is_pending_past_deadline = (
+        order.status == OrderStatusEnum.pending_payment
+        and order.payment_deadline is not None
+        and order.payment_deadline < now
+    )
+    if not (is_expired or is_pending_past_deadline):
+        raise ConflictError("只有逾期未付的訂單可重新下單")
+
+    if is_pending_past_deadline:
+        await expire_pending_order(db, order)
+        await db.commit()
+
+    items_result = await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order_id)
+    )
+    items = list(items_result.scalars().all())
+
+    added: list[dict] = []
+    unavailable: list[dict] = []
+    for item in items:
+        title = item.product_title_snapshot
+        try:
+            if item.product_variant_id is not None:
+                await add_cart_item(db, user_id, item.product_variant_id, item.quantity)
+            elif item.custom_request_id is not None:
+                await add_cart_custom_item(
+                    db, user_id, item.custom_request_id, item.quantity
+                )
+            else:
+                unavailable.append({
+                    "title": title, "reason": "品項資料不完整",
+                    "code": None, "custom_request_id": None,
+                })
+                continue
+            added.append({"title": title, "quantity": item.quantity})
+        except (ConflictError, NotFoundError) as e:
+            # 帶 code 與 custom_request_id：讓前端能對「客製報價過期」精準引導重新申請
+            unavailable.append({
+                "title": title,
+                "reason": e.detail,
+                "code": e.code,
+                "custom_request_id": item.custom_request_id,
+            })
+
+    return {
+        "added": added,
+        "unavailable": unavailable,
+        "added_count": len(added),
+        "unavailable_count": len(unavailable),
+    }
+
+
+async def revive_expired_order(
+    db: AsyncSession, user_id: UUID, order_id: UUID
+) -> dict:
+    """逾期（未取消）訂單「重新申請付款」：復活成 pending_payment 可付款。
+
+    用即時期限判定（不依賴 Celery）：payment_expired，或 pending_payment 但已過期。
+    重新綁定客製（quote_confirmed，修復舊邏輯退回 quote_sent/解綁的資料）、重新扣庫存、
+    重新搶回原折扣券（失效則去除並重算 total）、重設付款期限。客製沿用下單時鎖定在
+    order_item 的價格，不需重新報價。
+    """
+    from custom.models import CustomRequest, CustomRequestStatusEnum  # noqa: PLC0415
+    from discount.models import UserCoupon  # noqa: PLC0415
+
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id, Order.user_id == user_id)
+        .with_for_update()
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+
+    now = datetime.now(UTC)
+    is_expired = order.status == OrderStatusEnum.payment_expired
+    is_pending_past_deadline = (
+        order.status == OrderStatusEnum.pending_payment
+        and order.payment_deadline is not None
+        and order.payment_deadline < now
+    )
+    if not (is_expired or is_pending_past_deadline):
+        raise ConflictError("此訂單目前無法重新付款")
+
+    # 1. 重新綁定客製（不論目前狀態，修復「已被退回 quote_sent/quote_expired/解綁」的舊資料）
+    custom_ids = (await db.execute(
+        select(OrderItem.custom_request_id).where(
+            OrderItem.order_id == order_id,
+            OrderItem.custom_request_id.isnot(None),
+        )
+    )).scalars().all()
+    if custom_ids:
+        await db.execute(
+            update(CustomRequest)
+            .where(CustomRequest.id.in_(custom_ids))
+            .values(
+                status=CustomRequestStatusEnum.quote_confirmed, order_id=order.id
+            )
+        )
+
+    # 2. 重新扣庫存（逾期時已 _restore_stock 回補；不足自動轉預購、不卡關）
+    items = list((await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order_id)
+    )).scalars().all())
+    deduct_input = [
+        {
+            "is_custom": it.custom_request_id is not None,
+            "production_job_id": it.production_job_id,
+            "quantity": it.quantity,
+        }
+        for it in items
+    ]
+    fulfilled = await _deduct_stock(db, deduct_input)
+    for it, f in zip(items, fulfilled, strict=True):
+        it.fulfilled_qty = f
+        it.preorder_qty = it.quantity - f
+
+    # 3. 重新搶回原折扣（逾期時 revert_coupon 已把券設回可用、促銷碼 total_used 減回）。
+    #    只有「綁定在 order.user_coupon_id 的會員券」能可靠重新搶回（沿用原 discount snapshot）；
+    #    促銷碼/其他來源（order.user_coupon_id 為 None）逾期時已被 revert，無法可靠重新佔用名額，
+    #    一律去除折扣並重算 total —— 否則促銷碼名額會被無限回收、且客戶白享折扣。
+    discount_dropped = False
+    if order.user_coupon_id is not None:
+        uc = (await db.execute(
+            select(UserCoupon).where(
+                UserCoupon.id == order.user_coupon_id,
+                UserCoupon.user_id == user_id,
+            )
+        )).scalar_one_or_none()
+        reusable = (
+            uc is not None
+            and not uc.is_used
+            and (uc.expires_at is None or uc.expires_at > now)
+        )
+        if reusable:
+            claimed = await db.execute(
+                update(UserCoupon)
+                .where(
+                    UserCoupon.id == order.user_coupon_id,
+                    UserCoupon.is_used == False,  # noqa: E712
+                )
+                .values(is_used=True, used_at=now, used_in_order_id=order.id)
+                .returning(UserCoupon.id)
+            )
+            reusable = claimed.scalar_one_or_none() is not None
+        if not reusable:
+            discount_dropped = True
+    elif order.discount_amount is not None and order.discount_amount > 0:
+        # 促銷碼 / auto_checkout / 其他非會員券折扣 → 一律去除（避免名額回收漏洞）
+        discount_dropped = True
+
+    if discount_dropped:
+        order.user_coupon_id = None
+        order.auto_checkout_config_id = None
+        order.discount_amount = Decimal("0")
+        order.discount_source = None
+        order.total = (
+            Decimal(str(order.subtotal)) + Decimal(str(order.shipping_fee))
+        )
+
+    # 4. 重設付款期限 + 復活狀態
+    deadline_hours = int(
+        await get_system_setting(db, "payment_absolute_deadline_hours") or "48"
+    )
+    order.payment_deadline = now + timedelta(hours=deadline_hours)
+    order.status = OrderStatusEnum.pending_payment
+    order.cancel_reason_code = None
+    order.cancel_reason_note = None
+
+    await db.commit()
+    await db.refresh(order)
+
+    user = (await db.execute(
+        select(User).where(User.id == user_id)
+    )).scalar_one()
+    await _send_email(
+        to=user.email,
+        subject=f"【易木 YIIMUI】訂單已恢復付款 {order.order_number}",
+        html=(
+            f"<p>您的訂單 {order.order_number} 已恢復付款。</p>"
+            f"<p>應付金額：NT${float(order.total):,.0f}</p>"
+            f"<p>付款期限：{order.payment_deadline.strftime('%Y-%m-%d %H:%M')}</p>"
+        ),
+    )
+
+    return {
+        "order_id": order.id,
+        "order_number": order.order_number,
+        "status": order.status,
+        "total": float(order.total),
+        "payment_deadline": order.payment_deadline,
+        "discount_dropped": discount_dropped,
+    }
+
+
 async def update_cart_item(
     db: AsyncSession, user_id: UUID, item_id: UUID, quantity: int
 ) -> CartItem | None:
@@ -605,15 +824,19 @@ async def _restore_stock_for_items(
             )
 
 
-async def _revert_order_effects(db: AsyncSession, order: Order) -> None:
+async def _revert_order_effects(
+    db: AsyncSession, order: Order, *, keep_custom: bool = False
+) -> None:
     await _restore_stock(db, order.id)
     await discount_svc.revert_coupon(db, order.id)
     await discount_svc.revoke_reward_coupons(
         db, order.id, refund_amount=float(order.total), order_total=float(order.total)
     )
-    # 客製訂單取消 → 還原 custom_request 狀態（quote_confirmed → quote_sent，
-    # 客戶可重新申請或續用原報價在 expires_at 內加進購物車再買）
-    await _revert_custom_requests_for_order(db, order.id)
+    # 客製訂單取消 → 還原 custom_request 狀態（quote_confirmed → quote_sent）。
+    # keep_custom=True（付款逾期）時不拆客製綁定：訂單還能「重新申請付款」復活，
+    # 客製維持 quote_confirmed 綁在訂單上，避免詳情頁誤顯示「前往報價頁/已失效」。
+    if not keep_custom:
+        await _revert_custom_requests_for_order(db, order.id)
 
 
 async def _revert_custom_requests_for_order(db: AsyncSession, order_id: UUID) -> None:
@@ -640,6 +863,22 @@ async def _revert_custom_requests_for_order(db: AsyncSession, order_id: UUID) ->
     )
 
 
+async def expire_pending_order(db: AsyncSession, order: Order) -> None:
+    """把一筆已過付款期限的 pending_payment 訂單就地標記為 payment_expired 並回滾副作用
+    （釋放庫存/折扣券）。客製綁定刻意保留（keep_custom=True），訂單仍可「重新申請付款」復活。
+
+    等同 Celery check_payment_expired 對單筆訂單做的事；當 Celery 尚未掃到時（例如
+    worker 未運行或還沒到 5 分鐘排程），reorder/revive 可主動觸發。不寄信、不 commit，由呼叫端決定。
+    """
+    from payment.service import mark_awaiting_transactions_expired  # noqa: PLC0415
+
+    order.status = OrderStatusEnum.payment_expired
+    order.cancel_reason_code = CancelReasonCodeEnum.payment_expired
+    await mark_awaiting_transactions_expired(db, order.id)
+    # keep_custom=True：逾期不拆客製綁定，讓訂單可「重新申請付款」復活
+    await _revert_order_effects(db, order, keep_custom=True)
+
+
 async def complete_order(db: AsyncSession, order: Order) -> None:
     """E40: Issue reward coupon after order completion."""
     await discount_svc.issue_reward_coupon(
@@ -655,6 +894,7 @@ async def create_order(
     user_coupon_id: UUID | None,
     promo_code: str | None,
     customer_notes: str | None,
+    payment_method: str = PaymentMethodEnum.bank_transfer.value,
 ) -> dict:
     """建單：cart 同時含一般商品 + 客製 line 時都處理。
 
@@ -838,6 +1078,7 @@ async def create_order(
         shipping_preference=shipping_preference,
         shipping_snapshot=shipping_snapshot,
         payment_deadline=payment_deadline,
+        payment_method=PaymentMethodEnum(payment_method),
         customer_notes=customer_notes,
     )
     db.add(order)
@@ -900,27 +1141,34 @@ async def create_order(
             logger.warning("SSE publish for quote_confirmed failed: %s", e)
 
     # 10. Send confirmation email
-    payment_info = await _get_payment_info(db)
+    is_ecpay = PaymentMethodEnum(payment_method) == PaymentMethodEnum.ecpay
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one()
-    await _send_email(
-        to=user.email,
-        subject=f"【易木 YIIMUI】訂單確認 {order_number}",
-        html=(
-            f"<p>感謝您的訂單！訂單編號：{order_number}</p>"
-            f"<p>應付金額：NT${float(total)}</p>"
-            f"<p>付款期限：{payment_deadline.strftime('%Y-%m-%d %H:%M')}</p>"
-            f"<p>匯款帳號：{payment_info.get('bank_name', '')} "
-            f"{payment_info.get('bank_account_number', '')}</p>"
-            f"<p>戶名：{payment_info.get('bank_account_name', '')}</p>"
-        ),
-    )
+    if is_ecpay:
+        # ECpay 線上付款：不發銀行帳號 email。前端建單成功直接導去 ECpay 付款頁
+        # （呼 GET /payment/ecpay/checkout/{order_id}）。payment_info 回 null。
+        payment_info: dict = {}
+    else:
+        payment_info = await _get_payment_info(db)
+        await _send_email(
+            to=user.email,
+            subject=f"【易木 YIIMUI】訂單確認 {order_number}",
+            html=(
+                f"<p>感謝您的訂單！訂單編號：{order_number}</p>"
+                f"<p>應付金額：NT${float(total)}</p>"
+                f"<p>付款期限：{payment_deadline.strftime('%Y-%m-%d %H:%M')}</p>"
+                f"<p>匯款帳號：{payment_info.get('bank_name', '')} "
+                f"{payment_info.get('bank_account_number', '')}</p>"
+                f"<p>戶名：{payment_info.get('bank_account_name', '')}</p>"
+            ),
+        )
 
-    # 10.5 Admin in-app 通知 + email（新訂單成立，等待匯款）
+    # 10.5 Admin in-app 通知（新訂單成立）
+    waiting_msg = "等待線上付款" if is_ecpay else "等待客戶匯款"
     await create_notification(
         db,
         type="new_order",
-        message=f"新訂單 {order_number}（NT$ {float(total):,.0f}）— 等待客戶匯款",
+        message=f"新訂單 {order_number}（NT$ {float(total):,.0f}）— {waiting_msg}",
         reference_type="order",
         reference_id=order.id,
         requires_action=False,
@@ -931,6 +1179,7 @@ async def create_order(
         "order_number": order_number,
         "total": float(total),
         "payment_deadline": payment_deadline,
+        "payment_method": payment_method,
         "payment_info": payment_info,
     }
 
@@ -1031,6 +1280,26 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
     )
     subs = subs_result.scalars().all()
 
+    # ECpay 線上付款：取最新一筆交易（給前端顯示 ATM/超商虛擬帳號 + 狀態）
+    ecpay_payment = None
+    if order.payment_method == PaymentMethodEnum.ecpay:
+        txn = (await db.execute(
+            select(PaymentTransaction)
+            .where(PaymentTransaction.order_id == order.id)
+            .order_by(PaymentTransaction.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if txn is not None:
+            ecpay_payment = {
+                "status": txn.status,
+                "amount": float(txn.amount),
+                "payment_type": txn.payment_type,
+                "bank_code": txn.bank_code,
+                "vaccount": txn.vaccount,
+                "payment_no": txn.payment_no,
+                "expire_date": txn.expire_date,
+            }
+
     base = {
         "id": order.id,
         "order_number": order.order_number,
@@ -1045,6 +1314,8 @@ async def _build_order_detail(db: AsyncSession, order: Order, is_admin: bool = F
         "shipping_preference": order.shipping_preference,
         "shipping_snapshot": order.shipping_snapshot,
         "shipping_locked": bool(order.shipping_locked),
+        "payment_method": order.payment_method,
+        "ecpay_payment": ecpay_payment,
         "payment_deadline": order.payment_deadline,
         "paid_at": order.paid_at,
         "completed_at": order.completed_at,
@@ -1452,6 +1723,141 @@ async def admin_get_order(db: AsyncSession, order_id: UUID) -> dict:
     return await _build_order_detail(db, order, is_admin=True)
 
 
+# 訂單清理可操作的「終態」（已取消 / 退款 / 逾期）
+_CLEANUP_ELIGIBLE_STATUSES = {
+    OrderStatusEnum.cancelled,
+    OrderStatusEnum.refunded,
+    OrderStatusEnum.partially_refunded,
+    OrderStatusEnum.payment_expired,
+}
+
+# 重做製作只允許「出貨前」的訂單（待付款 / 已付款 / 備貨中）。
+# 已出貨 / 完成的訂單不可重做，避免覆寫並刪除「實際已交付的製作檔」破壞交付記錄。
+_REASSIGN_ELIGIBLE_STATUSES = {
+    OrderStatusEnum.pending_payment,
+    OrderStatusEnum.paid,
+    OrderStatusEnum.processing,
+}
+
+
+async def reassign_production_job(
+    db: AsyncSession, order_id: UUID, item_id: UUID, new_job_id: UUID
+) -> dict:
+    """重做製作（重新指派）：把客製 order_item 改指向新的 production job。
+
+    production_progress 綁 order_item（非 job），故重新指派不影響製作進度。
+    指派後舊 job 已無此 order_item 引用，admin 可用既有 delete job 刪除。
+
+    僅限「出貨前」訂單（pending_payment / paid / processing，見 _REASSIGN_ELIGIBLE_STATUSES）：
+    已出貨 / 完成的訂單不可重做，避免覆寫並刪除已交付的製作檔、破壞交付記錄。
+    訂單金額 / 規格快照（order_item）始終保留，不受影響。
+    """
+    from custom.models import CustomRequest  # noqa: PLC0415
+    from production.models import JobStatusEnum, ProductionJob  # noqa: PLC0415
+
+    order = (await db.execute(
+        select(Order).where(Order.id == order_id)
+    )).scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+    if order.status not in _REASSIGN_ELIGIBLE_STATUSES:
+        raise BadRequestError("只有出貨前（待付款 / 已付款 / 備貨中）的訂單可重做製作")
+
+    item = (await db.execute(
+        select(OrderItem)
+        .where(OrderItem.id == item_id, OrderItem.order_id == order_id)
+        .with_for_update()
+    )).scalar_one_or_none()
+    if item is None:
+        raise NotFoundError("訂單項目不存在")
+    if item.custom_request_id is None:
+        raise BadRequestError("只有客製訂單項目可重新指派製作任務")
+
+    new_job = await db.get(ProductionJob, new_job_id)
+    if new_job is None:
+        raise NotFoundError("製作任務不存在")
+    if new_job.custom_request_id != item.custom_request_id:
+        raise BadRequestError("新製作任務不屬於此客製申請")
+    if new_job.status != JobStatusEnum.completed:
+        raise BadRequestError("只能指派已完成（completed）的製作任務")
+
+    item.production_job_id = new_job_id
+    # 同步客製申請選定的 job（之後參照都用新 job）
+    await db.execute(
+        update(CustomRequest)
+        .where(CustomRequest.id == item.custom_request_id)
+        .values(quoted_production_job_id=new_job_id)
+    )
+    await db.commit()
+
+    order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one()
+    return await _build_order_detail(db, order, is_admin=True)
+
+
+async def cleanup_custom_order_assets(db: AsyncSession, order_id: UUID) -> dict:
+    """取消/退款/逾期訂單的清理：刪客製製作 job + 客戶上傳照片，保留 order_item 記錄。
+
+    只動「製作檔 + 照片」；order / order_item / custom_request row 保留（留「有訂過」稽核）。
+    被其他 order / 商品規格 / 列印批次引用的 job 會 skip 不刪並回報。
+    """
+    from custom.models import CustomRequest  # noqa: PLC0415
+    from custom.service import delete_custom_photo  # noqa: PLC0415
+    from production.models import ProductionJob  # noqa: PLC0415
+    from production.service import delete_job  # noqa: PLC0415
+
+    order = (await db.execute(
+        select(Order).where(Order.id == order_id).with_for_update()
+    )).scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+    if order.status not in _CLEANUP_ELIGIBLE_STATUSES:
+        raise BadRequestError("僅已取消 / 退款 / 逾期的訂單可清理客製資產")
+
+    items = (await db.execute(
+        select(OrderItem).where(
+            OrderItem.order_id == order_id,
+            OrderItem.custom_request_id.isnot(None),
+        )
+    )).scalars().all()
+
+    request_ids = {it.custom_request_id for it in items if it.custom_request_id}
+
+    # 1. 先解除本訂單所有客製 item 對 job 的連結（保留 order_item，金流稽核不破壞）
+    for it in items:
+        it.production_job_id = None
+    await db.commit()
+
+    deleted_jobs, skipped_jobs, deleted_photos = 0, [], 0
+
+    # 2. 逐個 custom_request：刪照片 + 刪其所有 production job
+    for req_id in request_ids:
+        req = await db.get(CustomRequest, req_id)
+        if req is not None and req.photo_url:
+            delete_custom_photo(req.photo_url)
+            req.photo_url = None
+            await db.commit()
+            deleted_photos += 1
+
+        job_rows = (await db.execute(
+            select(ProductionJob.id).where(ProductionJob.custom_request_id == req_id)
+        )).scalars().all()
+        for job_id in job_rows:
+            try:
+                await delete_job(db, job_id)  # 內部 commit + Firebase 清理
+                deleted_jobs += 1
+            except (BadRequestError, NotFoundError) as e:
+                # 仍被其他 order / 商品 / 批次引用 → 不刪，回報讓 admin 知道。
+                # delete_job 在被引用時於任何 DB 寫入「之前」就 raise，session 無 pending
+                # 變更，不需 rollback（rollback 會 expire 全部物件，反而觸發後續 sync load）。
+                skipped_jobs.append({"job_id": str(job_id), "reason": e.detail})
+
+    return {
+        "deleted_jobs": deleted_jobs,
+        "deleted_photos": deleted_photos,
+        "skipped_jobs": skipped_jobs,
+    }
+
+
 # ── admin order actions ───────────────────────────────────────────────────────
 
 _VALID_STATUS_TRANSITIONS = {
@@ -1467,6 +1873,58 @@ _VALID_STATUS_TRANSITIONS = {
     },
     OrderStatusEnum.cancelled: {OrderStatusEnum.pending_payment},
 }
+
+
+async def _apply_paid_side_effects(
+    db: AsyncSession, order: Order, user: User, *, notify_admin: bool = False
+) -> None:
+    """訂單轉為 paid 的共用副作用（EVENT_MATRIX E21）。
+
+    admin 手動確認付款（admin_update_order_status）與 ECpay ReturnURL webhook
+    都呼叫此函數，確保兩條路徑副作用完全一致：設 status=paid + paid_at、為每個
+    order_item 建 production_progress、客製訂單發 custom_order_paid 通知、寄付款
+    確認 email。
+
+    notify_admin=True（ECpay 自動付款路徑）：因為不是 admin 手動確認，需主動發 admin
+    通知讓他知道有訂單已付款待備貨（手動確認路徑 admin 本人操作，預設不重複發）。
+
+    呼叫端負責：前置 guard（order.status == pending_payment）、commit、SSE 發布。
+    """
+    order.status = OrderStatusEnum.paid
+    order.paid_at = datetime.now(UTC)
+    items_result = await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order.id)
+    )
+    items = list(items_result.scalars().all())
+    for item in items:
+        prog = ProductionProgress(order_item_id=item.id)
+        db.add(prog)
+    # E21 (custom branch): if any item is from a custom request, notify admin
+    is_custom = any(item.custom_request_id is not None for item in items)
+    if is_custom:
+        await create_notification(
+            db,
+            type="custom_order_paid",
+            message=f"客製訂單 {order.order_number} 已付款，請進入備貨流程",
+            reference_type="order",
+            reference_id=order.id,
+            requires_action=True,
+        )
+    elif notify_admin:
+        # 一般訂單經 ECpay 自動付款 → 主動通知 admin 備貨出貨（手動確認路徑不發，避免自己通知自己）
+        await create_notification(
+            db,
+            type="order_paid",
+            message=f"訂單 {order.order_number} 已線上付款，請備貨出貨",
+            reference_type="order",
+            reference_id=order.id,
+            requires_action=True,
+        )
+    await _send_email(
+        to=user.email,
+        subject=f"【易木 YIIMUI】付款確認 {order.order_number}",
+        html=f"<p>您的訂單 {order.order_number} 已確認付款，開始準備生產。</p>",
+    )
 
 
 async def admin_update_order_status(
@@ -1493,30 +1951,9 @@ async def admin_update_order_status(
     user = user_result.scalar_one()
 
     if target == OrderStatusEnum.paid:
-        order.paid_at = datetime.now(UTC)
-        items_result = await db.execute(
-            select(OrderItem).where(OrderItem.order_id == order_id)
-        )
-        items = list(items_result.scalars().all())
-        for item in items:
-            prog = ProductionProgress(order_item_id=item.id)
-            db.add(prog)
-        # E21 (custom branch): if any item is from a custom request, notify admin
-        is_custom = any(item.custom_request_id is not None for item in items)
-        if is_custom:
-            await create_notification(
-                db,
-                type="custom_order_paid",
-                message=f"客製訂單 {order.order_number} 已付款，請進入備貨流程",
-                reference_type="order",
-                reference_id=order.id,
-                requires_action=True,
-            )
-        await _send_email(
-            to=user.email,
-            subject=f"【易木 YIIMUI】付款確認 {order.order_number}",
-            html=f"<p>您的訂單 {order.order_number} 已確認付款，開始準備生產。</p>",
-        )
+        # 共用 ECpay webhook 同一套標 paid 副作用（E21）。order.status 已在上面設為
+        # target，此函數再設一次（同值）以與 webhook 路徑共用同一實作。
+        await _apply_paid_side_effects(db, order, user)
 
     elif target == OrderStatusEnum.completed:
         order.completed_at = datetime.now(UTC)

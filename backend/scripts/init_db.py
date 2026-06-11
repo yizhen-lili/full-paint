@@ -208,6 +208,33 @@ async def init_schema() -> None:
                 "ON users (google_sub) WHERE google_sub IS NOT NULL"
             ))
 
+            # Module 23：ECpay 金流。orders.payment_method 欄位 + enum type。
+            # payment_transactions 表（含全部欄位 + paymenttransactionstatusenum 全部值）
+            # 由上面的 create_all 建（orders.models 已 import；Module 23 一次定義完整 model，
+            # 無增量欄位）。enum type 需先存在 column 才能加；PostgreSQL CREATE TYPE 無 IF NOT EXISTS。
+            await conn.execute(text(
+                "DO $$ BEGIN "
+                "CREATE TYPE paymentmethodenum AS ENUM ('bank_transfer','ecpay'); "
+                "EXCEPTION WHEN duplicate_object THEN NULL; "
+                "END $$"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE orders "
+                "ADD COLUMN IF NOT EXISTS payment_method paymentmethodenum "
+                "NOT NULL DEFAULT 'bank_transfer'"
+            ))
+            # 防禦性：若 payment_transactions 表曾以較舊 schema 建立（理論上不會，因本表與
+            # 全部欄位同一 commit 引入），補齊 ATM/超商欄位。create_all 已建好時為 no-op。
+            for _col, _type in [
+                ("bank_code", "VARCHAR"),
+                ("vaccount", "VARCHAR"),
+                ("payment_no", "VARCHAR"),
+                ("expire_date", "TIMESTAMP WITH TIME ZONE"),
+            ]:
+                await conn.execute(text(
+                    f"ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS {_col} {_type}"
+                ))
+
             # Backfill：已有 shipment 的訂單視為「已確認出貨資訊」（之前無此欄位的歷史訂單）
             print("[init_db] backfilling shipping_locked for shipped orders ...", flush=True)
             await conn.execute(text(

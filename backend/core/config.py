@@ -1,4 +1,4 @@
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -60,14 +60,51 @@ class Settings(BaseSettings):
     # 開發 / UI 驗收期間設 true，避免在正式 ECpay 帳號留真實託運單。
     ecpay_dry_run: bool = False
 
+    # ── ECpay 金流（AioCheckOut / 線上付款）────────────────────────────────
+    # 金流的 MerchantID / HashKey / HashIV（與物流、電子發票都是不同帳號）。
+    # ⚠️ 金流簽章用 SHA256（物流用 MD5）。
+    # 開發測試用官方公開 sandbox 組（3002607）；正式上線換 user 正式帳號。
+    ecpay_payment_merchant_id: str = ""
+    ecpay_payment_hash_key: str = ""
+    ecpay_payment_hash_iv: str = ""
+    # 'stage' = 沙箱（payment-stage.ecpay.com.tw）；'production' = 正式（payment.ecpay.com.tw）
+    # 留空 → 沿用物流的 ecpay_env（金流/物流同帳號時不必重設）
+    ecpay_payment_env: str = ""
+    # ReturnURL（付款成功 server-to-server 權威 webhook）。留空 → 由 request.base_url 推導。
+    ecpay_payment_return_url: str = ""
+    # 顧客在 ECpay 按「返回商店」導回的前端 URL。留空 → 用 frontend_url。
+    ecpay_payment_client_back_url: str = ""
+    # 'true' = 模擬模式（不真導向 ECpay）；開發 / 測試期用。
+    ecpay_payment_dry_run: bool = False
+
     @field_validator(
         "ecpay_merchant_id", "ecpay_hash_key", "ecpay_hash_iv",
         "ecpay_env", "ecpay_server_reply_url",
+        "ecpay_payment_merchant_id", "ecpay_payment_hash_key", "ecpay_payment_hash_iv",
+        "ecpay_payment_env", "ecpay_payment_return_url", "ecpay_payment_client_back_url",
     )
     @classmethod
     def _strip_ecpay(cls, v: str) -> str:
         """環境變數複製貼上常帶換行 / 前後空白；strip 掉避免簽章對不起來。"""
         return v.strip() if v else v
+
+    @model_validator(mode="after")
+    def _fallback_payment_ecpay_creds(self):
+        """金流與物流為同一組 ECpay 帳號時，金流變數可不設，自動沿用物流那組
+        （MerchantID / HashKey / HashIV / env）。
+
+        同一組金鑰仍正確：物流 API 用 MD5、金流 API 用 SHA256，依 API 各自計算，互不影響。
+        若金流是獨立帳號，明確設定 ECPAY_PAYMENT_* 即覆蓋此 fallback。
+        """
+        if not self.ecpay_payment_merchant_id:
+            self.ecpay_payment_merchant_id = self.ecpay_merchant_id
+        if not self.ecpay_payment_hash_key:
+            self.ecpay_payment_hash_key = self.ecpay_hash_key
+        if not self.ecpay_payment_hash_iv:
+            self.ecpay_payment_hash_iv = self.ecpay_hash_iv
+        if not self.ecpay_payment_env:
+            self.ecpay_payment_env = self.ecpay_env
+        return self
 
     class Config:
         env_file = ".env"

@@ -7,10 +7,12 @@ import {
   adminRefreshShipmentStatus,
   adminUpdateShipping,
   batchCreateShipments,
+  cleanupCustomAssets,
   createShipment,
   flagPaymentSubmission,
   getOrder,
   listOrders,
+  reassignProductionJob,
   refundOrder,
   updateAdminNotes,
   updateOrderStatus,
@@ -137,6 +139,24 @@ export function useRefreshShipmentStatusMutation(orderId: string) {
     onSuccess: () => invalidateOrder(qc, orderId),
   })
 }
+
+export function useReassignProductionJobMutation(orderId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ itemId, productionJobId }: { itemId: string; productionJobId: string }) =>
+      reassignProductionJob(orderId, itemId, productionJobId),
+    onSuccess: () => invalidateOrder(qc, orderId),
+  })
+}
+
+export function useCleanupCustomAssetsMutation(orderId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => cleanupCustomAssets(orderId),
+    onSuccess: () => invalidateOrder(qc, orderId),
+  })
+}
+
 
 export function useBatchCreateShipmentsMutation() {
   const qc = useQueryClient()

@@ -369,3 +369,29 @@ export function updateAdminNotes(id: string, payload: AdminNotesPayload) {
     body: JSON.stringify(payload),
   })
 }
+
+// 重做製作：把客製訂單項目改指向新的 production job（指派後舊 job 可刪）
+export function reassignProductionJob(
+  orderId: string,
+  itemId: string,
+  productionJobId: string,
+) {
+  return request<OrderDetail>(
+    `/admin/orders/${orderId}/items/${itemId}/production-job`,
+    { method: 'PATCH', body: JSON.stringify({ production_job_id: productionJobId }) },
+  )
+}
+
+export interface CleanupCustomAssetsResult {
+  deleted_jobs: number
+  deleted_photos: number
+  skipped_jobs: { job_id: string; reason: string }[]
+}
+
+// 取消/退款訂單清理：刪客製製作 job + 客戶照片，保留 order_item 記錄
+export function cleanupCustomAssets(orderId: string) {
+  return request<CleanupCustomAssetsResult>(
+    `/admin/orders/${orderId}/cleanup-custom-assets`,
+    { method: 'POST' },
+  )
+}

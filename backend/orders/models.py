@@ -75,6 +75,19 @@ class ProductionProgressStatusEnum(StrEnum):
     shipped = "shipped"
 
 
+class PaymentMethodEnum(StrEnum):
+    bank_transfer = "bank_transfer"   # 手動網銀匯款（既有流程，admin 人工確認）
+    ecpay = "ecpay"                   # ECpay 線上付款（AioCheckOut，webhook 自動確認）
+
+
+class PaymentTransactionStatusEnum(StrEnum):
+    created = "created"               # AioCheckOut 參數已產生、尚未收到任何回傳
+    awaiting_atm = "awaiting_atm"     # ATM/超商已取號，等顧客繳費
+    paid = "paid"                     # ReturnURL RtnCode=1，付款成功
+    failed = "failed"                 # ReturnURL RtnCode!=1（信用卡拒絕等）
+    expired = "expired"              # 取號後逾期未付（隨訂單逾期一起標記）
+
+
 class CartItem(Base):
     __tablename__ = "cart_items"
 
@@ -126,6 +139,13 @@ class Order(Base):
     shipping_snapshot = Column(JSONB, nullable=False)
     # 出貨資訊鎖定：admin 確認後才能建物流單；建單後永久鎖死
     shipping_locked = Column(Boolean, nullable=False, default=False, server_default="false")
+    # 付款方式：bank_transfer（手動匯款）或 ecpay（線上付款）。既有訂單預設 bank_transfer。
+    payment_method = Column(
+        Enum(PaymentMethodEnum, name="paymentmethodenum"),
+        nullable=False,
+        default=PaymentMethodEnum.bank_transfer,
+        server_default=PaymentMethodEnum.bank_transfer.value,
+    )
     payment_deadline = Column(TIMESTAMP(timezone=True), nullable=True)
     paid_at = Column(TIMESTAMP(timezone=True), nullable=True)
     completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -233,3 +253,42 @@ class PaymentSubmission(Base):
     account_last5 = Column(String(5), nullable=False)
     notes = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+class PaymentTransaction(Base):
+    """ECpay 線上付款的每筆交易紀錄。
+
+    一張訂單可有多筆（顧客重試 / ATM 取號後又改信用卡）。merchant_trade_no 是
+    我方送 ECpay 的唯一單號，也是 webhook lookup / idempotency 的主鍵。
+    amount 為發起時 order.total 快照，webhook 回傳時比對防金額竄改。
+    """
+    __tablename__ = "payment_transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False, index=True)
+    merchant_trade_no = Column(String, nullable=False, unique=True)
+    status = Column(
+        Enum(PaymentTransactionStatusEnum, name="paymenttransactionstatusenum"),
+        nullable=False,
+        default=PaymentTransactionStatusEnum.created,
+    )
+    amount = Column(Numeric(10, 2), nullable=False)
+    ecpay_trade_no = Column(String, nullable=True)        # ECpay 端交易號（TradeNo）
+    payment_type = Column(String, nullable=True)          # 實際付款方式（Credit_CreditCard / ATM_TAISHIN ...）
+    # ATM / 超商取號資訊（PaymentInfoURL 回傳）
+    bank_code = Column(String, nullable=True)             # ATM 虛擬帳號銀行代碼
+    vaccount = Column(String, nullable=True)              # ATM 虛擬帳號
+    payment_no = Column(String, nullable=True)            # 超商繳費代碼
+    expire_date = Column(TIMESTAMP(timezone=True), nullable=True)  # 取號繳費期限
+    # webhook 軌跡
+    last_rtn_code = Column(Integer, nullable=True)
+    last_rtn_msg = Column(String, nullable=True)
+    raw_callback = Column(JSONB, nullable=True)           # 最後一次 webhook 全文（稽核）
+    paid_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

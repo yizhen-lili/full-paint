@@ -1222,3 +1222,700 @@ async def test_ecpay_webhook_other_status_creates_notification(client, db):
         select(AdminNotification).where(AdminNotification.type == "ecpay_status")
     )
     assert notif_result.scalar_one_or_none() is not None
+
+
+# ── Reorder (過期訂單重新下單) ──────────────────────────────────────────────────
+
+
+async def _make_expired_order(
+    db, user, *, variant=None, custom_request=None, title="測試畫布", qty=1,
+):
+    """直接建一筆 payment_expired 訂單 + 一個 order_item（變體或客製）。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id,
+        status=OrderStatusEnum.payment_expired,
+        subtotal=500, discount_amount=0, shipping_fee=0, total=500,
+        shipping_type="home", shipping_snapshot={},
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id,
+        product_variant_id=variant.id if variant else None,
+        custom_request_id=custom_request.id if custom_request else None,
+        product_title_snapshot=title,
+        variant_spec_snapshot={},
+        unit_price=500, quantity=qty, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+    return order
+
+
+@pytest.mark.asyncio
+async def test_reorder_expired_order_ok(client, db):
+    """過期訂單 + 在架變體 → 200，品項加回購物車。"""
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+    order = await _make_expired_order(db, user, variant=variant, qty=2)
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["added_count"] == 1
+    assert body["unavailable_count"] == 0
+    assert body["added"][0]["quantity"] == 2
+
+    cart = (await client.get(CART_URL)).json()
+    assert any(
+        item["variant_id"] == str(variant.id) for item in cart["items"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_reorder_inactive_variant_unavailable(client, db):
+    """過期訂單 + 已停用變體 → 列入 unavailable，不加入購物車。"""
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=False)
+    order = await _make_expired_order(db, user, variant=variant, title="已下架畫布")
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["added_count"] == 0
+    assert body["unavailable_count"] == 1
+    u = body["unavailable"][0]
+    assert u["title"] == "已下架畫布"
+    # 一般商品下架：非客製，code 與 custom_request_id 應為 null
+    assert u["code"] is None
+    assert u["custom_request_id"] is None
+
+    cart = (await client.get(CART_URL)).json()
+    assert cart["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_reorder_partial_some_unavailable(client, db):
+    """過期訂單含一在架 + 一停用變體 → 一加入、一無法購買。"""
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, active_v = await _make_product_and_variant(db, job.id, is_active=True)
+    job2 = await _make_production_job(db)
+    _, dead_v = await _make_product_and_variant(db, job2.id, is_active=False)
+
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.payment_expired,
+        subtotal=1000, discount_amount=0, shipping_fee=0, total=1000,
+        shipping_type="home", shipping_snapshot={}, created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    for v, title in [(active_v, "在架"), (dead_v, "停用")]:
+        db.add(OrderItem(
+            order_id=order.id, product_variant_id=v.id,
+            product_title_snapshot=title, variant_spec_snapshot={},
+            unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+            is_returned=False,
+        ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["added_count"] == 1
+    assert body["unavailable_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reorder_non_expired_order_409(client, db):
+    """非逾期訂單（paid）→ 409。"""
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.paid,
+        subtotal=500, discount_amount=0, shipping_fee=0, total=500,
+        shipping_type="home", shipping_snapshot={}, created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reorder_other_users_order_404(client, db):
+    """他人訂單 → 404（不可洩漏存在）。"""
+    owner = await _make_customer(client, db, email="reorder_owner@example.com")
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+    order = await _make_expired_order(db, owner, variant=variant)
+
+    # 換另一個登入的使用者
+    await _make_customer(client, db, email="reorder_other@example.com")
+    await _login_customer(client, email="reorder_other@example.com")
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reorder_custom_item_quote_valid_and_expired(client, db):
+    """客製品項：報價未過期 → 加入；報價已過期 → unavailable。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    from custom.models import (
+        CustomRequest,
+        CustomRequestStatusEnum,
+        CustomRequestTypeEnum,
+    )
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+
+    valid_cr = CustomRequest(
+        user_id=user.id,
+        request_type=CustomRequestTypeEnum.custom_photo,
+        status=CustomRequestStatusEnum.quote_sent,
+        quoted_price=800,
+        quote_expires_at=datetime.now(UTC) + timedelta(days=3),
+        quoted_production_job_id=job.id,
+    )
+    db.add(valid_cr)
+    await db.flush()
+    order = await _make_expired_order(
+        db, user, custom_request=valid_cr, title="客製油畫"
+    )
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 200
+    assert res.json()["added_count"] == 1
+
+    # 過期報價 → unavailable
+    job2 = await _make_production_job(db)
+    expired_cr = CustomRequest(
+        user_id=user.id,
+        request_type=CustomRequestTypeEnum.custom_photo,
+        status=CustomRequestStatusEnum.quote_sent,
+        quoted_price=800,
+        quote_expires_at=datetime.now(UTC) - timedelta(days=1),
+        quoted_production_job_id=job2.id,
+    )
+    db.add(expired_cr)
+    await db.flush()
+    order2 = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.payment_expired,
+        subtotal=800, discount_amount=0, shipping_fee=0, total=800,
+        shipping_type="home", shipping_snapshot={}, created_at=datetime.now(UTC),
+    )
+    db.add(order2)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order2.id, custom_request_id=expired_cr.id,
+        product_title_snapshot="客製油畫(過期報價)", variant_spec_snapshot={},
+        unit_price=800, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res2 = await client.post(f"{ORDERS_URL}/{order2.id}/reorder")
+    assert res2.status_code == 200
+    body2 = res2.json()
+    assert body2["unavailable_count"] == 1
+    # 客製報價過期應帶 code 與 custom_request_id，供前端引導重新申請
+    u = body2["unavailable"][0]
+    assert u["code"] == "QUOTE_EXPIRED"
+    assert u["custom_request_id"] == str(expired_cr.id)
+
+
+@pytest.mark.asyncio
+async def test_reorder_unauthenticated_401(client, db):
+    """未登入呼叫 reorder → 401。"""
+    owner = await _make_customer(client, db, email="reorder_anon@example.com")
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+    order = await _make_expired_order(db, owner, variant=variant)
+
+    client.cookies.clear()
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_reorder_pending_past_deadline_expires_and_readds(client, db):
+    """pending_payment 但付款期限已過（Celery 尚未翻狀態）→ 主動過期 + 加回購物車。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.pending_payment,
+        subtotal=500, discount_amount=0, shipping_fee=0, total=500,
+        shipping_type="home", shipping_snapshot={},
+        payment_deadline=datetime.now(UTC) - timedelta(hours=1),
+        created_at=datetime.now(UTC) - timedelta(hours=49),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="過期前訂單", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 200
+    assert res.json()["added_count"] == 1
+
+    # 原訂單應已被就地標記為 payment_expired
+    await db.refresh(order)
+    assert order.status == OrderStatusEnum.payment_expired
+
+    cart = (await client.get(CART_URL)).json()
+    assert any(item["variant_id"] == str(variant.id) for item in cart["items"])
+
+
+@pytest.mark.asyncio
+async def test_reorder_pending_within_deadline_409(client, db):
+    """pending_payment 且付款期限未過 → 不可重新下單，回 409。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.pending_payment,
+        subtotal=500, discount_amount=0, shipping_fee=0, total=500,
+        shipping_type="home", shipping_snapshot={},
+        payment_deadline=datetime.now(UTC) + timedelta(hours=10),
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="未過期", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reorder_incomplete_item_unavailable(client, db):
+    """order_item 既無變體也無客製 → 列為「品項資料不完整」unavailable。"""
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    order = await _make_expired_order(db, user, title="不完整品項")
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/reorder")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["added_count"] == 0
+    assert body["unavailable_count"] == 1
+    assert body["unavailable"][0]["reason"] == "品項資料不完整"
+
+
+# ── Revive (逾期訂單重新申請付款) ─────────────────────────────────────────────
+
+
+async def _make_custom_request(db, user, *, status, job_id=None, expires_in_h=48,
+                               order_id=None):
+    from datetime import UTC, datetime, timedelta
+
+    from custom.models import CustomRequest, CustomRequestTypeEnum
+
+    cr = CustomRequest(
+        user_id=user.id,
+        request_type=CustomRequestTypeEnum.custom_photo,
+        status=status,
+        quoted_price=800,
+        quote_expires_at=datetime.now(UTC) + timedelta(hours=expires_in_h),
+        quoted_production_job_id=job_id,
+        order_id=order_id,
+    )
+    db.add(cr)
+    await db.flush()
+    return cr
+
+
+@pytest.mark.asyncio
+async def test_revive_payment_expired_custom_rebinds_and_repayable(client, db):
+    """逾期客製訂單重新申請付款：復活成 pending_payment、客製重新綁定 quote_confirmed。"""
+    from custom.models import CustomRequest, CustomRequestStatusEnum
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    # 模擬舊邏輯把客製退回 quote_sent + 解綁的壞掉狀態
+    cr = await _make_custom_request(
+        db, user, status=CustomRequestStatusEnum.quote_sent,
+        job_id=job.id, expires_in_h=-1, order_id=None,
+    )
+    order = await _make_expired_order(db, user, custom_request=cr, title="客製作品")
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/revive")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "pending_payment"
+    assert body["discount_dropped"] is False
+
+    await db.refresh(order)
+    assert order.status == OrderStatusEnum.pending_payment
+    assert order.payment_deadline is not None
+
+    refreshed_cr = (await db.execute(
+        select(CustomRequest).where(CustomRequest.id == cr.id)
+    )).scalar_one()
+    assert refreshed_cr.status == CustomRequestStatusEnum.quote_confirmed
+    assert refreshed_cr.order_id == order.id
+
+
+@pytest.mark.asyncio
+async def test_revive_pending_past_deadline(client, db):
+    """pending_payment 但付款期限已過（Celery 沒翻）→ 可直接復活。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.pending_payment,
+        subtotal=500, discount_amount=0, shipping_fee=70, total=570,
+        shipping_type="home", shipping_snapshot={},
+        payment_deadline=datetime.now(UTC) - timedelta(hours=1),
+        created_at=datetime.now(UTC) - timedelta(hours=49),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/revive")
+    assert res.status_code == 200
+    await db.refresh(order)
+    assert order.status == OrderStatusEnum.pending_payment
+    assert order.payment_deadline > datetime.now(UTC)
+
+
+@pytest.mark.asyncio
+async def test_revive_non_expired_and_cancelled_409(client, db):
+    """paid 或 cancelled 訂單不可復活 → 409。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+
+    for status in (OrderStatusEnum.paid, OrderStatusEnum.cancelled):
+        order = Order(
+            order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+            user_id=user.id, status=status,
+            subtotal=500, discount_amount=0, shipping_fee=0, total=500,
+            shipping_type="home", shipping_snapshot={},
+            created_at=datetime.now(UTC),
+        )
+        db.add(order)
+        await db.commit()
+        res = await client.post(f"{ORDERS_URL}/{order.id}/revive")
+        assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_revive_other_users_order_404(client, db):
+    owner = await _make_customer(client, db, email="revive_owner@example.com")
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+    order = await _make_expired_order(db, owner, variant=variant)
+
+    await _make_customer(client, db, email="revive_other@example.com")
+    await _login_customer(client, email="revive_other@example.com")
+    res = await client.post(f"{ORDERS_URL}/{order.id}/revive")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_revive_expired_coupon_dropped(client, db):
+    """原折扣券已過期 → discount_dropped、total 重算為 subtotal+shipping。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    from discount.models import (
+        CouponConfig,
+        CouponTypeEnum,
+        DiscountTypeEnum,
+        UserCoupon,
+    )
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    config = CouponConfig(
+        coupon_type=CouponTypeEnum.manual,
+        discount_type=DiscountTypeEnum.fixed,
+        discount_value=100,
+        min_purchase=0,
+    )
+    db.add(config)
+    await db.flush()
+
+    # 已過期的 user coupon（逾期時被 revert 設回 is_used=False）
+    coupon = UserCoupon(
+        user_id=user.id,
+        coupon_config_id=config.id,
+        discount_type=DiscountTypeEnum.fixed,
+        discount_value=100,
+        min_purchase=0,
+        is_used=False,
+        expires_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    db.add(coupon)
+    await db.flush()
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.payment_expired,
+        subtotal=500, discount_amount=100, shipping_fee=70, total=470,
+        shipping_type="home", shipping_snapshot={},
+        user_coupon_id=coupon.id,
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/revive")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["discount_dropped"] is True
+    assert body["total"] == 570.0  # 500 + 70，折扣去除
+
+    await db.refresh(order)
+    assert order.user_coupon_id is None
+    assert float(order.discount_amount) == 0
+
+
+@pytest.mark.asyncio
+async def test_revive_promo_discount_dropped(client, db):
+    """促銷碼折扣（user_coupon_id 為 None）→ revive 一律去除折扣、重算 total，
+    不沿用折扣（避免名額回收漏洞 + 客戶白享折扣）。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    # 模擬促銷碼訂單：有折扣金額但 user_coupon_id 為 None（promo 走 public_code 不記在此欄）
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.payment_expired,
+        subtotal=500, discount_amount=80, shipping_fee=70, total=490,
+        discount_source="coupon", user_coupon_id=None,
+        shipping_type="home", shipping_snapshot={},
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/revive")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["discount_dropped"] is True
+    assert body["total"] == 570.0
+
+    await db.refresh(order)
+    assert float(order.discount_amount) == 0
+    assert order.discount_source is None
+
+
+@pytest.mark.asyncio
+async def test_revive_valid_coupon_reclaimed(client, db):
+    """會員券仍有效 → revive 重新搶回（is_used=True 綁回訂單）、沿用原折扣、total 不變。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    from discount.models import (
+        CouponConfig,
+        CouponTypeEnum,
+        DiscountTypeEnum,
+        UserCoupon,
+    )
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    config = CouponConfig(
+        coupon_type=CouponTypeEnum.manual,
+        discount_type=DiscountTypeEnum.fixed,
+        discount_value=100, min_purchase=0,
+    )
+    db.add(config)
+    await db.flush()
+    # 逾期時 revert_coupon 把券設回 is_used=False；仍未過期
+    coupon = UserCoupon(
+        user_id=user.id, coupon_config_id=config.id,
+        discount_type=DiscountTypeEnum.fixed, discount_value=100, min_purchase=0,
+        is_used=False, expires_at=datetime.now(UTC) + timedelta(days=5),
+    )
+    db.add(coupon)
+    await db.flush()
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=user.id, status=OrderStatusEnum.payment_expired,
+        subtotal=500, discount_amount=100, shipping_fee=70, total=470,
+        discount_source="coupon", user_coupon_id=coupon.id,
+        shipping_type="home", shipping_snapshot={},
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.post(f"{ORDERS_URL}/{order.id}/revive")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["discount_dropped"] is False
+    assert body["total"] == 470.0  # 沿用原折扣
+
+    refreshed_coupon = (await db.execute(
+        select(UserCoupon).where(UserCoupon.id == coupon.id)
+    )).scalar_one()
+    assert refreshed_coupon.is_used is True
+    assert refreshed_coupon.used_in_order_id == order.id
+
+
+@pytest.mark.asyncio
+async def test_expire_keeps_custom_bound_but_cancel_reverts(client, db):
+    """expire_pending_order 保留客製 quote_confirmed；cancel_order 則退回 quote_sent。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    from custom.models import CustomRequest, CustomRequestStatusEnum
+    from orders.service import cancel_order, expire_pending_order
+
+    user = await _make_customer(client, db)
+    await _seed_system_settings(db)
+    job = await _make_production_job(db)
+
+    async def _build_order():
+        order = Order(
+            order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+            user_id=user.id, status=OrderStatusEnum.pending_payment,
+            subtotal=800, discount_amount=0, shipping_fee=0, total=800,
+            shipping_type="home", shipping_snapshot={},
+            payment_deadline=datetime.now(UTC) - timedelta(hours=1),
+            created_at=datetime.now(UTC) - timedelta(hours=49),
+        )
+        db.add(order)
+        await db.flush()
+        cr = await _make_custom_request(
+            db, user, status=CustomRequestStatusEnum.quote_confirmed,
+            job_id=job.id, order_id=order.id,
+        )
+        db.add(OrderItem(
+            order_id=order.id, custom_request_id=cr.id,
+            product_title_snapshot="客製", variant_spec_snapshot={},
+            unit_price=800, quantity=1, fulfilled_qty=0, preorder_qty=0,
+            is_returned=False,
+        ))
+        await db.commit()
+        return order, cr
+
+    # expire → 保留 quote_confirmed
+    order1, cr1 = await _build_order()
+    await expire_pending_order(db, order1)
+    await db.commit()
+    cr1_db = (await db.execute(
+        select(CustomRequest).where(CustomRequest.id == cr1.id)
+    )).scalar_one()
+    assert cr1_db.status == CustomRequestStatusEnum.quote_confirmed
+    assert cr1_db.order_id == order1.id
+
+    # cancel → 退回 quote_sent + 解綁
+    order2, cr2 = await _build_order()
+    await cancel_order(db, user.id, order2.id, "test")
+    cr2_db = (await db.execute(
+        select(CustomRequest).where(CustomRequest.id == cr2.id)
+    )).scalar_one()
+    assert cr2_db.status == CustomRequestStatusEnum.quote_sent
+    assert cr2_db.order_id is None

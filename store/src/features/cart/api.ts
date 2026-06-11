@@ -87,12 +87,15 @@ export interface CheckoutPreviewRequest {
   promo_code?: string | null
 }
 
+export type PaymentMethod = 'bank_transfer' | 'ecpay'
+
 export interface CreateOrderRequest {
   shipping_profile_id: string
   shipping_preference?: ShippingPreference | null
   user_coupon_id?: string | null
   promo_code?: string | null
   customer_notes?: string | null
+  payment_method?: PaymentMethod  // 預設 bank_transfer
 }
 
 export interface CreateOrderResponse {
@@ -100,6 +103,7 @@ export interface CreateOrderResponse {
   order_number: string
   total: number
   payment_deadline: string  // ISO
+  payment_method?: PaymentMethod
   payment_info: {
     bank_name?: string
     account_no?: string

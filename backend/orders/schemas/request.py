@@ -40,6 +40,8 @@ class CreateOrderRequest(BaseModel):
     user_coupon_id: UUID | None = None
     promo_code: str | None = None
     customer_notes: str | None = None
+    # 付款方式：bank_transfer（手動匯款，預設）或 ecpay（線上付款）。
+    payment_method: Literal["bank_transfer", "ecpay"] = "bank_transfer"
 
 
 class PaymentSubmissionRequest(BaseModel):
@@ -203,3 +205,8 @@ class CancelOrderRequest(BaseModel):
 
 class AdminNotesRequest(BaseModel):
     admin_notes: str
+
+
+class ReassignProductionJobRequest(BaseModel):
+    """重做製作：把客製訂單項目改指向新的 production job。"""
+    production_job_id: UUID

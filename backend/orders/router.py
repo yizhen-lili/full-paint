@@ -19,6 +19,7 @@ from orders.schemas.request import (
     CreateShipmentRequest,
     FlagPaymentSubmissionRequest,
     PaymentSubmissionRequest,
+    ReassignProductionJobRequest,
     RefundRequest,
     UpdateCartItemRequest,
     UpdateProductionProgressRequest,
@@ -33,6 +34,7 @@ from orders.schemas.response import (
     CartItemMutationResponse,
     CartResponse,
     CheckoutPreviewResponse,
+    CleanupCustomAssetsResponse,
     ConfirmReceivedResponse,
     CreateOrderResponse,
     CreateShipmentResponse,
@@ -43,6 +45,8 @@ from orders.schemas.response import (
     PaymentSubmissionResponse,
     ProductionProgressResponse,
     RefundResponse,
+    ReorderResponse,
+    ReviveResponse,
 )
 
 router = APIRouter(tags=["orders"])
@@ -119,6 +123,7 @@ async def create_order(
         body.user_coupon_id,
         body.promo_code,
         body.customer_notes,
+        body.payment_method,
     )
 
 
@@ -223,6 +228,29 @@ async def cancel_order(
         refund_amount=float(order.refund_amount) if order.refund_amount else None,
         refunded_at=order.refunded_at,
     )
+
+
+@router.post(
+    "/orders/{order_id}/reorder", status_code=200, response_model=ReorderResponse
+)
+async def reorder_expired_order(
+    order_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.reorder_expired_order(db, current_user.id, order_id)
+
+
+@router.post(
+    "/orders/{order_id}/revive", status_code=200, response_model=ReviveResponse
+)
+async def revive_expired_order(
+    order_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """逾期（未取消）訂單「重新申請付款」：復活成 pending_payment 可再付款。"""
+    return await service.revive_expired_order(db, current_user.id, order_id)
 
 
 @router.post("/orders/{order_id}/confirm-refund", status_code=204, response_model=None)
@@ -467,6 +495,36 @@ async def process_refund(
         cancel_reason_note=order.cancel_reason_note,
         returned_item_count=getattr(order, "_returned_item_count", 0),
     )
+
+
+@router.patch(
+    "/admin/orders/{order_id}/items/{item_id}/production-job",
+    response_model=AdminOrderDetailResponse,
+)
+async def reassign_production_job(
+    order_id: UUID,
+    item_id: UUID,
+    body: ReassignProductionJobRequest,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """重做製作：把客製訂單項目改指向新的 production job（指派後舊 job 可刪）。"""
+    return await service.reassign_production_job(
+        db, order_id, item_id, body.production_job_id
+    )
+
+
+@router.post(
+    "/admin/orders/{order_id}/cleanup-custom-assets",
+    response_model=CleanupCustomAssetsResponse,
+)
+async def cleanup_custom_assets(
+    order_id: UUID,
+    current_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """取消/退款訂單清理：刪客製製作 job + 客戶照片，保留 order_item 記錄。"""
+    return await service.cleanup_custom_order_assets(db, order_id)
 
 
 @router.patch(

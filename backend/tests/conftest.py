@@ -37,6 +37,12 @@ def setup_db():
     """Create tables once per session via subprocess to avoid asyncio event loop conflicts."""
     # ECpay test：強制 dry-run，避免真打 ECpay API；http://testserver 也放行
     settings.ecpay_dry_run = True
+    # ECpay 金流（Module 23）：dry-run + 官方公開 sandbox 帳號（CheckMacValue 算得出來）
+    settings.ecpay_payment_dry_run = True
+    settings.ecpay_payment_merchant_id = "3002607"
+    settings.ecpay_payment_hash_key = "pwFHCqoQZGmho4w6"
+    settings.ecpay_payment_hash_iv = "EkRm7iFT261dpevs"
+    settings.ecpay_payment_env = "stage"
     _run_script("reset_test_db.py")
     yield
     _run_script("drop_test_db.py")

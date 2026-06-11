@@ -694,6 +694,168 @@ async def test_delete_variant_not_found(client: AsyncClient, db):
     assert res.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_delete_variant_referenced_by_order_409(client: AsyncClient, db):
+    """被正式訂單引用的變體不可刪除，回 409 並提示改用停用。"""
+    from datetime import UTC, datetime
+
+    from orders.models import Order, OrderItem, OrderStatusEnum
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    product = await _create_product(db)
+    job = await _create_approved_job(db)
+    variant = ProductVariant(
+        product_id=product.id, production_job_id=job.id,
+        price=Decimal("399"), price_formula_base=Decimal("397"), is_active=True,
+    )
+    db.add(variant)
+    await db.flush()
+
+    customer = User(
+        name="cust",
+        email=f"cust_{uuid.uuid4().hex[:6]}@example.com",
+        password_hash="x", role="customer",
+        is_active=True, is_email_verified=True,
+    )
+    db.add(customer)
+    await db.flush()
+    order = Order(
+        order_number=f"PL-{uuid.uuid4().hex[:8]}",
+        user_id=customer.id, status=OrderStatusEnum.paid,
+        subtotal=399, discount_amount=0, shipping_fee=0, total=399,
+        shipping_type="home", shipping_snapshot={},
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=399, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.delete(f"{PRODUCTS_URL}/{product.id}/variants/{variant.id}")
+    assert res.status_code == 409
+    assert "訂單" in res.json().get("detail", "")
+
+    still = await db.execute(
+        select(ProductVariant).where(ProductVariant.id == variant.id)
+    )
+    assert still.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_variant_in_cart_cleans_and_deletes(client: AsyncClient, db):
+    """僅被購物車引用的變體：先清掉 cart_items，再成功刪除（204）。"""
+    from orders.models import CartItem
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    product = await _create_product(db)
+    job = await _create_approved_job(db)
+    variant = ProductVariant(
+        product_id=product.id, production_job_id=job.id,
+        price=Decimal("399"), price_formula_base=Decimal("397"), is_active=True,
+    )
+    db.add(variant)
+    await db.flush()
+
+    customer = User(
+        name="cust",
+        email=f"cust_{uuid.uuid4().hex[:6]}@example.com",
+        password_hash="x", role="customer",
+        is_active=True, is_email_verified=True,
+    )
+    db.add(customer)
+    await db.flush()
+    db.add(CartItem(
+        user_id=customer.id, product_variant_id=variant.id, quantity=1,
+    ))
+    await db.commit()
+
+    res = await client.delete(f"{PRODUCTS_URL}/{product.id}/variants/{variant.id}")
+    assert res.status_code == 204
+
+    gone = await db.execute(
+        select(ProductVariant).where(ProductVariant.id == variant.id)
+    )
+    assert gone.scalar_one_or_none() is None
+    cart_left = await db.execute(
+        select(CartItem).where(CartItem.product_variant_id == variant.id)
+    )
+    assert cart_left.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_variant_order_takes_precedence_over_cart(
+    client: AsyncClient, db
+):
+    """同時被訂單+購物車引用：訂單檢查先擋下（409），且不可清掉購物車。"""
+    from datetime import UTC, datetime
+
+    from orders.models import (
+        CartItem,
+        Order,
+        OrderItem,
+        OrderStatusEnum,
+    )
+
+    await _make_admin(client, db)
+    await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
+    product = await _create_product(db)
+    job = await _create_approved_job(db)
+    variant = ProductVariant(
+        product_id=product.id, production_job_id=job.id,
+        price=Decimal("399"), price_formula_base=Decimal("397"), is_active=True,
+    )
+    db.add(variant)
+    await db.flush()
+
+    customer = User(
+        name="cust",
+        email=f"cust_{uuid.uuid4().hex[:6]}@example.com",
+        password_hash="x", role="customer",
+        is_active=True, is_email_verified=True,
+    )
+    db.add(customer)
+    await db.flush()
+    order = Order(
+        order_number=f"PL-{uuid.uuid4().hex[:8]}",
+        user_id=customer.id, status=OrderStatusEnum.paid,
+        subtotal=399, discount_amount=0, shipping_fee=0, total=399,
+        shipping_type="home", shipping_snapshot={},
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=399, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    db.add(CartItem(
+        user_id=customer.id, product_variant_id=variant.id, quantity=1,
+    ))
+    await db.commit()
+
+    res = await client.delete(f"{PRODUCTS_URL}/{product.id}/variants/{variant.id}")
+    assert res.status_code == 409
+
+    # variant 與 cart_item 都應原封不動（訂單檢查在清購物車之前 raise）
+    still = await db.execute(
+        select(ProductVariant).where(ProductVariant.id == variant.id)
+    )
+    assert still.scalar_one_or_none() is not None
+    cart_left = await db.execute(
+        select(CartItem).where(CartItem.product_variant_id == variant.id)
+    )
+    assert len(cart_left.scalars().all()) == 1
+
+
 # ── Available jobs ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
