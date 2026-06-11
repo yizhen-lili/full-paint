@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import {
@@ -258,16 +258,49 @@ const allMapped = computed(
   () => mappings.value.length > 0 && mappings.value.every((m) => m.physical_color),
 )
 
+// finalize 改 Celery 背景跑：完成對應回來時 template_final.svg 還沒產好，
+// 且 job status 維持 completed（不會觸發既有的 pending/processing 輪詢），
+// 所以這裡自己輪詢 job 直到 finalized_at 更新成新值（或逾時）。
+const finalizing = ref(false)
+let finalizeTimer: ReturnType<typeof setInterval> | null = null
+
+function stopFinalizePoll() {
+  if (finalizeTimer) {
+    clearInterval(finalizeTimer)
+    finalizeTimer = null
+  }
+  finalizing.value = false
+}
+
+function pollFinalize(prevFinalizedAt: string | null) {
+  stopFinalizePoll()
+  finalizing.value = true
+  const started = Date.now()
+  finalizeTimer = setInterval(() => {
+    const finAt = jobData.value?.finalized_at ?? null
+    const done = !!finAt && finAt !== prevFinalizedAt
+    if (done || Date.now() - started > 120_000) {
+      stopFinalizePoll()
+      return
+    }
+    qc.invalidateQueries({ queryKey: PJ_KEYS.detail(jobId.value) })
+  }, 4000)
+}
+
 async function complete() {
   apiError.value = null
   completeResult.value = null
+  const prevFinalizedAt = jobData.value?.finalized_at ?? null
   try {
     const r = await completeMut.mutateAsync()
     completeResult.value = r
+    pollFinalize(prevFinalizedAt)
   } catch (e) {
     apiError.value = (e as { message?: string }).message || '完成對應失敗'
   }
 }
+
+onUnmounted(stopFinalizePoll)
 
 // 「stale finalize」偵測：曾 finalize 過（有 template_final_url）但 mapping 後來
 // 變動使 backend 清掉 finalized_at → 即時 banner 提示 admin 重按完成對應
@@ -450,6 +483,14 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
         </span>
       </p>
     </div>
+    <!-- finalize 背景產生中（密集模板數十秒）：產好後自動換成下方連結 -->
+    <p
+      v-if="finalizing && !jobData?.template_final_url"
+      class="mt-3 pt-3 border-t border-current/20 text-[12px] flex items-center gap-2"
+    >
+      <Loader2 :size="12" :stroke-width="1.5" class="animate-spin" />
+      實體色版最終模板產生中…（密集模板需數十秒，產好會自動出現連結）
+    </p>
     <!-- finalize 完成後給 admin 看最終模板的連結 -->
     <p
       v-if="jobData?.template_final_url"
