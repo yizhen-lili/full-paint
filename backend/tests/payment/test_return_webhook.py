@@ -242,6 +242,30 @@ async def test_race_guard_already_expired_notifies_admin(db):
     assert any(n.type == "ecpay_paid_after_close" and n.requires_action for n in notif)
 
 
+async def test_switched_to_bank_does_not_mark_paid(db):
+    """客戶已切換到銀行轉帳（payment_method != ecpay）→ ReturnURL 進來不標 paid，
+    改發孤兒款項通知，避免與銀行匯款重複付款。"""
+    from notifications.models import AdminNotification
+    _, order, txn = await _make_order_with_txn(db)
+    # 模擬客戶切換付款方式離開 ECpay（訂單仍 pending_payment）
+    order.payment_method = PaymentMethodEnum.bank_transfer
+    await db.commit()
+
+    params = _signed_return_params(txn)
+    result = await service.process_return_webhook(db, params)
+
+    assert result == "1|OK"
+    refreshed = (await db.execute(
+        select(Order).where(Order.id == order.id)
+    )).scalar_one()
+    assert refreshed.status == OrderStatusEnum.pending_payment  # 未被標 paid
+    assert await _count_progress(db, order.id) == 0
+    notif = (await db.execute(
+        select(AdminNotification).where(AdminNotification.reference_id == order.id)
+    )).scalars().all()
+    assert any(n.type == "ecpay_paid_after_close" and n.requires_action for n in notif)
+
+
 async def test_non_numeric_trade_amt_rejected(db):
     """TradeAmt 非數字 → AmountMismatch，不標 paid。"""
     _, order, txn = await _make_order_with_txn(db)

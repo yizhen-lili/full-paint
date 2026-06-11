@@ -29,6 +29,7 @@ from logistics.service import _ecpay_url_encode
 from orders.models import (
     Order,
     OrderStatusEnum,
+    PaymentMethodEnum,
     PaymentTransaction,
     PaymentTransactionStatusEnum,
 )
@@ -283,12 +284,19 @@ async def create_transaction_for_order(
 
 
 async def mark_awaiting_transactions_expired(db: AsyncSession, order_id) -> None:
-    """訂單逾期取消時，把該訂單仍在等繳費的 ATM/超商交易標 expired（呼叫端負責 commit）。"""
+    """把該訂單仍未完成的 ECpay 交易標 expired（呼叫端負責 commit）。
+
+    用於訂單逾期取消、或客戶切換付款方式離開 ECpay 時。涵蓋 created（已發起未取號）
+    與 awaiting_atm（已取號待繳費）兩種「尚可付款」狀態，避免舊代碼被繼續使用。
+    """
     await db.execute(
         update(PaymentTransaction)
         .where(
             PaymentTransaction.order_id == order_id,
-            PaymentTransaction.status == PaymentTransactionStatusEnum.awaiting_atm,
+            PaymentTransaction.status.in_([
+                PaymentTransactionStatusEnum.created,
+                PaymentTransactionStatusEnum.awaiting_atm,
+            ]),
         )
         .values(status=PaymentTransactionStatusEnum.expired)
     )
@@ -357,7 +365,14 @@ async def process_return_webhook(db: AsyncSession, params: dict[str, str]) -> st
     txn.status = PaymentTransactionStatusEnum.paid
     txn.paid_at = datetime.now(UTC)
 
-    if order.status == OrderStatusEnum.pending_payment:
+    # 只在「待付款 + 付款方式仍為 ECpay」才自動標 paid。若客戶已切換到銀行轉帳
+    # （payment_method != ecpay），即使 ECpay 仍收到舊代碼的付款也不自動入帳，
+    # 改走孤兒款項人工處理，避免與銀行匯款重複付款。
+    payable_by_ecpay = (
+        order.status == OrderStatusEnum.pending_payment
+        and order.payment_method == PaymentMethodEnum.ecpay
+    )
+    if payable_by_ecpay:
         user = (await db.execute(
             select(User).where(User.id == order.user_id)
         )).scalar_one()
@@ -366,19 +381,22 @@ async def process_return_webhook(db: AsyncSession, params: dict[str, str]) -> st
         await db.commit()
         _publish_order_status_changed(order)
     else:
-        # 訂單已非 pending_payment（多半是 ATM 取號後逾期被 Celery 取消，但顧客仍繳了費）：
-        # 不標 paid（避免覆蓋已取消狀態），但這是「孤兒款項」—— 顧客付了錢卻沒有有效訂單，
-        # 必須通知 admin 人工退款處理（不能只 log 吞掉）。
+        # 訂單已非 pending_payment（ATM 取號後逾期被取消）或已切換付款方式離開 ECpay，
+        # 但顧客仍繳了費 → 不標 paid，這是「孤兒款項」，必須通知 admin 人工退款處理。
         from notifications.service import create_notification  # noqa: PLC0415
+        reason = (
+            order.status if order.status != OrderStatusEnum.pending_payment
+            else f"已改用 {order.payment_method} 付款"
+        )
         logger.warning(
-            "[ecpay-return] 孤兒款項：訂單 %s 已為 %s 卻收到付款成功，需人工退款",
-            order.order_number, order.status,
+            "[ecpay-return] 孤兒款項：訂單 %s（%s）卻收到 ECpay 付款成功，需人工退款",
+            order.order_number, reason,
         )
         await create_notification(
             db,
             type="ecpay_paid_after_close",
             message=(
-                f"訂單 {order.order_number} 已是「{order.status}」卻收到 ECpay 付款成功"
+                f"訂單 {order.order_number}（{reason}）卻收到 ECpay 付款成功"
                 f"（交易 {txn.merchant_trade_no}，NT$ {int(txn.amount)}）—— 顧客已付款，請人工退款"
             ),
             reference_type="order",

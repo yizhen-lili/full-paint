@@ -94,6 +94,17 @@ export function useReviveMutation(orderId: MaybeRefOrGetter<string>) {
   })
 }
 
+export function useUpdatePaymentMethodMutation(orderId: MaybeRefOrGetter<string>) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (paymentMethod: 'bank_transfer' | 'ecpay') =>
+      ordersApi.updatePaymentMethod(toValue(orderId), paymentMethod),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['order', toValue(orderId)] })
+    },
+  })
+}
+
 export function useUpdateShippingMutation(orderId: MaybeRefOrGetter<string>) {
   const queryClient = useQueryClient()
   return useMutation({

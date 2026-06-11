@@ -1758,6 +1758,128 @@ async def test_revive_expired_coupon_dropped(client, db):
 
 
 @pytest.mark.asyncio
+async def test_update_payment_method_switch(client, db):
+    """待付款訂單可切換付款方式 ecpay ↔ bank_transfer；非待付款 → 400。"""
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    user = await _make_customer(client, db)
+    await _login_customer(client)
+    job = await _make_production_job(db)
+    _, variant = await _make_product_and_variant(db, job.id, is_active=True)
+
+    def _new_order(status, method):
+        return Order(
+            order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+            user_id=user.id, status=status,
+            subtotal=500, discount_amount=0, shipping_fee=70, total=570,
+            shipping_type="home", shipping_snapshot={},
+            payment_method=method,
+            payment_deadline=datetime.now(UTC) + timedelta(hours=10),
+            created_at=datetime.now(UTC),
+        )
+
+    order = _new_order(OrderStatusEnum.pending_payment, "ecpay")
+    db.add(order)
+    await db.flush()
+    db.add(OrderItem(
+        order_id=order.id, product_variant_id=variant.id,
+        product_title_snapshot="x", variant_spec_snapshot={},
+        unit_price=500, quantity=1, fulfilled_qty=0, preorder_qty=0,
+        is_returned=False,
+    ))
+    await db.commit()
+
+    res = await client.patch(
+        f"{ORDERS_URL}/{order.id}/payment-method",
+        json={"payment_method": "bank_transfer"},
+    )
+    assert res.status_code == 200
+    assert res.json()["payment_method"] == "bank_transfer"
+
+    # 切回 ecpay
+    res2 = await client.patch(
+        f"{ORDERS_URL}/{order.id}/payment-method",
+        json={"payment_method": "ecpay"},
+    )
+    assert res2.status_code == 200
+    assert res2.json()["payment_method"] == "ecpay"
+
+    # 已付款訂單不可切換 → 400
+    paid = _new_order(OrderStatusEnum.paid, "ecpay")
+    db.add(paid)
+    await db.commit()
+    res3 = await client.patch(
+        f"{ORDERS_URL}/{paid.id}/payment-method",
+        json={"payment_method": "bank_transfer"},
+    )
+    assert res3.status_code == 400
+
+    # payment_expired 不可切換 → 400（需先 revive）
+    exp = _new_order(OrderStatusEnum.payment_expired, "ecpay")
+    db.add(exp)
+    await db.commit()
+    res4 = await client.patch(
+        f"{ORDERS_URL}/{exp.id}/payment-method",
+        json={"payment_method": "bank_transfer"},
+    )
+    assert res4.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_update_payment_method_expires_txn_and_guards(client, db):
+    """切離 ecpay 時作廢未繳費取號交易；他人訂單 404；相同方式 no-op。"""
+    from orders.models import PaymentTransaction, PaymentTransactionStatusEnum
+
+    owner = await _make_customer(client, db, email="switch_owner@example.com")
+    await _login_customer(client, email="switch_owner@example.com")
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+
+    order = Order(
+        order_number=f"PL-{_uuid.uuid4().hex[:8]}",
+        user_id=owner.id, status=OrderStatusEnum.pending_payment,
+        subtotal=500, discount_amount=0, shipping_fee=70, total=570,
+        shipping_type="home", shipping_snapshot={}, payment_method="ecpay",
+        payment_deadline=datetime.now(UTC) + timedelta(hours=10),
+        created_at=datetime.now(UTC),
+    )
+    db.add(order)
+    await db.flush()
+    txn = PaymentTransaction(
+        order_id=order.id, merchant_trade_no=f"PAY{_uuid.uuid4().hex[:12].upper()}",
+        amount=570, status=PaymentTransactionStatusEnum.awaiting_atm,
+    )
+    db.add(txn)
+    await db.commit()
+
+    # 切到銀行轉帳 → 取號交易應被標 expired
+    res = await client.patch(
+        f"{ORDERS_URL}/{order.id}/payment-method",
+        json={"payment_method": "bank_transfer"},
+    )
+    assert res.status_code == 200
+    await db.refresh(txn)
+    assert txn.status == PaymentTransactionStatusEnum.expired
+
+    # 相同方式 no-op（再切 bank_transfer）→ 200
+    res_noop = await client.patch(
+        f"{ORDERS_URL}/{order.id}/payment-method",
+        json={"payment_method": "bank_transfer"},
+    )
+    assert res_noop.status_code == 200
+
+    # 他人訂單 → 404
+    await _make_customer(client, db, email="switch_other@example.com")
+    await _login_customer(client, email="switch_other@example.com")
+    res404 = await client.patch(
+        f"{ORDERS_URL}/{order.id}/payment-method",
+        json={"payment_method": "ecpay"},
+    )
+    assert res404.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_revive_promo_discount_dropped(client, db):
     """促銷碼折扣（user_coupon_id 為 None）→ revive 一律去除折扣、重算 total，
     不沿用折扣（避免名額回收漏洞 + 客戶白享折扣）。"""
