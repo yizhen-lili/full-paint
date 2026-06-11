@@ -294,13 +294,23 @@ async def complete_mappings(db: AsyncSession, job_id: UUID) -> dict:
 
     await db.commit()
 
-    # 對應完成後產出「實體色版最終模板」：重編號 + 上傳 template_final.svg
-    # + palette_final.json。失敗只 log 不擋使用者完成流程（Firebase / SVG
-    # 解析異常時，PDF 匯出會 fallback 回原始 template.svg）。
+    # 對應完成後產出「實體色版最終模板」（重編號 + template_final.svg + palette_final.json）。
+    # 密集模板 finalize 是重活、可能數十秒，放在這個 HTTP 請求裡同步跑會閘道逾時 502，
+    # 所以丟給 Celery worker 非同步跑；這裡立刻返回（shortage_colors 不依賴 finalize）。
+    # 模板稍後產好，前端輪詢 job.finalized_at / template_final_url 取得。
     try:
-        await finalize_template(db, job_id)
+        from core.celery_app import celery_app  # noqa: PLC0415
+        # retry=False：broker 短暫不可用時 send_task 立即失敗、不阻塞 HTTP 請求
+        # （絕不 fallback 同步跑 finalize —— 那又會把這個請求拖到逾時 502）。
+        celery_app.send_task(
+            "production.finalize_template", args=[str(job_id)], retry=False
+        )
     except Exception as e:  # noqa: BLE001
-        logger.warning("finalize_template failed for %s (best-effort): %s", job_id, e)
+        # 入列失敗只 log：模板未產出（best-effort），admin 重按完成對應或後製會補產。
+        logger.warning(
+            "enqueue finalize_template failed for %s: %s（模板未產，可重按完成對應補產）",
+            job_id, e,
+        )
 
     return {
         "all_stocked": len(shortage_colors) == 0,

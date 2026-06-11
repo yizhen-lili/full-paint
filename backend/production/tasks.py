@@ -904,6 +904,39 @@ async def _cancel_batch_async(batch_id: str) -> None:
         await engine_db.dispose()
 
 
+# ── 背景產生實體色版最終模板（從 complete_mappings 拆出來非同步跑）──────────
+
+
+@celery_app.task(bind=True, name="production.finalize_template", max_retries=0)
+def finalize_template_job(self, job_id: str) -> None:
+    """背景跑 finalize_template（template_final.svg + palette_final.json）。
+
+    密集模板（上萬 polygon）finalize 是重活、可能數十秒，放在「完成對應」的 HTTP
+    請求裡同步跑會閘道逾時 502。改丟 worker 非同步跑：complete_mappings 寫完
+    output_label/required_ml 立刻返回，模板稍後產好，前端輪詢 finalized_at 取得。
+    best-effort：失敗只 log，不影響已寫好的 DB 資料。
+    """
+    _run_async(_finalize_template_async(job_id))
+
+
+async def _finalize_template_async(job_id: str) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
+    from sqlalchemy.pool import NullPool  # noqa: PLC0415
+
+    from palette.service import finalize_template  # noqa: PLC0415
+
+    engine_db = create_async_engine(_get_db_url(), poolclass=NullPool)
+    try:
+        async with AsyncSession(engine_db, expire_on_commit=False) as session:
+            await finalize_template(db=session, job_id=uuid.UUID(job_id))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "finalize_template_job failed for %s (best-effort): %s", job_id, e
+        )
+    finally:
+        await engine_db.dispose()
+
+
 # ── Deferred Firebase cleanup（force-cancel 後 worker race 補洗一次）──────────
 
 

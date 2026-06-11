@@ -64,8 +64,9 @@ export function useCompleteMappingsMutation(jobId: string) {
     mutationFn: () => completePaletteMappings(jobId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: PM_KEYS.mappings(jobId) })
-      // finalize_template 在 backend 同步跑 → 寫入 job.template_final_url / palette_final_url。
-      // 必須 invalidate production job detail query，前端才能看到「查看 SVG」連結。
+      // finalize_template 改 Celery 背景跑（密集模板數十秒、同步會 502）→ 完成對應回來時
+      // template_final_url 還沒產好。先 invalidate 一次拿即時狀態；PaletteMappingPage 的
+      // pollFinalize 會輪詢 job 直到 finalized_at 更新，再顯示「查看 SVG」連結。
       qc.invalidateQueries({ queryKey: ['admin', 'production', 'detail', jobId] })
     },
   })
