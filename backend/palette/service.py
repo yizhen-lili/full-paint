@@ -744,6 +744,9 @@ async def _get_job_or_404(db: AsyncSession, job_id: UUID) -> ProductionJob:
 async def _auto_map(
     db: AsyncSession, job: ProductionJob
 ) -> list[PaletteColorMapping]:
+    # 先抓主鍵：並發競態下 except 分支會 db.rollback()，rollback 使 job 物件過期，
+    # 之後再讀 job.id 會觸發同步 lazy-load → async 下 MissingGreenlet → 500。
+    jid = job.id
     colors_result = await db.execute(
         select(PhysicalColor).where(PhysicalColor.is_active == True)  # noqa: E712
     )
@@ -777,7 +780,7 @@ async def _auto_map(
         )
 
         mapping = PaletteColorMapping(
-            production_job_id=job.id,
+            production_job_id=jid,
             template_id=template_id,
             algorithm_rgb=alg_rgb,
             physical_color_id=best.id,
@@ -793,7 +796,7 @@ async def _auto_map(
         await db.rollback()
         result = await db.execute(
             select(PaletteColorMapping).where(
-                PaletteColorMapping.production_job_id == job.id
+                PaletteColorMapping.production_job_id == jid
             )
         )
         return list(result.scalars().all())

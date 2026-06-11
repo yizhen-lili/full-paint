@@ -155,6 +155,45 @@ async def test_get_mappings_does_not_duplicate(client: AsyncClient, db):
 
 
 @pytest.mark.asyncio
+async def test_auto_map_concurrent_conflict_returns_existing(db):
+    """並發競態回歸測試：另一請求已先建好該 job 的 mappings → _auto_map 第二次
+    commit 撞 (production_job_id, template_id) unique 約束 → IntegrityError → rollback
+    → except 分支必須用『函式開頭預先捕捉的 jid』查回既有 mappings。
+
+    修前：rollback 後讀 job.id 觸發過期屬性同步 lazy-load → prod async session 噴
+    MissingGreenlet → 500（顏色對應頁偶爾 500 的根因）。本測試確保該 fallback 路徑
+    正確回傳既有 mappings、不拋例外。
+    （測試 session expire_on_commit=False，無法直接重現 MissingGreenlet，但鎖住
+    fallback 行為 + jid 捕捉的正確性。）
+    """
+    from palette.service import _auto_map
+
+    await _seed_settings(db)
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    job = await _create_job_with_palette(db)  # palette_json: template_id 1, 2
+
+    # 模擬「並發贏家」：先建好 template_id=1 的 mapping，製造 unique 衝突
+    win_color = (await db.execute(select(PhysicalColor))).scalars().first()
+    db.add(PaletteColorMapping(
+        production_job_id=job.id,
+        template_id=1,
+        algorithm_rgb=[247, 167, 132],
+        physical_color_id=win_color.id,
+        mapped_by=MappedByEnum.system,
+    ))
+    await db.commit()
+    await db.refresh(job)  # job fresh（模擬 request 剛載入 job）
+
+    # _auto_map 嘗試建 template 1&2 → commit 撞 IntegrityError → rollback → except 回既有
+    result = await _auto_map(db, job)
+
+    assert len(result) >= 1
+    assert all(isinstance(m, PaletteColorMapping) for m in result)
+    assert any(m.template_id == 1 for m in result)
+
+
+@pytest.mark.asyncio
 async def test_get_mappings_no_palette_json(client: AsyncClient, db):
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
