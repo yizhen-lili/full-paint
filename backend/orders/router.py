@@ -46,6 +46,7 @@ from orders.schemas.response import (
     ProductionProgressResponse,
     RefundResponse,
     ReorderResponse,
+    ReviveResponse,
 )
 
 router = APIRouter(tags=["orders"])
@@ -238,6 +239,18 @@ async def reorder_expired_order(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.reorder_expired_order(db, current_user.id, order_id)
+
+
+@router.post(
+    "/orders/{order_id}/revive", status_code=200, response_model=ReviveResponse
+)
+async def revive_expired_order(
+    order_id: UUID,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """逾期（未取消）訂單「重新申請付款」：復活成 pending_payment 可再付款。"""
+    return await service.revive_expired_order(db, current_user.id, order_id)
 
 
 @router.post("/orders/{order_id}/confirm-refund", status_code=204, response_model=None)

@@ -56,6 +56,16 @@ class ReorderResponse(BaseModel):
     unavailable_count: int
 
 
+class ReviveResponse(BaseModel):
+    order_id: UUID
+    order_number: str
+    status: str
+    total: float
+    payment_deadline: datetime
+    # discount_dropped：原折扣券已失效被去除、金額已重算
+    discount_dropped: bool = False
+
+
 class CheckoutPreviewResponse(BaseModel):
     subtotal: float
     # 一般商品 subtotal（免運門檻計算用，排除客製）

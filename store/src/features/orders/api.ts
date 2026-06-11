@@ -284,3 +284,19 @@ export async function reorderExpiredOrder(orderId: string): Promise<ReorderRespo
     method: 'POST',
   })
 }
+
+// ── Revive（逾期訂單重新申請付款 → 復活成可付款）──────────────────
+export interface ReviveResponse {
+  order_id: string
+  order_number: string
+  status: OrderStatus
+  total: number
+  payment_deadline: string
+  discount_dropped: boolean
+}
+
+export async function reviveExpiredOrder(orderId: string): Promise<ReviveResponse> {
+  return jsonRequest<ReviveResponse>(`/orders/${orderId}/revive`, {
+    method: 'POST',
+  })
+}

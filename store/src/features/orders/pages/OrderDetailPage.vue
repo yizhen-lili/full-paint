@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import {
-  ArrowLeft, Loader2, Check, Copy, Package, AlertCircle, X, Truck, Wallet,
+  ArrowLeft, Loader2, Check, Copy, AlertCircle, X, Truck, Wallet,
 } from 'lucide-vue-next'
 import {
   useOrderDetailQuery,
@@ -10,14 +10,14 @@ import {
   useConfirmReceivedMutation,
   useConfirmRefundMutation,
   useCancelOrderMutation,
-  useReorderMutation,
+  useReviveMutation,
   useUpdateShippingMutation,
   usePublicSettingsQuery,
   STATUS_LABEL,
   STATUS_TAB,
 } from '../queries'
 import { useOrderSse } from '../useOrderSse'
-import type { ApiError, ReorderResponse, UpdateShippingPayload } from '../api'
+import type { ApiError, UpdateShippingPayload } from '../api'
 import ShippingProfileForm from '@/features/profile/components/ShippingProfileForm.vue'
 import type { ShippingProfileInput } from '@/features/profile/api'
 import { consumeCvsRedirect, saveCvsRedirect } from '@/features/profile/cvsRedirect'
@@ -112,8 +112,8 @@ const remainingMs = computed(() =>
 )
 const expired = computed(() => deadline.value !== null && remainingMs.value === 0)
 
-// 可重新下單：已逾期狀態，或仍是待付款但付款期限已過（Celery 尚未翻狀態）
-const canReorder = computed(() => {
+// 可重新申請付款：已逾期狀態，或仍是待付款但付款期限已過（Celery 尚未翻狀態）
+const canRevive = computed(() => {
   const s = order.value?.status
   return s === 'payment_expired' || (s === 'pending_payment' && expired.value)
 })
@@ -326,16 +326,19 @@ async function submitCancel() {
   }
 }
 
-// 過期訂單重新下單：把原品項加回購物車，結果用 modal 顯示（含客製報價過期引導）
-const reorderMut = useReorderMutation(orderId)
-const reorderResult = ref<ReorderResponse | null>(null)
-const reorderError = ref('')
-async function handleReorder() {
-  reorderError.value = ''
+// 逾期（未取消）訂單重新申請付款：復活成可付款，回到正常付款流程
+const reviveMut = useReviveMutation(orderId)
+const reviveError = ref('')
+async function handleRevive() {
+  reviveError.value = ''
   try {
-    reorderResult.value = await reorderMut.mutateAsync()
+    const res = await reviveMut.mutateAsync()
+    if (res.discount_dropped) {
+      alert('原折扣券已失效，訂單金額已更新為目前應付金額。')
+    }
+    // 復活後訂單變回待付款，query 失效會自動刷新出「前往付款 / 上傳匯款」UI
   } catch (e) {
-    reorderError.value = (e as ApiError).detail || '重新下單失敗'
+    reviveError.value = (e as ApiError).detail || '重新申請付款失敗'
   }
 }
 
@@ -543,31 +546,31 @@ function specSummary(spec: Record<string, unknown>): string {
       </section>
       <p v-if="confirmRefundError" class="refund-error">{{ confirmRefundError }}</p>
 
-      <!-- 逾期未付：提供「重新下單」把品項加回購物車 -->
+      <!-- 逾期未付（未取消）：重新申請付款，把訂單復活成可付款 -->
       <section
-        v-if="canReorder"
+        v-if="canRevive"
         class="refund-banner refund-processing"
       >
         <Wallet :size="20" :stroke-width="1.5" class="refund-icon" />
         <div class="refund-text">
           <h3 class="refund-title">付款期限已過</h3>
           <p class="refund-body">
-            此訂單已逾期取消。您可以重新下單，我們會把訂單內仍可購買的商品加回購物車，
-            讓您重新結帳付款。
+            此訂單已超過付款期限。您可以重新申請付款，系統會重設付款期限，
+            讓您直接前往付款，不需重新下單。
           </p>
         </div>
         <button
           type="button"
           class="refund-cta"
-          :disabled="reorderMut.isPending.value"
-          @click="handleReorder"
+          :disabled="reviveMut.isPending.value"
+          @click="handleRevive"
         >
-          <Loader2 v-if="reorderMut.isPending.value" :size="14" class="spin" />
-          <Package v-else :size="14" :stroke-width="1.5" />
-          重新下單
+          <Loader2 v-if="reviveMut.isPending.value" :size="14" class="spin" />
+          <Wallet v-else :size="14" :stroke-width="1.5" />
+          重新申請付款
         </button>
       </section>
-      <p v-if="reorderError" class="refund-error">{{ reorderError }}</p>
+      <p v-if="reviveError" class="refund-error">{{ reviveError }}</p>
 
       <!-- 進度 stepper（只在主流程狀態顯示；取消/退款相關不顯示） -->
       <section
@@ -1000,53 +1003,6 @@ function specSummary(spec: Record<string, unknown>): string {
           </div>
         </Transition>
 
-        <!-- 重新下單結果 dialog -->
-        <Transition name="modal">
-          <div v-if="reorderResult" class="modal-overlay" @click.self="reorderResult = null">
-            <div class="modal modal-narrow">
-              <header class="modal-head">
-                <h3 class="modal-title">重新下單</h3>
-                <button type="button" class="modal-close" @click="reorderResult = null">
-                  <X :size="16" />
-                </button>
-              </header>
-              <div class="modal-body">
-                <p v-if="reorderResult.added_count > 0" class="reorder-ok">
-                  <Check :size="14" :stroke-width="2" />
-                  已將 {{ reorderResult.added_count }} 項商品加入購物車
-                </p>
-                <template v-if="reorderResult.unavailable.length">
-                  <p class="reorder-sub">以下商品無法加入：</p>
-                  <ul class="reorder-list">
-                    <li
-                      v-for="(u, i) in reorderResult.unavailable"
-                      :key="i"
-                      class="reorder-item"
-                    >
-                      <span class="reorder-item-title">{{ u.title }}</span>
-                      <span class="reorder-item-reason">{{ u.reason }}</span>
-                      <RouterLink
-                        v-if="u.custom_request_id"
-                        :to="`/custom/requests/${u.custom_request_id}`"
-                        class="reorder-reapply"
-                        @click="reorderResult = null"
-                      >重新申請客製 →</RouterLink>
-                    </li>
-                  </ul>
-                </template>
-                <div class="modal-foot">
-                  <button type="button" class="btn-ghost" @click="reorderResult = null">關閉</button>
-                  <RouterLink
-                    v-if="reorderResult.added_count > 0"
-                    to="/cart"
-                    class="btn-primary"
-                    @click="reorderResult = null"
-                  >前往購物車</RouterLink>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Transition>
       </Teleport>
 
       <!-- 修改地址 Modal -->
@@ -2080,46 +2036,6 @@ function specSummary(spec: Record<string, unknown>): string {
   color: var(--color-state-warning);
   margin: 0 0 8px;
   letter-spacing: 0.04em;
-}
-
-.reorder-ok {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: var(--color-state-success, #4a7c59);
-  margin: 0 0 10px;
-}
-.reorder-sub {
-  font-size: 13px;
-  color: var(--color-ink-muted, #8a7f6f);
-  margin: 0 0 8px;
-  letter-spacing: 0.04em;
-}
-.reorder-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.reorder-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 10px 12px;
-  background: var(--color-paper-subtle, #f3ece0);
-  border-radius: 8px;
-}
-.reorder-item-title { font-size: 14px; }
-.reorder-item-reason { font-size: 12px; color: var(--color-state-warning); }
-.reorder-reapply {
-  align-self: flex-start;
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--color-brand-walnut, #6b4f3a);
-  text-decoration: underline;
 }
 
 .modal-enter-active, .modal-leave-active {

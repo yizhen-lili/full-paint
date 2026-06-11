@@ -421,6 +421,149 @@ async def reorder_expired_order(
     }
 
 
+async def revive_expired_order(
+    db: AsyncSession, user_id: UUID, order_id: UUID
+) -> dict:
+    """逾期（未取消）訂單「重新申請付款」：復活成 pending_payment 可付款。
+
+    用即時期限判定（不依賴 Celery）：payment_expired，或 pending_payment 但已過期。
+    重新綁定客製（quote_confirmed，修復舊邏輯退回 quote_sent/解綁的資料）、重新扣庫存、
+    重新搶回原折扣券（失效則去除並重算 total）、重設付款期限。客製沿用下單時鎖定在
+    order_item 的價格，不需重新報價。
+    """
+    from custom.models import CustomRequest, CustomRequestStatusEnum  # noqa: PLC0415
+    from discount.models import UserCoupon  # noqa: PLC0415
+
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id, Order.user_id == user_id)
+        .with_for_update()
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+
+    now = datetime.now(UTC)
+    is_expired = order.status == OrderStatusEnum.payment_expired
+    is_pending_past_deadline = (
+        order.status == OrderStatusEnum.pending_payment
+        and order.payment_deadline is not None
+        and order.payment_deadline < now
+    )
+    if not (is_expired or is_pending_past_deadline):
+        raise ConflictError("此訂單目前無法重新付款")
+
+    # 1. 重新綁定客製（不論目前狀態，修復「已被退回 quote_sent/quote_expired/解綁」的舊資料）
+    custom_ids = (await db.execute(
+        select(OrderItem.custom_request_id).where(
+            OrderItem.order_id == order_id,
+            OrderItem.custom_request_id.isnot(None),
+        )
+    )).scalars().all()
+    if custom_ids:
+        await db.execute(
+            update(CustomRequest)
+            .where(CustomRequest.id.in_(custom_ids))
+            .values(
+                status=CustomRequestStatusEnum.quote_confirmed, order_id=order.id
+            )
+        )
+
+    # 2. 重新扣庫存（逾期時已 _restore_stock 回補；不足自動轉預購、不卡關）
+    items = list((await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order_id)
+    )).scalars().all())
+    deduct_input = [
+        {
+            "is_custom": it.custom_request_id is not None,
+            "production_job_id": it.production_job_id,
+            "quantity": it.quantity,
+        }
+        for it in items
+    ]
+    fulfilled = await _deduct_stock(db, deduct_input)
+    for it, f in zip(items, fulfilled, strict=True):
+        it.fulfilled_qty = f
+        it.preorder_qty = it.quantity - f
+
+    # 3. 重新搶回原折扣（逾期時 revert_coupon 已把券設回可用、促銷碼 total_used 減回）。
+    #    只有「綁定在 order.user_coupon_id 的會員券」能可靠重新搶回（沿用原 discount snapshot）；
+    #    促銷碼/其他來源（order.user_coupon_id 為 None）逾期時已被 revert，無法可靠重新佔用名額，
+    #    一律去除折扣並重算 total —— 否則促銷碼名額會被無限回收、且客戶白享折扣。
+    discount_dropped = False
+    if order.user_coupon_id is not None:
+        uc = (await db.execute(
+            select(UserCoupon).where(
+                UserCoupon.id == order.user_coupon_id,
+                UserCoupon.user_id == user_id,
+            )
+        )).scalar_one_or_none()
+        reusable = (
+            uc is not None
+            and not uc.is_used
+            and (uc.expires_at is None or uc.expires_at > now)
+        )
+        if reusable:
+            claimed = await db.execute(
+                update(UserCoupon)
+                .where(
+                    UserCoupon.id == order.user_coupon_id,
+                    UserCoupon.is_used == False,  # noqa: E712
+                )
+                .values(is_used=True, used_at=now, used_in_order_id=order.id)
+                .returning(UserCoupon.id)
+            )
+            reusable = claimed.scalar_one_or_none() is not None
+        if not reusable:
+            discount_dropped = True
+    elif order.discount_amount is not None and order.discount_amount > 0:
+        # 促銷碼 / auto_checkout / 其他非會員券折扣 → 一律去除（避免名額回收漏洞）
+        discount_dropped = True
+
+    if discount_dropped:
+        order.user_coupon_id = None
+        order.auto_checkout_config_id = None
+        order.discount_amount = Decimal("0")
+        order.discount_source = None
+        order.total = (
+            Decimal(str(order.subtotal)) + Decimal(str(order.shipping_fee))
+        )
+
+    # 4. 重設付款期限 + 復活狀態
+    deadline_hours = int(
+        await get_system_setting(db, "payment_absolute_deadline_hours") or "48"
+    )
+    order.payment_deadline = now + timedelta(hours=deadline_hours)
+    order.status = OrderStatusEnum.pending_payment
+    order.cancel_reason_code = None
+    order.cancel_reason_note = None
+
+    await db.commit()
+    await db.refresh(order)
+
+    user = (await db.execute(
+        select(User).where(User.id == user_id)
+    )).scalar_one()
+    await _send_email(
+        to=user.email,
+        subject=f"【易木 YIIMUI】訂單已恢復付款 {order.order_number}",
+        html=(
+            f"<p>您的訂單 {order.order_number} 已恢復付款。</p>"
+            f"<p>應付金額：NT${float(order.total):,.0f}</p>"
+            f"<p>付款期限：{order.payment_deadline.strftime('%Y-%m-%d %H:%M')}</p>"
+        ),
+    )
+
+    return {
+        "order_id": order.id,
+        "order_number": order.order_number,
+        "status": order.status,
+        "total": float(order.total),
+        "payment_deadline": order.payment_deadline,
+        "discount_dropped": discount_dropped,
+    }
+
+
 async def update_cart_item(
     db: AsyncSession, user_id: UUID, item_id: UUID, quantity: int
 ) -> CartItem | None:
@@ -681,15 +824,19 @@ async def _restore_stock_for_items(
             )
 
 
-async def _revert_order_effects(db: AsyncSession, order: Order) -> None:
+async def _revert_order_effects(
+    db: AsyncSession, order: Order, *, keep_custom: bool = False
+) -> None:
     await _restore_stock(db, order.id)
     await discount_svc.revert_coupon(db, order.id)
     await discount_svc.revoke_reward_coupons(
         db, order.id, refund_amount=float(order.total), order_total=float(order.total)
     )
-    # 客製訂單取消 → 還原 custom_request 狀態（quote_confirmed → quote_sent，
-    # 客戶可重新申請或續用原報價在 expires_at 內加進購物車再買）
-    await _revert_custom_requests_for_order(db, order.id)
+    # 客製訂單取消 → 還原 custom_request 狀態（quote_confirmed → quote_sent）。
+    # keep_custom=True（付款逾期）時不拆客製綁定：訂單還能「重新申請付款」復活，
+    # 客製維持 quote_confirmed 綁在訂單上，避免詳情頁誤顯示「前往報價頁/已失效」。
+    if not keep_custom:
+        await _revert_custom_requests_for_order(db, order.id)
 
 
 async def _revert_custom_requests_for_order(db: AsyncSession, order_id: UUID) -> None:
@@ -718,17 +865,18 @@ async def _revert_custom_requests_for_order(db: AsyncSession, order_id: UUID) ->
 
 async def expire_pending_order(db: AsyncSession, order: Order) -> None:
     """把一筆已過付款期限的 pending_payment 訂單就地標記為 payment_expired 並回滾副作用
-    （釋放庫存/折扣券、客製申請退回 quote_sent）。
+    （釋放庫存/折扣券）。客製綁定刻意保留（keep_custom=True），訂單仍可「重新申請付款」復活。
 
     等同 Celery check_payment_expired 對單筆訂單做的事；當 Celery 尚未掃到時（例如
-    worker 未運行或還沒到 5 分鐘排程），reorder 可主動觸發。不寄信、不 commit，由呼叫端決定。
+    worker 未運行或還沒到 5 分鐘排程），reorder/revive 可主動觸發。不寄信、不 commit，由呼叫端決定。
     """
     from payment.service import mark_awaiting_transactions_expired  # noqa: PLC0415
 
     order.status = OrderStatusEnum.payment_expired
     order.cancel_reason_code = CancelReasonCodeEnum.payment_expired
     await mark_awaiting_transactions_expired(db, order.id)
-    await _revert_order_effects(db, order)
+    # keep_custom=True：逾期不拆客製綁定，讓訂單可「重新申請付款」復活
+    await _revert_order_effects(db, order, keep_custom=True)
 
 
 async def complete_order(db: AsyncSession, order: Order) -> None:
