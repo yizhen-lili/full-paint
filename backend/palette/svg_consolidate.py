@@ -62,6 +62,15 @@ _COLLISION_MIN_GAP_PX = 8.0
 # 重複（< 12px），相鄰小格的同色號各自保留 —— 寧可同數字出現兩次，也不要有格子沒號。
 _SAME_LABEL_MIN_GAP_PX = 12.0
 
+# 碰撞偵測用空間網格的格寬：必須 ≥「任何兩標籤可能的最大 required 距離」，這樣只需
+# 檢查候選點所在格 + 周圍 8 格即可涵蓋所有可能碰撞 → 把 O(n²) 降為 O(n)，密集模板
+# （上萬格）finalize 才不會逾時 502。max required = max(同號門檻, 兩個最大字級的 font 門檻)。
+_COLLISION_GRID_PX = max(
+    _SAME_LABEL_MIN_GAP_PX,
+    _COLLISION_MIN_GAP_PX,
+    2 * _MAX_FONT_SIZE * _COLLISION_TOLERANCE,
+)
+
 # 微小色塊偵測：面積 < 此 OR bbox 短邊 < _TINY_POLYGON_SHORT_EDGE 視為微小、
 # 自動合併到色差最近的鄰居（SVG 層級視覺合併，DB 不動）
 _TINY_POLYGON_AREA = 60.0
@@ -449,8 +458,11 @@ def regenerate_merged_svg(
         merged_count += 1
 
     # Pass C：所有 path 都寫完後，把 <text> 標籤疊上去
-    # 全局已放置標籤位置（跨 output_label） — 給碰撞偵測用
-    placed_labels: list[tuple[float, float, float, int]] = []  # (cx, cy, font_size, label)
+    # 碰撞偵測用空間網格（grid）：(gx,gy) -> [(cx,cy,font_size,label)]，只比對候選點
+    # 所在格 + 周圍 8 格，把原本 O(n²) 全域比對降為 O(n)，密集模板才不會逾時。
+    label_grid: dict[tuple[int, int], list[tuple[float, float, float, int]]] = (
+        defaultdict(list)
+    )
     for item in render_items:
         output_label = item["output_label"]
         # 每個獨立 part 各放一個編號，三層篩選：
@@ -483,17 +495,29 @@ def regenerate_merged_svg(
             area_sqrt = max(geom.area, 1.0) ** 0.5
             font_size = max(_MIN_FONT_SIZE, min(area_sqrt / 8.0, _MAX_FONT_SIZE))
 
-            # 篩選 3：碰撞偵測（一律檢查，包括該色最大塊）。
-            # - 跨編號：font 門檻 + 絕對下限 _COLLISION_MIN_GAP_PX（不同數字不擠一格）
-            # - 同編號：再拉高到 _SAME_LABEL_MIN_GAP_PX（同數字不在一格重複，遠處才各標）
+            # 篩選 3：碰撞偵測（只比對候選點所在格 + 周圍 8 格，O(1) 均攤）。
+            # - 跨編號：font 門檻 + 絕對下限 _COLLISION_MIN_GAP_PX（不同數字不疊字）
+            # - 同編號：再拉高到 _SAME_LABEL_MIN_GAP_PX（同數字不在一點重複）
+            gx, gy = int(cx // _COLLISION_GRID_PX), int(cy // _COLLISION_GRID_PX)
             too_close = False
-            for px, py, pfs, plabel in placed_labels:
-                base = max((font_size + pfs) * _COLLISION_TOLERANCE, _COLLISION_MIN_GAP_PX)
-                required = (
-                    max(base, _SAME_LABEL_MIN_GAP_PX) if plabel == output_label else base
-                )
-                if (cx - px) ** 2 + (cy - py) ** 2 < required ** 2:
-                    too_close = True
+            for dgx in (-1, 0, 1):
+                for dgy in (-1, 0, 1):
+                    # .get 不建空鍵（只有真的放標籤時才在 append 處建格）
+                    for px, py, pfs, plabel in label_grid.get((gx + dgx, gy + dgy), ()):
+                        base = max(
+                            (font_size + pfs) * _COLLISION_TOLERANCE,
+                            _COLLISION_MIN_GAP_PX,
+                        )
+                        required = (
+                            max(base, _SAME_LABEL_MIN_GAP_PX)
+                            if plabel == output_label else base
+                        )
+                        if (cx - px) ** 2 + (cy - py) ** 2 < required ** 2:
+                            too_close = True
+                            break
+                    if too_close:
+                        break
+                if too_close:
                     break
             if too_close:
                 continue
@@ -508,7 +532,7 @@ def regenerate_merged_svg(
             text_el.set("font-family", _LABEL_FONT_FAMILY)
             text_el.set("fill", "black")
             text_el.text = str(output_label)
-            placed_labels.append((cx, cy, font_size, output_label))
+            label_grid[(gx, gy)].append((cx, cy, font_size, output_label))
             parts_count += 1
 
     logger.info(

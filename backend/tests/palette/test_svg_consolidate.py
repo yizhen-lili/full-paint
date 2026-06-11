@@ -186,6 +186,21 @@ def test_different_labels_kept_when_not_overlapping():
     assert sorted(texts) == ["1", "2"]
 
 
+def test_collision_suppressed_across_grid_boundary():
+    """跨「網格邊界」的同號碰撞仍被抑制 —— 驗證碰撞用 3×3 鄰格、不是只查同格。
+    GRID≈19.6：兩個 label 點約 (19,13) 落格0、(30,13) 落格1，相距 ~11px < 同號門檻 12
+    → 第二個應被抑制。若 grid 只查同格（不查鄰格）此測試會失敗（會放出 2 個）。"""
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(16, 10), (22, 10), (22, 16), (16, 16)]),  # tid1 中心 ~(19,13)
+        (_tint(50, 200, 100),  [(27, 10), (33, 10), (33, 16), (27, 16)]),  # tid3 中心 ~(30,13)
+    ])
+    label_map = {1: 1, 2: 2, 3: 1}
+    palette_final = [{"output_label": 1, "rgb": [247, 167, 132]}]
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    texts = _parse_texts(out)
+    assert texts == ["1"]
+
+
 def test_different_labels_overlapping_suppressed():
     """兩個不同 output_label 標籤點疊在一起 (~5px < 8) → 只留一個（防疊字看不清）。"""
     svg = _make_svg([
