@@ -143,6 +143,50 @@ def test_same_label_adjacent_merges_into_single_polygon():
     assert d.count("M ") == 1, f"expected single outer ring, got: {d}"
 
 
+def test_same_label_disconnected_close_dedups_to_one_text():
+    """同 output_label 兩塊但「近距」(~18px) → 只放一個編號（不在一格內重複）。"""
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(10, 10), (20, 10), (10, 20)]),   # tid 1
+        (_tint(50, 200, 100),  [(28, 10), (38, 10), (28, 20)]),   # tid 3 → 同 output_label 1
+    ])
+    label_map = {1: 1, 2: 2, 3: 1}
+    palette_final = [{"output_label": 1, "rgb": [247, 167, 132]}]
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    texts = _parse_texts(out)
+    # 近距同號 → 抑制重複，只剩一個 "1"
+    assert texts == ["1"]
+
+
+def test_same_label_disconnected_far_keeps_both():
+    """同 output_label 兩塊「遠距」(>40px) → 各保留一個編號（painter 找得到遠處色塊）。"""
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(5, 5), (15, 5), (5, 15)]),       # tid 1
+        (_tint(50, 200, 100),  [(85, 85), (98, 85), (98, 98)]),   # tid 3 → 同 output_label 1
+    ])
+    label_map = {1: 1, 2: 2, 3: 1}
+    palette_final = [{"output_label": 1, "rgb": [247, 167, 132]}]
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    texts = _parse_texts(out)
+    assert texts == ["1", "1"]
+
+
+def test_different_labels_crammed_suppressed_by_min_gap():
+    """兩個不同 output_label 標籤點「近距」(~10px) → 絕對下限抑制，只放一個。"""
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(10, 10), (18, 10), (10, 18)]),   # tid 1 → label 1
+        (_tint(100, 50, 200),  [(20, 10), (28, 10), (20, 18)]),   # tid 2 → label 2
+    ])
+    label_map = {1: 1, 2: 2}
+    palette_final = [
+        {"output_label": 1, "rgb": [247, 167, 132]},
+        {"output_label": 2, "rgb": [100, 50, 200]},
+    ]
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    texts = _parse_texts(out)
+    # 兩個不同編號相距 ~10px < _COLLISION_MIN_GAP_PX(12) → 只保留先放的那個
+    assert len(texts) == 1
+
+
 def test_path_has_fill_rule_evenodd():
     """path 必須帶 fill-rule=evenodd 才能正確渲染洞（unary_union 可能產出含洞 polygon）。"""
     svg = _make_svg([

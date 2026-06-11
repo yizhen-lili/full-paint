@@ -1626,6 +1626,37 @@ async def cancel_order(
     return order
 
 
+async def update_payment_method(
+    db: AsyncSession, user_id: UUID, order_id: UUID, payment_method: str
+) -> Order:
+    """客戶在訂單頁切換付款方式（線上付款 ECpay ↔ 銀行轉帳）。
+
+    僅 pending_payment 訂單可切換。切離 ECpay 時把尚在等繳費的取號交易標 expired，
+    避免客戶又走舊的 ATM/超商代碼造成重複付款。
+    """
+    from payment.service import mark_awaiting_transactions_expired  # noqa: PLC0415
+
+    result = await db.execute(
+        select(Order).where(Order.id == order_id, Order.user_id == user_id)
+        .with_for_update()
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("訂單不存在")
+    if order.status != OrderStatusEnum.pending_payment:
+        raise BadRequestError("只有待付款的訂單可變更付款方式")
+
+    target = PaymentMethodEnum(payment_method)
+    if order.payment_method != target:
+        # 切離 ECpay → 作廢尚未繳費的取號交易（防重複付款）
+        if order.payment_method == PaymentMethodEnum.ecpay:
+            await mark_awaiting_transactions_expired(db, order.id)
+        order.payment_method = target
+        await db.commit()
+        await db.refresh(order)
+    return order
+
+
 async def confirm_refund(db: AsyncSession, user_id: UUID, order_id: UUID) -> Order:
     result = await db.execute(
         select(Order).where(Order.id == order_id, Order.user_id == user_id)

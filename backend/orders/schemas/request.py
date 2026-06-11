@@ -203,6 +203,10 @@ class CancelOrderRequest(BaseModel):
     cancel_reason: str | None = None
 
 
+class UpdatePaymentMethodRequest(BaseModel):
+    payment_method: Literal["bank_transfer", "ecpay"]
+
+
 class AdminNotesRequest(BaseModel):
     admin_notes: str
 

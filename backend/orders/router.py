@@ -22,6 +22,7 @@ from orders.schemas.request import (
     ReassignProductionJobRequest,
     RefundRequest,
     UpdateCartItemRequest,
+    UpdatePaymentMethodRequest,
     UpdateProductionProgressRequest,
     UpdateShippingRequest,
 )
@@ -251,6 +252,22 @@ async def revive_expired_order(
 ):
     """逾期（未取消）訂單「重新申請付款」：復活成 pending_payment 可再付款。"""
     return await service.revive_expired_order(db, current_user.id, order_id)
+
+
+@router.patch(
+    "/orders/{order_id}/payment-method", response_model=OrderDetailResponse
+)
+async def update_payment_method(
+    order_id: UUID,
+    body: UpdatePaymentMethodRequest,
+    current_user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """客戶切換付款方式（線上付款 ECpay ↔ 銀行轉帳），僅待付款訂單。"""
+    await service.update_payment_method(
+        db, current_user.id, order_id, body.payment_method
+    )
+    return await service.get_order_detail(db, current_user.id, order_id)
 
 
 @router.post("/orders/{order_id}/confirm-refund", status_code=204, response_model=None)

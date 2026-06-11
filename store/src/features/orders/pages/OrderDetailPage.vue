@@ -11,6 +11,7 @@ import {
   useConfirmRefundMutation,
   useCancelOrderMutation,
   useReviveMutation,
+  useUpdatePaymentMethodMutation,
   useUpdateShippingMutation,
   usePublicSettingsQuery,
   STATUS_LABEL,
@@ -323,6 +324,16 @@ async function submitCancel() {
     showCancelDialog.value = false
   } catch (e) {
     alert((e as ApiError).detail || '取消失敗')
+  }
+}
+
+// 切換付款方式（線上付款 ECpay ↔ 銀行轉帳）
+const switchPayMut = useUpdatePaymentMethodMutation(orderId)
+async function switchPaymentMethod(method: 'bank_transfer' | 'ecpay') {
+  try {
+    await switchPayMut.mutateAsync(method)
+  } catch (e) {
+    alert((e as ApiError).detail || '切換付款方式失敗')
   }
 }
 
@@ -790,6 +801,13 @@ function specSummary(spec: Record<string, unknown>): string {
             </template>
 
             <p v-if="expired" class="pay-note pay-note-warn">付款期限已過，無法付款。</p>
+
+            <button
+              type="button"
+              class="pay-switch"
+              :disabled="switchPayMut.isPending.value"
+              @click="switchPaymentMethod('bank_transfer')"
+            >改用銀行轉帳付款 →</button>
           </div>
 
           <!-- Bank info（待付款狀態，手動匯款）-->
@@ -825,6 +843,12 @@ function specSummary(spec: Record<string, unknown>): string {
                 </dd>
               </div>
             </dl>
+            <button
+              type="button"
+              class="pay-switch"
+              :disabled="switchPayMut.isPending.value"
+              @click="switchPaymentMethod('ecpay')"
+            >改用線上付款（信用卡 / Apple Pay / 超商）→</button>
           </div>
 
           <!-- Actions -->
@@ -1679,6 +1703,17 @@ function specSummary(spec: Record<string, unknown>): string {
 }
 .pay-note-ok { color: #4a7c59; }
 .pay-note-warn { color: #a8443a; }
+.pay-switch {
+  margin-top: 12px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--color-brand-walnut, #6b4f3a);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.pay-switch:disabled { opacity: 0.5; cursor: default; }
 
 .summary-rows .srow {
   display: flex;

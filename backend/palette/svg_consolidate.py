@@ -52,6 +52,16 @@ _MIN_EXTRA_PART_BBOX = 6.0
 # 若 < (size_a + size_b) × _COLLISION_TOLERANCE → 略過（保留較大那一個）
 _COLLISION_TOLERANCE = 0.7
 
+# 跨編號標籤的「絕對最小間距」下限：font 算出的門檻太小時用這個兜底。
+# 小字級(5)時 (5+5)×0.7≈7px，兩個不同編號相距 ~10px 仍會都放、擠在一格 →
+# 加 12px 絕對下限，不同數字之間至少保持可辨識距離。
+_COLLISION_MIN_GAP_PX = 12.0
+
+# 同一個 output_label 的相鄰 part 要再放一次編號，必須距既有「同號」標籤 ≥ 此值，
+# 否則略過 —— 避免同一個數字在一格內重複（MultiPolygon 近距兩塊各標一次）。
+# 遠處真正分離的同色大塊（> 此距離）仍各保留一個編號，painter 才找得到。
+_SAME_LABEL_MIN_GAP_PX = 40.0
+
 # 微小色塊偵測：面積 < 此 OR bbox 短邊 < _TINY_POLYGON_SHORT_EDGE 視為微小、
 # 自動合併到色差最近的鄰居（SVG 層級視覺合併，DB 不動）
 _TINY_POLYGON_AREA = 60.0
@@ -440,7 +450,7 @@ def regenerate_merged_svg(
 
     # Pass C：所有 path 都寫完後，把 <text> 標籤疊上去
     # 全局已放置標籤位置（跨 output_label） — 給碰撞偵測用
-    placed_labels: list[tuple[float, float, float]] = []  # (cx, cy, font_size)
+    placed_labels: list[tuple[float, float, float, int]] = []  # (cx, cy, font_size, label)
     for item in render_items:
         output_label = item["output_label"]
         # 每個獨立 part 各放一個編號，三層篩選：
@@ -473,11 +483,16 @@ def regenerate_merged_svg(
             area_sqrt = max(geom.area, 1.0) ** 0.5
             font_size = max(_MIN_FONT_SIZE, min(area_sqrt / 8.0, _MAX_FONT_SIZE))
 
-            # 篩選 3：碰撞偵測（一律檢查，包括該色最大塊）
+            # 篩選 3：碰撞偵測（一律檢查，包括該色最大塊）。
+            # - 跨編號：font 門檻 + 絕對下限 _COLLISION_MIN_GAP_PX（不同數字不擠一格）
+            # - 同編號：再拉高到 _SAME_LABEL_MIN_GAP_PX（同數字不在一格重複，遠處才各標）
             too_close = False
-            for px, py, pfs in placed_labels:
-                min_dist = (font_size + pfs) * _COLLISION_TOLERANCE
-                if (cx - px) ** 2 + (cy - py) ** 2 < min_dist ** 2:
+            for px, py, pfs, plabel in placed_labels:
+                base = max((font_size + pfs) * _COLLISION_TOLERANCE, _COLLISION_MIN_GAP_PX)
+                required = (
+                    max(base, _SAME_LABEL_MIN_GAP_PX) if plabel == output_label else base
+                )
+                if (cx - px) ** 2 + (cy - py) ** 2 < required ** 2:
                     too_close = True
                     break
             if too_close:
@@ -493,7 +508,7 @@ def regenerate_merged_svg(
             text_el.set("font-family", _LABEL_FONT_FAMILY)
             text_el.set("fill", "black")
             text_el.text = str(output_label)
-            placed_labels.append((cx, cy, font_size))
+            placed_labels.append((cx, cy, font_size, output_label))
             parts_count += 1
 
     logger.info(

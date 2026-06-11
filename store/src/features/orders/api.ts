@@ -300,3 +300,14 @@ export async function reviveExpiredOrder(orderId: string): Promise<ReviveRespons
     method: 'POST',
   })
 }
+
+// ── 切換付款方式（線上付款 ECpay ↔ 銀行轉帳，僅待付款訂單）─────────
+export async function updatePaymentMethod(
+  orderId: string,
+  paymentMethod: 'bank_transfer' | 'ecpay',
+): Promise<OrderDetail> {
+  return jsonRequest<OrderDetail>(`/orders/${orderId}/payment-method`, {
+    method: 'PATCH',
+    body: JSON.stringify({ payment_method: paymentMethod }),
+  })
+}
