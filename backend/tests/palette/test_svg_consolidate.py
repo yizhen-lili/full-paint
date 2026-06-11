@@ -143,38 +143,38 @@ def test_same_label_adjacent_merges_into_single_polygon():
     assert d.count("M ") == 1, f"expected single outer ring, got: {d}"
 
 
-def test_same_label_disconnected_close_dedups_to_one_text():
-    """同 output_label 兩塊但「近距」(~18px) → 只放一個編號（不在一格內重複）。"""
+def test_same_label_overlapping_dedups_to_one_text():
+    """同 output_label 兩塊「疊在一點」(~7px < 12) → 只放一個編號（避免同號疊字）。"""
     svg = _make_svg([
-        (_tint(247, 167, 132), [(10, 10), (20, 10), (10, 20)]),   # tid 1
-        (_tint(50, 200, 100),  [(28, 10), (38, 10), (28, 20)]),   # tid 3 → 同 output_label 1
+        (_tint(247, 167, 132), [(10, 10), (20, 10), (10, 20)]),   # tid 1，label ~13,13
+        (_tint(50, 200, 100),  [(17, 10), (27, 10), (17, 20)]),   # tid 3，label ~20,13 → 同 label 1
     ])
     label_map = {1: 1, 2: 2, 3: 1}
     palette_final = [{"output_label": 1, "rgb": [247, 167, 132]}]
     out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
     texts = _parse_texts(out)
-    # 近距同號 → 抑制重複，只剩一個 "1"
     assert texts == ["1"]
 
 
-def test_same_label_disconnected_far_keeps_both():
-    """同 output_label 兩塊「遠距」(>40px) → 各保留一個編號（painter 找得到遠處色塊）。"""
+def test_same_label_separate_cells_keep_both_for_coverage():
+    """同 output_label 兩塊是相鄰「不同小格」(~18px > 12) → 兩格各保留編號（覆蓋率優先）。"""
     svg = _make_svg([
-        (_tint(247, 167, 132), [(5, 5), (15, 5), (5, 15)]),       # tid 1
-        (_tint(50, 200, 100),  [(85, 85), (98, 85), (98, 98)]),   # tid 3 → 同 output_label 1
+        (_tint(247, 167, 132), [(10, 10), (20, 10), (10, 20)]),   # label ~13,13
+        (_tint(50, 200, 100),  [(28, 10), (38, 10), (28, 20)]),   # label ~31,13 → 同 label 1
     ])
     label_map = {1: 1, 2: 2, 3: 1}
     palette_final = [{"output_label": 1, "rgb": [247, 167, 132]}]
     out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
     texts = _parse_texts(out)
+    # ~18px > 12 → 兩格都標，每格都看得到數字
     assert texts == ["1", "1"]
 
 
-def test_different_labels_crammed_suppressed_by_min_gap():
-    """兩個不同 output_label 標籤點「近距」(~10px) → 絕對下限抑制，只放一個。"""
+def test_different_labels_kept_when_not_overlapping():
+    """兩個不同 output_label 標籤點 ~10px (> 8) → 各保留（覆蓋率優先，不為乾淨砍號）。"""
     svg = _make_svg([
-        (_tint(247, 167, 132), [(10, 10), (18, 10), (10, 18)]),   # tid 1 → label 1
-        (_tint(100, 50, 200),  [(20, 10), (28, 10), (20, 18)]),   # tid 2 → label 2
+        (_tint(247, 167, 132), [(10, 10), (18, 10), (10, 18)]),   # label ~12.7,12.7
+        (_tint(100, 50, 200),  [(20, 10), (28, 10), (20, 18)]),   # label ~22.7,12.7 → ~10px
     ])
     label_map = {1: 1, 2: 2}
     palette_final = [
@@ -183,7 +183,22 @@ def test_different_labels_crammed_suppressed_by_min_gap():
     ]
     out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
     texts = _parse_texts(out)
-    # 兩個不同編號相距 ~10px < _COLLISION_MIN_GAP_PX(12) → 只保留先放的那個
+    assert sorted(texts) == ["1", "2"]
+
+
+def test_different_labels_overlapping_suppressed():
+    """兩個不同 output_label 標籤點疊在一起 (~5px < 8) → 只留一個（防疊字看不清）。"""
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(10, 10), (18, 10), (10, 18)]),   # label ~12.7,12.7
+        (_tint(100, 50, 200),  [(15, 10), (23, 10), (15, 18)]),   # label ~17.7,12.7 → ~5px
+    ])
+    label_map = {1: 1, 2: 2}
+    palette_final = [
+        {"output_label": 1, "rgb": [247, 167, 132]},
+        {"output_label": 2, "rgb": [100, 50, 200]},
+    ]
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    texts = _parse_texts(out)
     assert len(texts) == 1
 
 
