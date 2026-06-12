@@ -403,25 +403,23 @@ def regenerate_merged_svg(
     bg.set("height", bg_h)
     bg.set("fill", "white")
 
-    # ── Step 5：兩 pass 渲染避免 z-order bug
-    # 先 pass A 把每個 output_label 的 path + label 候選蒐集起來；
-    # 再 pass B 依面積由大到小寫所有 path（色塊）；最後 pass C 寫所有 text。
-    # 兩個 z-order 重點：
-    #  1. path 之間：大塊先畫（底層）、小塊後畫（上層）。SVG 是 painter's model
-    #     （後畫蓋先畫），且 evenodd 只在同一條 path 內挖洞、跨不同實體色不互挖；
-    #     不排序的話外圍大色塊若 document 順序晚於被它環繞的中間異色小塊，就會把
-    #     中間 fill 蓋掉。依「色群總面積」由大到小排序 → 典型「外圍大塊包住中間小塊」
-    #     （小塊所屬色群總面積較小）即被修正。註：排序粒度是 output_label 色群總面積，
-    #     非單一 polygon 幾何包覆，故「中間小塊所屬色在他處剛好是大面積色」的罕見
-    #     情形仍可能被蓋 — 真正 per-polygon 保證需幾何包覆偵測，列為後續強化。
+    # ── Step 5：三 pass 渲染，per-part z-order
+    # Pass A 蒐集每個 output_label 的 union 幾何、拆成「個別多邊形 (part)」；
+    # Pass B 依「個別 part 面積」由大到小寫所有 <path>（一個 part = 一條 path）；
+    # Pass C 寫所有 <text>。兩個 z-order 重點：
+    #  1. path 之間：個別多邊形大的先畫（底層）、小的後畫（上層）。SVG 後畫蓋先畫、
+    #     evenodd 只在同一條 path 內挖洞、跨不同實體色不互挖；不排序的話外圍大塊若
+    #     document 順序晚於被它環繞的中間異色小塊，就會把中間 fill 蓋掉。**依「個別
+    #     part 面積」排序**：被包覆的區域面積必小於包覆它的區域，故 part 面積序 =
+    #     幾何包覆序 → 被環繞的中間小塊永遠在上層、不被蓋。（修舊「色群總面積」排序
+    #     的漏洞：中間小塊所屬色在他處剛好是大面積色時，舊排序會把它誤畫在底層被蓋。）
     #  2. path 與 text：所有 path 必須先寫完，text 才能疊在最上面不被後續 path 蓋住。
 
-    merged_count = 0
     parts_count = 0
-    # (output_label, tint, path_d, [(geom, ...)]) 給 pass B/C 用
-    render_items: list[dict] = []
+    render_parts: list[dict] = []   # 個別多邊形（per-part），給 Pass B 的 path z-order
+    render_items: list[dict] = []   # per-output_label，給 Pass C 編號放置
 
-    # Pass A：蒐集每個 output_label 的渲染資料
+    # Pass A：union → 拆成個別 part
     for output_label, polys in polygons_by_label.items():
         try:
             merged = unary_union(polys)
@@ -444,47 +442,46 @@ def regenerate_merged_svg(
         rgb = pf.get("rgb", [200, 200, 200])
         tint = _tint_hex(rgb, ratio=_OUTPUT_TINT_RATIO)
 
-        # 組 path d（含 evenodd 處理洞）
-        path_d_parts: list[str] = []
+        # 每個 part 各成一條 path：exterior + 自己的洞（evenodd 處理本 part 的洞）
         for geom in geom_list:
             if not geom.exterior:
                 continue
-            ext = " ".join(f"{x:.1f},{y:.1f}" for x, y in geom.exterior.coords)
-            path_d_parts.append("M " + ext + " Z")
+            d_parts = ["M " + " ".join(
+                f"{x:.1f},{y:.1f}" for x, y in geom.exterior.coords
+            ) + " Z"]
             for hole in geom.interiors:
-                h = " ".join(f"{x:.1f},{y:.1f}" for x, y in hole.coords)
-                path_d_parts.append("M " + h + " Z")
-
-        if not path_d_parts:
-            continue
+                d_parts.append("M " + " ".join(
+                    f"{x:.1f},{y:.1f}" for x, y in hole.coords
+                ) + " Z")
+            render_parts.append({
+                "output_label": output_label,
+                "tint": tint,
+                "path_d": " ".join(d_parts),
+                "area": geom.area,
+            })
 
         render_items.append({
             "output_label": output_label,
-            "tint": tint,
-            "path_d": " ".join(path_d_parts),
             "geom_list": geom_list,
-            # 給 Pass B z-order 排序用。用 geom_list 各塊面積加總，避開
-            # union except 分支（merged 可能不是 union 結果）的邊角。
+            # Pass C 編號放置優先序用色群總面積
             "area": sum(g.area for g in geom_list),
         })
 
-    # z-order：依色群總面積大塊先畫（底層）、小塊後畫（上層），修正外圍大色塊蓋住
-    # 被它環繞的中間異色小塊（典型情形，見上方 Step 5 註）。output_label 破 tie 保
-    # deterministic。
-    # 影響 Pass C 編號放置順序：大塊優先放編號，與 Pass C 內 geom_list_by_area 一致。
-    render_items.sort(key=lambda it: (-it["area"], it["output_label"]))
-
-    # Pass B：先寫所有 <path>（色塊）
-    for item in render_items:
+    # Pass B：per-part 面積由大到小寫 path（大塊底層、小塊上層）。output_label 破 tie。
+    render_parts.sort(key=lambda p: (-p["area"], p["output_label"]))
+    for part in render_parts:
         path_el = ET.SubElement(new_root, f"{{{_SVG_NS}}}path")
-        path_el.set("d", item["path_d"])
-        path_el.set("fill", item["tint"])
+        path_el.set("d", part["path_d"])
+        path_el.set("fill", part["tint"])
         path_el.set("fill-rule", "evenodd")
         path_el.set("stroke", "#AAAAAA")
         path_el.set("stroke-width", sample_stroke_width)
         path_el.set("stroke-linejoin", "round")
-        path_el.set("id", f"o{item['output_label']}")
-        merged_count += 1
+        path_el.set("id", f"o{part['output_label']}")
+    merged_count = len(render_parts)
+
+    # Pass C 用：per-output_label 依色群總面積排序（編號放置優先序，與舊行為一致）
+    render_items.sort(key=lambda it: (-it["area"], it["output_label"]))
 
     # Pass C：所有 path 都寫完後，把 <text> 標籤疊上去
     # 碰撞偵測用空間網格（grid）：(gx,gy) -> [(cx,cy,font_size,label)]，只比對候選點
@@ -565,7 +562,7 @@ def regenerate_merged_svg(
             parts_count += 1
 
     logger.info(
-        "svg consolidate: %d unique colors merged into %d label groups, "
+        "svg consolidate: %d unique colors → %d paths (per-part), "
         "%d label texts placed (skipped no_fill=%d unknown_tint=%d invalid=%d), "
         "%d tiny polygons auto-merged",
         len(polygons_by_label), merged_count, parts_count,
@@ -574,3 +571,68 @@ def regenerate_merged_svg(
     )
 
     return ET.tostring(new_root, encoding="utf-8", xml_declaration=True), merge_records
+
+
+def render_filled_png(
+    svg_bytes: bytes,
+    palette_final: list[dict],
+    supersample: int = 2,
+) -> bytes:
+    """把 finalize 產出的 template_final.svg 多邊形用「實體色原色」填滿成 PNG。
+
+    填色預覽 = 照線稿塗完的真實樣子 —— 與線稿**同一份幾何、同一套 z-order**，
+    故不會出現「填色比線稿細／顏色位置對不上」（修「填色用 snapped 點陣、線稿用
+    向量」兩套幾何不一致）。
+
+    作法：解析 template_final.svg 的 <path id="oN">（已按 part 面積大→小排序，即
+    document 順序就是底→上的正確繪製序），每條 path 取 exterior 用 palette_final
+    的實體色原色實心填。被包覆的小塊在 document 序較後 → 畫在上層蓋掉外圍洞，holes
+    交給後畫的小塊覆蓋（與 SVG painter 行為一致）。supersample 2x + LANCZOS 抗鋸齒。
+    """
+    import io  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    root = ET.fromstring(svg_bytes)  # noqa: S314  # nosec B314 — 解析自家產生的 SVG
+    vb = (root.get("viewBox") or "0 0 1000 1000").split()
+    try:
+        w, h = int(round(float(vb[2]))), int(round(float(vb[3])))
+    except (IndexError, ValueError):
+        w, h = 1000, 1000
+    label_rgb = {
+        int(p["output_label"]): tuple(int(c) for c in p["rgb"])
+        for p in palette_final
+    }
+
+    ss = max(1, int(supersample))
+    canvas = Image.new("RGB", (w * ss, h * ss), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+
+    path_tag = f"{{{_SVG_NS}}}path"
+    for path_el in root.iter(path_tag):
+        d = path_el.get("d")
+        pid = path_el.get("id") or ""
+        m = re.match(r"o(\d+)$", pid)
+        if not d or not m:
+            continue
+        rgb = label_rgb.get(int(m.group(1)))
+        if rgb is None:
+            continue
+        # 取 exterior（第一個 M..Z）實心填；洞交給後畫的小塊覆蓋
+        subs = re.findall(r"M ([^MZ]+) Z", d)
+        if not subs:
+            continue
+        coords = subs[0].replace(",", " ").split()
+        pts = [
+            (float(coords[i]) * ss, float(coords[i + 1]) * ss)
+            for i in range(0, len(coords) - 1, 2)
+        ]
+        if len(pts) >= 3:
+            draw.polygon(pts, fill=rgb)
+
+    if ss > 1:
+        canvas = canvas.resize((w, h), Image.LANCZOS)
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()

@@ -100,8 +100,9 @@ def test_three_polygons_three_colors_three_groups():
     assert sorted(texts) == ["1", "2", "3"]
 
 
-def test_same_label_disconnected_becomes_multipolygon():
-    """兩個分離 polygon 對到同 output_label → 1 個 path（MultiPolygon）+ 2 個 text（各 part）。"""
+def test_same_label_disconnected_becomes_two_parts():
+    """兩個分離 polygon 對到同 output_label → per-part 渲染：2 條 path（各一 part，
+    都 id=o1）+ 2 個 text（各 part 一個）。"""
     svg = _make_svg([
         (_tint(247, 167, 132), [(0, 0), (20, 0), (0, 20)]),         # tid 1
         (_tint(50, 200, 100),  [(80, 80), (100, 80), (100, 100)]),  # tid 3 (對 same physical)
@@ -115,8 +116,9 @@ def test_same_label_disconnected_becomes_multipolygon():
     out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
     paths = _parse_paths(out)
     texts = _parse_texts(out)
-    # 兩個 polygon 都 label 1，分離 → 1 path（MultiPolygon）
-    assert len(paths) == 1
+    # per-part：兩個分離 part → 2 條 path，都是 o1
+    assert len(paths) == 2
+    assert all(p.get("id") == "o1" for p in paths)
     # 各 part 各放一個 "1" → 兩個 text
     assert texts == ["1", "1"]
 
@@ -359,6 +361,81 @@ def test_z_order_large_path_drawn_before_small_path():
     # 中間小塊的編號也應仍在（沒被吃掉）
     texts = _parse_texts(out)
     assert "2" in texts, f"enclosed small region's label should survive, got {texts}"
+
+
+def _first_poly_area(d: str) -> float:
+    """path d 第一個 M..Z 多邊形的面積（shoelace）。"""
+    import re as _re
+    m = _re.search(r"M ([^MZ]+) Z", d or "")
+    if not m:
+        return 0.0
+    c = m.group(1).replace(",", " ").split()
+    pts = [(float(c[i]), float(c[i + 1])) for i in range(0, len(c) - 1, 2)]
+    a = 0.0
+    for i in range(len(pts)):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % len(pts)]
+        a += x1 * y2 - x2 * y1
+    return abs(a) / 2
+
+
+def test_z_order_per_part_not_group_area():
+    """per-part z-order：被包覆的小塊即使「所屬色總面積大」也在最上層、不被蓋。
+
+    這是修「改四周中間被蓋」resurface 的關鍵 case，舊「色群總面積」排序會錯：
+    色 A(label1) = 大塊(60x60=3600) + 中間小塊(10x10=100)，總面積 3700；
+    色 B(label2) = 包住中間的方塊(20x20=400)，總面積 400 < A。
+    舊排序把 A(3700) 整組先畫 → 中間(屬 A)在底層 → B(400)後畫蓋住中間。
+    per-part 排序：big(3600) → B(400) → 中間(100) 最後畫 → 中間在最上層。
+    """
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(0, 0), (60, 0), (60, 60), (0, 60)]),       # tid1 大塊 A
+        (_tint(247, 167, 132), [(75, 75), (85, 75), (85, 85), (75, 85)]),   # tid1 中間小塊 A
+        (_tint(100, 50, 200),  [(70, 70), (90, 70), (90, 90), (70, 90)]),   # tid2 包住中間的 B
+    ])
+    label_map = {1: 1, 2: 2}
+    palette_final = [
+        {"output_label": 1, "rgb": [247, 167, 132]},
+        {"output_label": 2, "rgb": [100, 50, 200]},
+    ]
+    out, _ = regenerate_merged_svg(
+        svg, label_map, _PALETTE_JSON, palette_final, enable_tiny_merge=False,
+    )
+    paths = _parse_paths(out)
+    areas = [_first_poly_area(p.get("d", "")) for p in paths]
+    # 每條 path 依個別 part 面積由大到小（非遞增）
+    assert areas == sorted(areas, reverse=True), f"paths not per-part area-desc: {areas}"
+    # 最上層（最後一條 path）= 中間小塊（面積最小、色 A=o1）→ 證明不被 B 蓋
+    assert paths[-1].get("id") == "o1"
+    assert areas[-1] < 200, f"top path should be the tiny center, got area {areas[-1]}"
+
+
+def test_render_filled_png_uses_template_geometry():
+    """render_filled_png 把 template_final.svg 多邊形用實體色原色 rasterize 成 PNG，
+    保證填色預覽 = 線稿同一份幾何（非 snapped 點陣）。"""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    from palette.svg_consolidate import regenerate_merged_svg, render_filled_png
+
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(0, 0), (50, 0), (50, 50), (0, 50)]),     # tid1 → label1
+        (_tint(100, 50, 200),  [(50, 0), (100, 0), (100, 50), (50, 50)]),  # tid2 → label2
+    ])
+    palette_final = [
+        {"output_label": 1, "rgb": [247, 167, 132]},
+        {"output_label": 2, "rgb": [100, 50, 200]},
+    ]
+    final_svg, _ = regenerate_merged_svg(
+        svg, {1: 1, 2: 2}, _PALETTE_JSON, palette_final, enable_tiny_merge=False,
+    )
+    png = render_filled_png(final_svg, palette_final, supersample=1)
+    arr = np.array(Image.open(io.BytesIO(png)).convert("RGB"))
+    # 左半 = label1 實體色原色（飽和，非 10% tint）；右半 = label2 原色
+    assert tuple(arr[25, 10]) == (247, 167, 132)
+    assert tuple(arr[25, 90]) == (100, 50, 200)
 
 
 def test_text_elements_have_light_font_weight():
