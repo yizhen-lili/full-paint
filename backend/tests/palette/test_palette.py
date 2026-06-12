@@ -768,9 +768,10 @@ async def test_finalize_uploads_svg_and_palette_final(db):
     # 計數比順序穩：2 個 "1"（label 1 兩個分離 part）+ 1 個 "2"
     assert sorted(texts) == ["1", "1", "2"], f"got texts={texts}"
 
-    # 應該只有 2 個 <path>（每個 output_label 一個）
+    # per-part 渲染：label 1 的 tid 1+3 是兩個分離 part → 2 條 path（都 o1）；
+    # label 2 → 1 條 → 共 3 條
     paths = root.findall("{http://www.w3.org/2000/svg}path")
-    assert len(paths) == 2
+    assert len(paths) == 3
 
     # palette_final.json 結構正確、按 output_label 排序
     import json
@@ -832,13 +833,11 @@ async def test_finalize_idempotent(db):
 
 @pytest.mark.asyncio
 async def test_finalize_generates_filled_template_final_png(db):
-    """job.snapped_rgb_url 存在時，finalize 額外產出物理色版 filled preview PNG。
-
-    流程：讀 snapped_rgb.png → 每個 algorithm RGB pixel 替換為對應物理色 RGB
-    → 上傳 filled_template_final.png + 寫入 job.filled_template_final_url。
+    """finalize 產出物理色版 filled preview PNG —— 直接 rasterize template_final.svg
+    幾何（與線稿同一份），用實體色原色填，上傳 filled_template_final.png + 寫 url。
     """
     import io
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     import numpy as np
     from PIL import Image
@@ -888,63 +887,35 @@ async def test_finalize_generates_filled_template_final_png(db):
         ))
     await db.commit()
 
-    # 構造 mock snapped PNG：6 pixel，3 種 algorithm RGB
-    # row 0: [247,167,132] [100,50,200] [50,200,100]   (tid 1, 2, 3)
-    # row 1: 同上
-    snapped_data = np.array([
-        [[247, 167, 132], [100, 50, 200], [50, 200, 100]],
-        [[247, 167, 132], [100, 50, 200], [50, 200, 100]],
-    ], dtype=np.uint8)
-    buf = io.BytesIO()
-    Image.fromarray(snapped_data).save(buf, format="PNG")
-    snapped_png_bytes = buf.getvalue()
-
-    captured: dict[str, bytes] = {}
-    def make_blob(path: str):
-        b = MagicMock(name=f"blob:{path}")
-        if "snapped_rgb" in path:
-            b.download_as_bytes = MagicMock(return_value=snapped_png_bytes)
-        else:
-            b.download_as_bytes = MagicMock(return_value=_SVG_TEMPLATE)
-        def _upload(data, content_type=None):  # noqa: ARG001
-            captured[path] = data if isinstance(data, bytes) else data.encode("utf-8")
-        b.upload_from_string = MagicMock(side_effect=_upload)
-        return b
-
-    bucket = MagicMock()
-    bucket.name = "test-bucket"
-    bucket.blob = MagicMock(side_effect=make_blob)
-
+    bucket, captured = _mock_bucket_for_finalize()
     with patch("core.firebase.get_bucket", return_value=bucket):
         await finalize_template(db, job.id)
 
-    # 1. filled_template_final.png 應被上傳
+    # 1. filled_template_final.png 應被上傳、url 寫入
     filled_path = f"production_jobs/{job.id}/filled_template_final.png"
     assert filled_path in captured, f"expected {filled_path} in {list(captured.keys())}"
-
-    # 2. job.filled_template_final_url 應該被寫入
     await db.refresh(job)
     assert job.filled_template_final_url is not None
     assert job.filled_template_final_url.endswith("/filled_template_final.png")
 
-    # 3. PNG 內容：每個 pixel 都替換為對應物理色 RGB
+    # 2. filled 由 template_final.svg 幾何 rasterize（viewBox 100x100）、用實體色原色
+    #    （證明「填色 = 線稿同一份幾何」，非 snapped 點陣）
     out_img = np.array(Image.open(io.BytesIO(captured[filled_path])).convert("RGB"))
-    assert out_img.shape == (2, 3, 3)
-    # column 0: algorithm [247,167,132] → tid 1 → physical [10,20,30]
-    assert tuple(out_img[0, 0]) == (10, 20, 30)
-    assert tuple(out_img[1, 0]) == (10, 20, 30)
-    # column 1: algorithm [100,50,200] → tid 2 → physical [40,50,60]
-    assert tuple(out_img[0, 1]) == (40, 50, 60)
-    assert tuple(out_img[1, 1]) == (40, 50, 60)
-    # column 2: algorithm [50,200,100] → tid 3 → physical [10,20,30]（同 tid 1）
-    assert tuple(out_img[0, 2]) == (10, 20, 30)
-    assert tuple(out_img[1, 2]) == (10, 20, 30)
+    assert out_img.shape == (100, 100, 3)  # = SVG viewBox（非 snapped 點陣維度）
+    # tid1 三角(左上) → label1 = pc_a [10,20,30]
+    assert tuple(out_img[5, 5]) == (10, 20, 30)
+    # tid2 三角(右上, x60-100 y0-40) → label2 = pc_b [40,50,60]
+    assert tuple(out_img[5, 70]) == (40, 50, 60)
+    # tid3 三角(左下) → label1 = pc_a（同 tid1）
+    assert tuple(out_img[70, 5]) == (10, 20, 30)
+    # 無色塊處維持白
+    assert tuple(out_img[90, 90]) == (255, 255, 255)
 
 
 @pytest.mark.asyncio
-async def test_finalize_skips_filled_final_when_no_snapped_url(db):
-    """job.snapped_rgb_url=None → 不產 filled_template_final.png（best-effort skip）。
-    其他 finalize 產物（template_final.svg、palette_final.json）正常產生。"""
+async def test_finalize_generates_filled_final_without_snapped_url(db):
+    """filled_template_final.png 改由 template_final.svg 幾何 rasterize，與 snapped_rgb
+    無關 → 即使 job 沒有 snapped_rgb_url 也會產出（不再 skip）。"""
     from unittest.mock import patch
 
     from palette.service import finalize_template
@@ -957,17 +928,14 @@ async def test_finalize_skips_filled_final_when_no_snapped_url(db):
     with patch("core.firebase.get_bucket", return_value=bucket):
         await finalize_template(db, job.id)
 
-    # filled_template_final.png 不應該被上傳
+    # filled 仍會產出（不再依賴 snapped_rgb）
     filled_path = f"production_jobs/{job.id}/filled_template_final.png"
-    assert filled_path not in captured
+    assert filled_path in captured
+    await db.refresh(job)
+    assert job.filled_template_final_url is not None
 
-    # 但其他 final 產物正常
     assert f"production_jobs/{job.id}/template_final.svg" in captured
     assert f"production_jobs/{job.id}/palette_final.json" in captured
-
-    await db.refresh(job)
-    assert job.filled_template_final_url is None
-    assert job.template_final_url is not None
 
 
 @pytest.mark.asyncio
@@ -1160,74 +1128,6 @@ async def test_finalize_preserves_existing_labels_when_area_changes(db):
     # 穩定：A 仍是 1、B 仍是 2（舊行為會翻成 B=1, A=2）
     assert rows1[2] == 1                       # A 保留原號 1
     assert rows1[1] == 2 and rows1[3] == 2     # B 保留原號 2，tid3 跟到 B 的號
-
-
-@pytest.mark.asyncio
-async def test_generate_filled_final_nearest_fallback(db):
-    """final filled 對「不剛好等於任何 mapping algorithm_rgb」的非白像素補最近實體色，
-    不殘留 algorithm 原色（與實體色預覽 _findNearestPhysical 一致）。"""
-    import io
-    from unittest.mock import MagicMock
-
-    import numpy as np
-    from PIL import Image
-
-    from palette.service import _generate_filled_final
-
-    color_a = await _create_color(db, COLOR_A)  # rgb [247,167,132]
-    color_b = await _create_color(db, COLOR_B)  # rgb [100,50,200]
-    job = ProductionJob(
-        detail="standard", difficulty="beginner", mode="standard",
-        canvas_w_cm=30, canvas_h_cm=40, status=JobStatusEnum.completed,
-        snapped_rgb_url="gs://test-bucket/production_jobs/x/snapped_rgb.png",
-    )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    mappings = [
-        PaletteColorMapping(
-            production_job_id=job.id, template_id=1, algorithm_rgb=[10, 10, 10],
-            physical_color_id=color_a.id, mapped_by=MappedByEnum.system,
-        ),
-        PaletteColorMapping(
-            production_job_id=job.id, template_id=2, algorithm_rgb=[200, 200, 200],
-            physical_color_id=color_b.id, mapped_by=MappedByEnum.system,
-        ),
-    ]
-    colors_by_id = {color_a.id: color_a, color_b.id: color_b}
-
-    # snapped：(0,0)白；(0,1)=[10,10,10] exact→A；(1,0)=[12,12,12] 不精確→最近 A；(1,1)白
-    arr = np.array([
-        [[255, 255, 255], [10, 10, 10]],
-        [[12, 12, 12], [255, 255, 255]],
-    ], dtype=np.uint8)
-    buf = io.BytesIO()
-    Image.fromarray(arr, "RGB").save(buf, format="PNG")
-    snapped_png = buf.getvalue()
-
-    captured: dict[str, bytes] = {}
-
-    def make_blob(path):
-        b = MagicMock()
-        b.download_as_bytes = MagicMock(return_value=snapped_png)
-        b.upload_from_string = MagicMock(
-            side_effect=lambda data, content_type=None: captured.__setitem__(path, data)
-        )
-        return b
-
-    bucket = MagicMock()
-    bucket.name = "test-bucket"
-    bucket.blob = MagicMock(side_effect=make_blob)
-
-    await _generate_filled_final(bucket, job, mappings, colors_by_id)
-
-    out_png = captured[f"production_jobs/{job.id}/filled_template_final.png"]
-    out = np.array(Image.open(io.BytesIO(out_png)).convert("RGB"))
-    assert tuple(out[0, 1]) == tuple(COLOR_A["rgb"])   # exact 命中 → A
-    assert tuple(out[1, 0]) == tuple(COLOR_A["rgb"])   # 不精確 → 最近 A（非殘留 [12,12,12]）
-    assert tuple(out[0, 0]) == (255, 255, 255)         # 白維持
-    assert tuple(out[1, 1]) == (255, 255, 255)
 
 
 @pytest.mark.asyncio

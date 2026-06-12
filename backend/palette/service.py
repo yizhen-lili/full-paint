@@ -615,20 +615,23 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     )
     palette_final_url = f"gs://{bucket.name}/{palette_final_path}"
 
-    # 7. 生成「實體色版」filled preview（pixel-replacement）— 若 snapped_rgb 存在
-    # snapped_rgb.png 是 pbn_gen 量化後的 raw RGB 圖（每個 pixel 是某個 algorithm
-    # template_id 的色）。把每個 algorithm RGB 換成對應物理色 RGB → 真實塗色預覽。
+    # 7. 生成「實體色版」filled preview —— 直接把 template_final.svg 的多邊形用實體色
+    # 原色 rasterize（與線稿**同一份幾何 + 同一套 per-part z-order**）。保證
+    # 「填色預覽 = 照線稿塗完的真實樣子」，不再用 snapped_rgb 點陣（那會比線稿細、
+    # 區塊位置對不上 → 預覽過度承諾）。best-effort：失敗只 log。
     filled_template_final_url: str | None = None
-    if job.snapped_rgb_url:
-        try:
-            filled_template_final_url = await _generate_filled_final(
-                bucket, job, mapping_rows, colors_by_id,
-            )
-        except Exception as e:  # noqa: BLE001
-            # best-effort：失敗只 log，其他 finalize 產物仍生效
-            logger.warning(
-                "filled_template_final generation failed for %s: %s", job_id, e,
-            )
+    try:
+        from palette.svg_consolidate import render_filled_png  # noqa: PLC0415
+        filled_bytes = render_filled_png(final_svg_bytes, palette_final)
+        filled_path = f"production_jobs/{job_id}/filled_template_final.png"
+        bucket.blob(filled_path).upload_from_string(
+            filled_bytes, content_type="image/png",
+        )
+        filled_template_final_url = f"gs://{bucket.name}/{filled_path}"
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "filled_template_final generation failed for %s: %s", job_id, e,
+        )
 
     # 8. 更新 job 欄位 + commit
     job.template_final_url = template_final_url
@@ -653,99 +656,6 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
         "template_final_url": template_final_url,
         "palette_final_url": palette_final_url,
     }
-
-
-async def _generate_filled_final(
-    bucket,
-    job: ProductionJob,
-    mapping_rows: list[PaletteColorMapping],
-    colors_by_id: dict[UUID, PhysicalColor],
-) -> str:
-    """以 snapped_rgb.png 為基底，把每個 algorithm RGB pixel 換成對應物理色 RGB。
-
-    回傳 Firebase gs:// URL；失敗會 raise，呼叫端用 try/except 視為 best-effort。
-
-    向量化作法（distinct 色通常 ≤ 50 所以實際很快）：
-      1. 讀 snapped_rgb 成 numpy (H, W, 3) uint8
-      2. 對每個 mapping，組 algorithm RGB → physical RGB 的對應
-      3. 對影像實際出現的每個 distinct 色決定輸出：exact 命中 mapping → 該實體色；
-         未命中（非白）→ 最近 mapping 的實體色（nearest fallback，與前端
-         PalettePreviewCanvas._findNearestPhysical 同邏輯），白底維持白。
-         → 保證每個非白像素都上到「已配置的實體色」，不殘留 algorithm 原色，
-           與「實體色預覽」一致（修「finalize 後 filled 顏色變得不是配好的」）。
-    """
-    import io  # noqa: PLC0415
-
-    import numpy as np  # noqa: PLC0415
-    from PIL import Image  # noqa: PLC0415
-
-    # 1. 讀 snapped_rgb
-    snapped_path = _gs_path(job.snapped_rgb_url, bucket.name)
-    snapped_bytes = bucket.blob(snapped_path).download_as_bytes()
-    snapped_img = np.array(
-        Image.open(io.BytesIO(snapped_bytes)).convert("RGB"),
-        dtype=np.uint8,
-    )
-
-    # 2. 組 algorithm RGB tuple → physical RGB tuple
-    # palette_json 的 rgb 是 algorithm 量化色（與 snapped_rgb pixel 對齊）；
-    # mapping_rows 的 algorithm_rgb 也是同來源
-    alg_to_phys: dict[tuple[int, int, int], tuple[int, int, int]] = {}
-    for m in mapping_rows:
-        color = colors_by_id.get(m.physical_color_id)
-        if not color:
-            continue
-        alg_rgb = m.algorithm_rgb
-        if isinstance(alg_rgb, dict):
-            alg_t = (int(alg_rgb["r"]), int(alg_rgb["g"]), int(alg_rgb["b"]))
-        else:
-            alg_t = (int(alg_rgb[0]), int(alg_rgb[1]), int(alg_rgb[2]))
-        phys_t = (int(color.rgb[0]), int(color.rgb[1]), int(color.rgb[2]))
-        alg_to_phys[alg_t] = phys_t
-
-    if not alg_to_phys:
-        raise ValueError("mapping_rows 內無有效 algorithm→physical 對應")
-
-    # 3. 對影像實際出現的每個 distinct 色決定輸出色（exact 命中 → 該實體色；
-    #    非白未命中 → 最近 mapping 的實體色；白維持白），再整批套用。
-    flat = snapped_img.reshape(-1, 3)
-    uniq = np.unique(flat, axis=0)  # (U, 3) 影像實際出現的色，U 通常很小
-
-    algs = np.array(list(alg_to_phys.keys()), dtype=np.int32)       # (M, 3)
-    physes = np.array(list(alg_to_phys.values()), dtype=np.uint8)   # (M, 3)
-
-    def _encode(arr: np.ndarray) -> np.ndarray:
-        a = arr.astype(np.int32)
-        return (a[..., 0] << 16) | (a[..., 1] << 8) | a[..., 2]
-
-    out_lut: dict[int, tuple[int, int, int]] = {}
-    for u in uniq:
-        ur, ug, ub = int(u[0]), int(u[1]), int(u[2])
-        code = (ur << 16) | (ug << 8) | ub
-        if ur == 255 and ug == 255 and ub == 255:
-            out_lut[code] = (255, 255, 255)  # 白底維持
-            continue
-        # 平方歐氏距離找最近 alg（exact 命中時距離 0 自然選中）
-        d = np.sum((algs - np.array([ur, ug, ub], dtype=np.int32)) ** 2, axis=1)
-        j = int(np.argmin(d))
-        out_lut[code] = (int(physes[j][0]), int(physes[j][1]), int(physes[j][2]))
-
-    codes = _encode(flat)
-    out_flat = np.empty_like(flat)
-    for code, out_rgb in out_lut.items():
-        out_flat[codes == code] = out_rgb
-    output = out_flat.reshape(snapped_img.shape)
-
-    # 4. 編碼 PNG → 上傳
-    buf = io.BytesIO()
-    Image.fromarray(output, mode="RGB").save(buf, format="PNG", optimize=True)
-    filled_bytes = buf.getvalue()
-
-    filled_path = f"production_jobs/{job.id}/filled_template_final.png"
-    bucket.blob(filled_path).upload_from_string(
-        filled_bytes, content_type="image/png",
-    )
-    return f"gs://{bucket.name}/{filled_path}"
 
 
 def _gs_path(url: str, bucket_name: str) -> str:
