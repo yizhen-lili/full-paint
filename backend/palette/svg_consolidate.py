@@ -51,9 +51,13 @@ _MAX_FONT_SIZE = 14.0
 # → font ≤ ~1.8×inradius；取 1.6 留邊距。極細區塊 floor 在 MIN（不再放超大字）。
 _FONT_FIT_RATIO = 1.6
 
-# 同一 output_label 的小碎片，bbox 短邊 < 此值且不是該色最大塊 → 不放標籤
-# （太細長的區域硬塞標籤會超出邊界；最大塊永遠標，確保每色 ≥ 1 個 label）
-_MIN_EXTRA_PART_BBOX = 6.0
+# 數字字形外框相對 font 的比例（Inter Light 數字）：每位寬 ≈ 0.62×font、高 ≈ 0.72×font。
+# 用於 _number_fits 判斷「n 位數字在最小字級下塞不塞得進這塊區域」，取代固定短邊門檻 →
+# 一位數小格塞得進就給號、兩位數小格塞不進才合併（依實際數字位數，不再一刀切）。
+_DIGIT_W_RATIO = 0.62
+_DIGIT_H_RATIO = 0.72
+# 算字級時相對「剛好填滿」再留的安全邊距（0.85 = 字形佔可用空間 85%、邊緣留 15% 不碰邊）
+_FONT_SAFE_MARGIN = 0.85
 
 # 碰撞偵測：跨 output_label 之間，新 label 中心與任何既有 label 距離
 # 若 < (size_a + size_b) × _COLLISION_TOLERANCE → 略過（保留較大那一個）
@@ -78,15 +82,10 @@ _COLLISION_GRID_PX = max(
     2 * _MAX_FONT_SIZE * _COLLISION_TOLERANCE,
 )
 
-# 「短邊 < 此值」= 連最小字（置中或沿長軸旋轉）都放不下號。3.5 ≈ 0.7×_MIN_FONT_SIZE
-# （字形高約 0.7×font）。細長區塊用旋轉放號（Feature 1）需 S ≥ 此；真碎片合併需 < 此。
-_NUMBER_MIN_SHORT_EDGE = 3.5
-# 長寬比 ≥ 此 → 視為細長，數字旋轉沿長軸放（字級用短邊算）
+# 長寬比 ≥ 此 → 視為細長，數字旋轉沿長軸放（寬→長邊、高→短邊）
 _ELONGATED_ASPECT = 2.0
-# 細長區塊字級 = 短邊 × 此（數字高 ~0.7×font 橫跨短邊 → font ≤ ~1.43×短邊；取 1.2 留邊距）
-_STRIP_FONT_RATIO = 1.2
-# 真碎片合併判定：短邊 < _NUMBER_MIN_SHORT_EDGE（轉了也放不下號）AND 面積 < 此
-# （排除細長條 —— 細長條面積大、改走旋轉放號不合併）。合進幾何最近鄰居，可跨實體色。
+# 真碎片合併判定：_number_fits 回 False（連最小字、最佳方向都放不下號）AND 面積 < 此
+# （面積上限防呆 —— 永不合大塊；放不下號才是 speck）。合進幾何最近鄰居，可跨實體色。
 _SPECK_MAX_AREA = 50.0
 # 碎片只在「最近鄰居距離 ≤ 此」時才合（相鄰碎片 distance≈0）。孤立碎片（四周是
 # 背景、最近 large 在遠處）不合，避免合進遠方不相干的錯色 sliver。
@@ -138,13 +137,23 @@ def _rgb_from_palette(palette_json: list[dict], template_id: int) -> list[int] |
 
 def _merge_tiny_polygons(
     all_polygons: list[dict],
+    label_map: dict[int, int],
 ) -> list[dict]:
-    """真碎片（短到連旋轉也放不下號 + 面積小）合進「幾何最近」鄰居，改 template_id。
+    """真碎片（連最小字、最佳方向都放不下號 + 面積小）合進「幾何最近」鄰居，改 template_id。
 
-    碎片 = `short_edge < _NUMBER_MIN_SHORT_EDGE`（放不下號）AND `area < _SPECK_MAX_AREA`
-    （排除細長條 —— 細長條面積大，改走 Pass C 旋轉放號、不在此合併）。
-    合進**幾何距離最近**的非碎片鄰居，**可跨實體色**（碎片太小、色差可忽略），
+    碎片 = `_number_fits(shp, n_digits) is False`（放不下這格的實際數字）AND
+    `area < _SPECK_MAX_AREA`（面積上限防呆 —— 永不合大塊）。細長條面積大且沿長軸 fits →
+    不在此合併。合進**幾何距離最近**的非碎片鄰居，**可跨實體色**（碎片太小、色差可忽略），
     讓塗色者不再看到「放不下號」的孤兒小點。
+
+    與 Pass C 放號的關係（重要，避免誤解）：兩者共用 `_number_fits` predicate，但**幾何層級
+    不同** —— 本函式跑在 union **前**的個別 polygon（all_polygons[i].shp），Pass C 跑在
+    union **後**的 per-part。因此「合併 ceiling = 放號 floor」只在**同一塊幾何**上嚴格成立；
+    跨層級有一個窄邊界情況：同色相鄰小 polygon 各自放不下號、但 union 後本可放號，若其中之一
+    在距離門檻內緊鄰異色大塊，會在此被先合走。此情況有三層緩衝：(1) 主版本 template_final.svg
+    用 enable_tiny_merge=False、**完全不跑本函式**，union 後由 Pass C 重新評估放號 → 不受影響；
+    (2) 孤立同色小塊（門檻內無大鄰居）不會被合、會 union 後放號；(3) 本函式只產**建議**
+    （pending_auto_merges），admin 確認才落地。故對「塗色者實際畫的版本」無損。
 
     Algorithm（O(n²) 對典型 SVG 規模可接受）：
     1. 分 specks（碎片）/ large（非碎片，合併目標池）
@@ -158,9 +167,11 @@ def _merge_tiny_polygons(
     large_polys = []
     for i, p in enumerate(all_polygons):
         shp = p["shp"]
-        minx, miny, maxx, maxy = shp.bounds
-        short_edge = min(maxx - minx, maxy - miny)
-        if short_edge < _NUMBER_MIN_SHORT_EDGE and shp.area < _SPECK_MAX_AREA:
+        # tid 必在 label_map（Step 3a 已過濾掉 tid not in label_map 的 polygon）→ 直接取，
+        # 用此 polygon「自己的」編號位數判斷塞不塞得進（與 Pass C 對同一 polygon 同位數）。
+        n_digits = len(str(int(label_map[p["template_id"]])))
+        fits, _, _ = _number_fits(shp, n_digits)
+        if not fits and shp.area < _SPECK_MAX_AREA:
             speck_indexes.append(i)
         else:
             large_polys.append(p)
@@ -233,6 +244,40 @@ def _oriented_dims(geom) -> tuple[float, float, float]:
         minx, miny, maxx, maxy = geom.bounds
         w, h = maxx - minx, maxy - miny
         return (w, h, 0.0) if w >= h else (h, w, 90.0)
+
+
+def _number_fits(geom, n_digits: int) -> tuple[bool, float, float | None]:
+    """「n 位數字在最小字級下、取最佳方向，塞不塞得進這塊區域」的唯一判準。
+
+    放號（Pass C）與合併（_merge_tiny_polygons）共用此 predicate → 放號 floor 與合併
+    ceiling 對齊、不留「沒號又沒合併」的死區。依**實際數字位數**判斷：一位數小格塞得進
+    就給號，兩位數小格塞不進才合併。
+
+    幾何：用 _oriented_dims 的長邊 L、短邊 S（min rotated rect）當可用空間；數字沿長軸排
+    （寬→L、高→S）。最小字級下字形外框 need_w = n×_DIGIT_W_RATIO×MIN、need_h =
+    _DIGIT_H_RATIO×MIN。fits ⟺ L ≥ need_w 且 S ≥ need_h。
+
+    回 (fits, font_size, rotate_deg)：
+    - font_size：寬受 L/(n×w_ratio)、高受 S/h_ratio、上限 _MAX_FONT_SIZE 夾擠後再 floor MIN。
+    - rotate_deg：細長（L/S ≥ _ELONGATED_ASPECT）→ theta（沿長軸）；否則 None（水平）。
+    - 不 fits → (False, 0.0, None)。
+    """
+    n_digits = max(1, n_digits)
+    long_dim, short_dim, theta = _oriented_dims(geom)
+    need_w = n_digits * _DIGIT_W_RATIO * _MIN_FONT_SIZE
+    need_h = _DIGIT_H_RATIO * _MIN_FONT_SIZE
+    eps = 1e-6
+    if long_dim + eps < need_w or short_dim + eps < need_h:
+        return (False, 0.0, None)
+
+    font_w_cap = long_dim / (n_digits * _DIGIT_W_RATIO)
+    font_h_cap = short_dim / _DIGIT_H_RATIO
+    font_size = max(
+        _MIN_FONT_SIZE,
+        min(font_w_cap, font_h_cap, _MAX_FONT_SIZE) * _FONT_SAFE_MARGIN,
+    )
+    rotate_deg = theta if long_dim >= _ELONGATED_ASPECT * max(short_dim, eps) else None
+    return (True, font_size, rotate_deg)
 
 
 def _parse_points(pts: str) -> list[tuple[float, float]]:
@@ -372,7 +417,7 @@ def regenerate_merged_svg(
     # ── Step 3b：真碎片 auto-merge（in-memory only，合進幾何最近鄰居、可跨色）
     # enable_tiny_merge=False 時跳過、產「未合併版」給對比 UI 當主版本
     merge_records = (
-        _merge_tiny_polygons(all_polygons) if enable_tiny_merge else []
+        _merge_tiny_polygons(all_polygons, label_map) if enable_tiny_merge else []
     )
 
     # ── Step 3c：建 polygons_by_label（已套用 merge 後的 template_id）
@@ -504,8 +549,8 @@ def regenerate_merged_svg(
     for item in render_items:
         output_label = item["output_label"]
         # 每個獨立 part 各放一個編號，三層篩選：
-        #  1. font size 上限 _MAX_FONT_SIZE（避免大塊區域寫超大）
-        #  2. bbox 短邊太小且不是最大塊 → skip（細長碎片標籤超出邊界）
+        #  1. _number_fits：這格放得下這個（n 位）數字嗎？非最大塊放不下 → skip（消死區）
+        #  2. font size cap：細長用 _number_fits 字級、compact 再以 inradius 防凹形溢出
         #  3. 碰撞偵測：與既有標籤太近 → skip（密集區不互相打架）
         # 注意：collision 一律檢查（包括該色最大塊），重疊就直接 skip。
         # 這意味某些被夾在 dense 區域的色號可能無 label — admin 對小色塊改靠
@@ -513,26 +558,16 @@ def regenerate_merged_svg(
         geom_list_by_area = sorted(item["geom_list"], key=lambda g: -g.area)
         for idx, geom in enumerate(geom_list_by_area):
             is_largest = (idx == 0)
+            n_digits = len(str(output_label))
 
-            # 篩選 2：bbox 短邊太小且非最大塊 → skip
-            minx, miny, maxx, maxy = geom.bounds
-            short_edge = min(maxx - minx, maxy - miny)
+            # 篩選 1：唯一判準 —— 這格（union 後的 part）放得下這個數字嗎（最佳方向、依實際
+            # 位數）？與 _merge_tiny_polygons 共用同一 predicate，消除舊「短邊 3.5–6 既不放號也
+            # 不合併」的死區。（跨 union 層級的窄邊界見 _merge_tiny_polygons docstring。）
+            fits, fit_font, fit_rotate = _number_fits(geom, n_digits)
 
-            # 方向：min rotated rect → 長邊 L、短邊 S、長軸角度 θ。
-            # elongated（細長）= 長寬比夠大且短邊夠寬放得下旋轉的號 → 數字沿長軸旋轉放。
-            long_dim, short_dim, theta = _oriented_dims(geom)
-            elongated = (
-                long_dim >= _ELONGATED_ASPECT * max(short_dim, 1e-6)
-                and short_dim >= _NUMBER_MIN_SHORT_EDGE
-            )
-
-            # 篩選 2：太細的「非最大塊」跳過；但 elongated（會旋轉放號、不溢出）不跳，
-            # 讓細長條也能拿到一個沿著它的號。
-            if (
-                not is_largest
-                and short_edge < _MIN_EXTRA_PART_BBOX
-                and not elongated
-            ):
+            # 非最大塊：放得下才放（取代舊 _MIN_EXTRA_PART_BBOX 短邊門檻）。
+            # 最大塊：維持「每色至少一個 label」保證 → 放不下也以最小字水平盡力放。
+            if not is_largest and not fits:
                 continue
 
             # polylabel 找穩定的內部點
@@ -543,24 +578,24 @@ def regenerate_merged_svg(
                 pt = geom.centroid
             cx, cy = pt.x, pt.y
 
-            # 篩選 1：font size cap。
+            # 篩選 2：font size。
             area_sqrt = max(geom.area, 1.0) ** 0.5
-            if elongated:
-                # 細長 → 數字旋轉沿長軸；字級用短邊（數字高 ~0.7font 橫跨短邊，
-                # 沿長軸方向長度充足）→ 不溢出、放得進細長條。
-                rotate_deg: float | None = theta
-                font_size = max(
-                    _MIN_FONT_SIZE,
-                    min(area_sqrt / 8.0, _MAX_FONT_SIZE, short_dim * _STRIP_FONT_RATIO),
-                )
+            if fits and fit_rotate is not None:
+                # 細長 → 數字旋轉沿長軸；字級用 _number_fits（短邊夾擠、含安全邊距）→
+                # 填滿細長條又不溢出。不套 inradius（細長 inradius 太小會誤縮字）。
+                rotate_deg: float | None = fit_rotate
+                font_size = fit_font
             else:
-                # 方塊/compact → 水平，字級用「內接半徑」上限（數字塞得進、不溢到鄰格）。
-                # inradius = 放置點到邊界(含洞)距離 = 該點最大內接圓半徑。
+                # 方塊/compact（或最大塊放不下的盡力情況）→ 水平。
+                # 字級取 _number_fits 與「內接半徑」上限的較小者（防凹形溢出到鄰格），
+                # 再以 area_sqrt/8 壓大塊、floor 在 _MIN_FONT_SIZE。
                 rotate_deg = None
                 inradius = pt.distance(geom.boundary)
+                base_font = fit_font if fits else _MIN_FONT_SIZE
                 font_size = max(
                     _MIN_FONT_SIZE,
-                    min(area_sqrt / 8.0, _MAX_FONT_SIZE, inradius * _FONT_FIT_RATIO),
+                    min(base_font, inradius * _FONT_FIT_RATIO, area_sqrt / 8.0,
+                        _MAX_FONT_SIZE),
                 )
 
             # 篩選 3：碰撞偵測（只比對候選點所在格 + 周圍 8 格，O(1) 均攤）。
