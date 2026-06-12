@@ -438,17 +438,18 @@ def test_render_filled_png_uses_template_geometry():
     assert tuple(arr[25, 90]) == (100, 50, 200)
 
 
-def test_font_size_capped_by_inradius_for_thin_region():
-    """細長大面積區塊的編號字級被「內接半徑」上限壓小（避免溢出到鄰格）；
-    同面積的方塊區塊不受此限、字級較大。修「數字偏移到別格」。"""
-    # viewBox 600x200：A=細長(580x10, inradius≈5)、B=方塊(76x76, inradius≈38)，面積相近(~5800)
+def test_elongated_strip_label_rotated_compact_not():
+    """細長條（垂直）→ 數字旋轉沿長軸放（transform=rotate, 角度≈±90）；
+    方塊區塊 → 不旋轉（無 transform）。修「細長條放不下號」。"""
+    import re
+    # A = 垂直細長條 (10×200)；B = 方塊 (50×50)，兩者分開不碰撞
     svg = (
         f'{_HEADER}'
-        f'<svg xmlns="{_NS}" viewBox="0 0 600 200">'
-        f'<rect x="0" y="0" width="600" height="200" fill="white"/>'
-        f'<polygon id="r0" points="10,20 590,20 590,30 10,30" '
+        f'<svg xmlns="{_NS}" viewBox="0 0 400 260">'
+        f'<rect x="0" y="0" width="400" height="260" fill="white"/>'
+        f'<polygon id="r0" points="195,20 205,20 205,220 195,220" '
         f'fill="{_tint(247, 167, 132)}" stroke="#AAA" stroke-width="1"/>'
-        f'<polygon id="r1" points="10,60 86,60 86,136 10,136" '
+        f'<polygon id="r1" points="300,20 350,20 350,70 300,70" '
         f'fill="{_tint(100, 50, 200)}" stroke="#AAA" stroke-width="1"/>'
         f'</svg>'
     ).encode()
@@ -460,10 +461,17 @@ def test_font_size_capped_by_inradius_for_thin_region():
         svg, {1: 1, 2: 2}, _PALETTE_JSON, palette_final, enable_tiny_merge=False,
     )
     root = ET.fromstring(out)
-    fonts = {t.text: float(t.get("font-size")) for t in root.iter(f"{{{_NS}}}text")}
-    assert "1" in fonts and "2" in fonts, f"both labels should be placed: {fonts}"
-    # 細長 A(label1) 字級 < 方塊 B(label2)（被 inradius 壓小）
-    assert fonts["1"] < fonts["2"], f"thin region font should be capped smaller: {fonts}"
+    texts = {t.text: t for t in root.iter(f"{{{_NS}}}text")}
+    assert "1" in texts and "2" in texts, f"both labels should be placed: {texts}"
+    # 細長條 A：有 rotate transform，角度接近 ±90（沿垂直長軸）
+    tr1 = texts["1"].get("transform")
+    assert tr1 and tr1.startswith("rotate("), f"elongated strip should be rotated: {tr1}"
+    ang = float(re.match(r"rotate\(([-\d.]+)", tr1).group(1))
+    assert abs(abs(ang) - 90) < 20, f"angle should be ~±90 along vertical long axis: {ang}"
+    # 方塊 B：不旋轉
+    assert texts["2"].get("transform") is None, (
+        f"compact region should not rotate: {texts['2'].get('transform')}"
+    )
 
 
 def test_text_elements_have_light_font_weight():
@@ -555,38 +563,51 @@ def test_enable_tiny_merge_false_returns_empty_merge_records():
     assert records_off == []
 
 
-def test_tiny_merge_only_within_same_physical_color():
-    """微小色塊只在同實體色（同 output_label）內 auto-merge；不同實體色絕不合併。
-
-    修「不是同實體色的顏色也被合併」：same output_label → 合併並回 record；
-    different output_label（不同實體色）→ 即使顏色相近(LAB<30)也不合併、records 為空。
-    """
-    palette_with_small = [
+def test_speck_merges_into_nearest_any_color():
+    """真碎片（短邊<3.5 + 面積<50）合進「幾何最近」鄰居，可跨實體色（不同 output_label 也合）。"""
+    palette_json = [
         {"template_id": 1, "rgb": [240, 240, 240], "pixels": 10},
         {"template_id": 2, "rgb": [220, 220, 220], "pixels": 5000},
     ]
     svg = _make_svg([
-        (_tint(240, 240, 240), [(0, 0), (2, 0), (2, 2), (0, 2)]),       # tid 1 tiny
+        (_tint(240, 240, 240), [(0, 0), (2, 0), (2, 2), (0, 2)]),       # tid 1 speck (2×2)
         (_tint(220, 220, 220), [(2, 0), (52, 0), (52, 50), (2, 50)]),   # tid 2 large 緊鄰
     ])
-
-    # 同實體色（tid 1、tid 2 都 output_label 1）→ tiny 合進 large、回 record
-    palette_same = [{"output_label": 1, "rgb": [220, 220, 220]}]
-    _, records_same = regenerate_merged_svg(
-        svg, {1: 1, 2: 1}, palette_with_small, palette_same,
+    # tid1=label1、tid2=label2（不同實體色）→ speck 仍合進最近的 tid2（跨色）
+    palette_final = [
+        {"output_label": 1, "rgb": [240, 240, 240]},
+        {"output_label": 2, "rgb": [100, 50, 200]},
+    ]
+    _, records = regenerate_merged_svg(
+        svg, {1: 1, 2: 2}, palette_json, palette_final,
     )
-    assert len(records_same) >= 1
-    rec = records_same[0]
+    assert len(records) >= 1
+    rec = records[0]
     assert rec["tiny_template_id"] == 1
-    assert rec["target_template_id"] == 2
+    assert rec["target_template_id"] == 2   # 合進幾何最近的 tid2（不同實體色）
     assert "polygon_id" in rec
 
-    # 不同實體色（output_label 1 vs 2）→ 顏色相近仍不合併、records 為空
-    palette_diff = [
-        {"output_label": 1, "rgb": [240, 240, 240]},
-        {"output_label": 2, "rgb": [220, 220, 220]},
+
+def test_long_thin_strip_not_merged():
+    """長條（短邊<3.5 但面積≥50）不被當碎片合併（交給 Pass C 旋轉放號）；同圖的真碎片才合。"""
+    palette_json = [
+        {"template_id": 1, "rgb": [240, 240, 240], "pixels": 10},   # 長條
+        {"template_id": 2, "rgb": [200, 200, 200], "pixels": 10},   # 真碎片
+        {"template_id": 3, "rgb": [220, 220, 220], "pixels": 5000}, # large
     ]
-    _, records_diff = regenerate_merged_svg(
-        svg, {1: 1, 2: 2}, palette_with_small, palette_diff,
+    svg = _make_svg([
+        (_tint(240, 240, 240), [(0, 0), (90, 0), (90, 3), (0, 3)]),       # tid1 長條 90×3 (area270)
+        (_tint(200, 200, 200), [(8, 20), (10, 20), (10, 22), (8, 22)]),   # tid2 碎片 2×2，貼著 tid3
+        (_tint(220, 220, 220), [(10, 10), (70, 10), (70, 40), (10, 40)]), # tid3 large
+    ])
+    palette_final = [
+        {"output_label": 1, "rgb": [240, 240, 240]},
+        {"output_label": 2, "rgb": [200, 200, 200]},
+        {"output_label": 3, "rgb": [100, 50, 200]},
+    ]
+    _, records = regenerate_merged_svg(
+        svg, {1: 1, 2: 2, 3: 3}, palette_json, palette_final,
     )
-    assert records_diff == []
+    merged = {r["tiny_template_id"] for r in records}
+    assert 2 in merged, f"speck tid2 should be merged: {records}"
+    assert 1 not in merged, f"long strip tid1 should NOT be merged: {records}"
