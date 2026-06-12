@@ -5,7 +5,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,12 +30,9 @@ from notifications.service import create_notification
 from orders.models import (
     CancelReasonCodeEnum,  # noqa: F401  (used by orders refund logic)
     Order,
-    OrderItem,
-    OrderStatusEnum,
 )
 from product.models import Product
 from production.models import JobStatusEnum, ProductionJob
-from users.models import ShippingProfile
 
 logger = logging.getLogger(__name__)
 

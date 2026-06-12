@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec B405 — 僅解析自家 pbn_gen 產生的 SVG
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -172,7 +172,7 @@ def _merge_tiny_polygons(
         for large in large_polys:
             try:
                 d = tiny["shp"].distance(large["shp"])
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S112  # nosec B112 — 個別 polygon 距離失敗就跳過
                 continue
             dist_pairs.append((d, large))
         if not dist_pairs:
@@ -276,7 +276,7 @@ def regenerate_merged_svg(
 
     try:
         ET.register_namespace("", _SVG_NS)
-        root = ET.fromstring(svg_bytes)
+        root = ET.fromstring(svg_bytes)  # noqa: S314  # nosec B314 — 解析自家 pbn_gen 產生的 SVG
     except ET.ParseError as e:
         raise ValueError(f"SVG 解析失敗：{e}") from e
 
@@ -387,14 +387,24 @@ def regenerate_merged_svg(
     else:
         bg_w, bg_h = "1000", "1000"
     bg = ET.SubElement(new_root, f"{{{_SVG_NS}}}rect")
-    bg.set("x", "0"); bg.set("y", "0")
-    bg.set("width", bg_w); bg.set("height", bg_h)
+    bg.set("x", "0")
+    bg.set("y", "0")
+    bg.set("width", bg_w)
+    bg.set("height", bg_h)
     bg.set("fill", "white")
 
     # ── Step 5：兩 pass 渲染避免 z-order bug
     # 先 pass A 把每個 output_label 的 path + label 候選蒐集起來；
-    # 再 pass B 寫所有 path（色塊）；最後 pass C 寫所有 text（編號在最上面）。
-    # 重點：所有 path 必須先寫完，text 才能疊在最上面不被後續 path 蓋住。
+    # 再 pass B 依面積由大到小寫所有 path（色塊）；最後 pass C 寫所有 text。
+    # 兩個 z-order 重點：
+    #  1. path 之間：大塊先畫（底層）、小塊後畫（上層）。SVG 是 painter's model
+    #     （後畫蓋先畫），且 evenodd 只在同一條 path 內挖洞、跨不同實體色不互挖；
+    #     不排序的話外圍大色塊若 document 順序晚於被它環繞的中間異色小塊，就會把
+    #     中間 fill 蓋掉。依「色群總面積」由大到小排序 → 典型「外圍大塊包住中間小塊」
+    #     （小塊所屬色群總面積較小）即被修正。註：排序粒度是 output_label 色群總面積，
+    #     非單一 polygon 幾何包覆，故「中間小塊所屬色在他處剛好是大面積色」的罕見
+    #     情形仍可能被蓋 — 真正 per-polygon 保證需幾何包覆偵測，列為後續強化。
+    #  2. path 與 text：所有 path 必須先寫完，text 才能疊在最上面不被後續 path 蓋住。
 
     merged_count = 0
     parts_count = 0
@@ -443,7 +453,16 @@ def regenerate_merged_svg(
             "tint": tint,
             "path_d": " ".join(path_d_parts),
             "geom_list": geom_list,
+            # 給 Pass B z-order 排序用。用 geom_list 各塊面積加總，避開
+            # union except 分支（merged 可能不是 union 結果）的邊角。
+            "area": sum(g.area for g in geom_list),
         })
+
+    # z-order：依色群總面積大塊先畫（底層）、小塊後畫（上層），修正外圍大色塊蓋住
+    # 被它環繞的中間異色小塊（典型情形，見上方 Step 5 註）。output_label 破 tie 保
+    # deterministic。
+    # 影響 Pass C 編號放置順序：大塊優先放編號，與 Pass C 內 geom_list_by_area 一致。
+    render_items.sort(key=lambda it: (-it["area"], it["output_label"]))
 
     # Pass B：先寫所有 <path>（色塊）
     for item in render_items:

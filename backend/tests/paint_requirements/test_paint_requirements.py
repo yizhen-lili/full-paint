@@ -7,7 +7,6 @@ from decimal import Decimal
 import bcrypt
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
 
 from auth.models import User
 from color.models import PhysicalColor

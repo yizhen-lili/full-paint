@@ -379,7 +379,11 @@ async def confirm_pending_merges(db: AsyncSession, job_id: UUID) -> dict:
     return {
         "operations_dispatched": len(operations),
         "pending_count": pending_count,
-        "job_status": updated_job.status.value if hasattr(updated_job.status, "value") else str(updated_job.status),
+        "job_status": (
+            updated_job.status.value
+            if hasattr(updated_job.status, "value")
+            else str(updated_job.status)
+        ),
     }
 
 
@@ -418,7 +422,6 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     回傳：{"output_labels_count": N, "template_final_url": ..., "palette_final_url": ...}
     """
     from core.firebase import get_bucket  # noqa: PLC0415
-
     from palette.svg_consolidate import regenerate_merged_svg  # noqa: PLC0415
 
     job = await _get_job_or_404(db, job_id)

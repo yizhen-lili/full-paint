@@ -42,7 +42,7 @@ def _make_svg(polys: list[tuple[str, list[tuple[int, int]]]]) -> bytes:
         f'<rect x="0" y="0" width="100" height="100" fill="white"/>'
         f'{polygons}'
         f'</svg>'
-    ).encode("utf-8")
+    ).encode()
 
 
 def _parse_paths(svg_bytes: bytes):
@@ -265,7 +265,10 @@ def test_output_tint_is_lighter_than_input_tint():
     # output 每個 channel 都該更高（更白）
     def _hex_to_rgb(h):
         return [int(h[i:i+2], 16) for i in (1, 3, 5)]
-    assert all(o >= i for o, i in zip(_hex_to_rgb(output_tint), _hex_to_rgb(input_tint)))
+    assert all(
+        o >= i
+        for o, i in zip(_hex_to_rgb(output_tint), _hex_to_rgb(input_tint), strict=True)
+    )
 
 
 def test_polygon_with_unknown_fill_skipped():
@@ -321,6 +324,43 @@ def test_z_order_paths_before_texts():
     )
 
 
+def test_z_order_large_path_drawn_before_small_path():
+    """被包圍的「中間」異色小塊不可被外圍大塊蓋掉（圓形四周改色號後中間消失的 bug）。
+
+    SVG 是 painter's model（後畫蓋先畫），且 evenodd 只在同一條 path 內挖洞、跨不同
+    實體色不互挖。若外圍大色塊在 document 順序上晚於被它環繞的中間異色小塊，就會把
+    中間 fill 蓋掉。修法：Pass B 依面積由大到小繪製 path（大塊在底層、小塊在上層）。
+
+    本測試故意把「中間小塊」polygon 在 document 中排在「外圍大塊」之前（觸發原 bug），
+    斷言輸出 SVG 中面積大的 path 反而被拉到面積小的 path 之前（底層）。
+    """
+    svg = _make_svg([
+        # document 順序故意把「中間小塊」放前面 — 原 bug：它先畫、被後畫的大塊蓋掉
+        (_tint(100, 50, 200),  [(10, 10), (30, 10), (30, 30), (10, 30)]),  # tid 2，小（中間）
+        # 「外圍大塊」放後面 — 原 bug：它後畫蓋住中間
+        (_tint(247, 167, 132), [(0, 0), (100, 0), (100, 100), (0, 100)]),  # tid 1，大（外圍）
+    ])
+    label_map = {1: 1, 2: 2}
+    palette_final = [
+        {"output_label": 1, "rgb": [247, 167, 132]},  # 大塊
+        {"output_label": 2, "rgb": [100, 50, 200]},   # 小塊（中間）
+    ]
+    out, _ = regenerate_merged_svg(
+        svg, label_map, _PALETTE_JSON, palette_final, enable_tiny_merge=False,
+    )
+    paths = _parse_paths(out)
+    ids = [p.get("id") for p in paths]
+    assert "o1" in ids and "o2" in ids, f"expected both paths, got {ids}"
+    # 大塊 o1 必須排在小塊 o2 之前（底層）→ 被環繞的中間小塊 o2 在上層、不被蓋
+    assert ids.index("o1") < ids.index("o2"), (
+        f"large path (o1) must be drawn before small path (o2) so the enclosed "
+        f"small region stays on top and is not covered; got order={ids}"
+    )
+    # 中間小塊的編號也應仍在（沒被吃掉）
+    texts = _parse_texts(out)
+    assert "2" in texts, f"enclosed small region's label should survive, got {texts}"
+
+
 def test_text_elements_have_light_font_weight():
     """每個 <text> 都應該有 font-weight=300（Light）讓塗色者讀起來不刺眼。"""
     svg = _make_svg([
@@ -370,7 +410,7 @@ def test_no_recognizable_polygons_falls_back_to_renumber():
         f'<polygon id="r0" points="0,0 10,0 0,10" fill="#000000"/>'
         f'<g id="0"><text x="5" y="5">1</text></g>'
         f'</svg>'
-    ).encode("utf-8")
+    ).encode()
     out, _ = regenerate_merged_svg(svg, {1: 7}, _PALETTE_JSON, [])
     # fallback: text content 應該變成 "7"
     texts = _parse_texts(out)

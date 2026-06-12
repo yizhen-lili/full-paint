@@ -15,7 +15,7 @@ attrs）完全不動。
 from __future__ import annotations
 
 import logging
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec B405 — 僅解析自家 pbn_gen 產生的 SVG
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def renumber_svg_labels(svg_bytes: bytes, label_map: dict[int, int]) -> bytes:
     try:
         # parser 保留 namespace 註冊，serialize 時才不會把 xmlns 拆得很怪
         ET.register_namespace("", _SVG_NS)
-        root = ET.fromstring(svg_bytes)
+        root = ET.fromstring(svg_bytes)  # noqa: S314  # nosec B314 — 解析自家 pbn_gen 產生的 SVG
     except ET.ParseError as e:
         raise ValueError(f"SVG 解析失敗：{e}") from e
 

@@ -2,7 +2,6 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-
 # ── 顏料需求查詢 response ──────────────────────────────────────────────
 
 

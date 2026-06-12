@@ -615,7 +615,9 @@ async def test_cleanup_frees_email_for_reregistration(client: AsyncClient, db):
     email = "reuse@test.com"
 
     # 第一次註冊
-    await client.post(REGISTER_URL, json={"name": "first", "email": email, "password": "abc1234567"})
+    await client.post(
+        REGISTER_URL, json={"name": "first", "email": email, "password": "abc1234567"}
+    )
 
     # 強制讓帳號變舊
     result = await db.execute(select(User).where(User.email == email))

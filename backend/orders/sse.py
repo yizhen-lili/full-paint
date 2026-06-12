@@ -1,7 +1,8 @@
 """訂單模組 SSE pub/sub helper。
 
 訂閱對象：
-- 客戶端：subscribe_customer(order_id) → 該訂單的狀態變更（paid / shipped / delivered / completed / refund）
+- 客戶端：subscribe_customer(order_id) → 該訂單的狀態變更
+  （paid / shipped / delivered / completed / refund）
 
 設計沿用 custom/sse.py 的 in-memory hub（單 worker 部署，多 worker 改 Redis）。
 

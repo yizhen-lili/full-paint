@@ -118,9 +118,11 @@ async def admin_force_verify_email(db: AsyncSession, target_id: UUID) -> User:
 
     使用情境少，每次操作都 audit log（之後可加）。
     """
-    from auth.models import EmailVerificationToken, TokenTypeEnum
     from datetime import UTC, datetime
+
     from sqlalchemy import update as sa_update
+
+    from auth.models import EmailVerificationToken, TokenTypeEnum
 
     result = await db.execute(select(User).where(User.id == target_id))
     target = result.scalar_one_or_none()

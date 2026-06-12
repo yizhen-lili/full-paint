@@ -1163,7 +1163,9 @@ async def _load_palette_final(url: str) -> list[dict] | None:
         return None
 
 
-def _draw_palette_legend_page(canvas, palette_final: list[dict], page_w_cm: float, page_h_cm: float) -> None:
+def _draw_palette_legend_page(
+    canvas, palette_final: list[dict], page_w_cm: float, page_h_cm: float
+) -> None:
     """在 PDF 上畫一頁色號對照表。
 
     每 row：output_label / 色票方塊 / 色號 / 名稱 / hex / 預估油料 ml。

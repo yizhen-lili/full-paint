@@ -617,9 +617,10 @@ async def test_approve_unauthenticated(client: AsyncClient, db):
 @pytest.mark.asyncio
 async def test_delete_pending_job_ok(client: AsyncClient, db):
     """pending 任務可刪 + palette_color_mappings 連帶刪 + 回 204。"""
+    from sqlalchemy import select
+
     from color.models import PhysicalColor
     from palette.models import MappedByEnum, PaletteColorMapping
-    from sqlalchemy import select
 
     job_id = await _create_pending_job(client, db)
     # 加一筆 PhysicalColor 給 mapping 用（physical_color_id NOT NULL）
@@ -649,6 +650,7 @@ async def test_delete_pending_job_ok(client: AsyncClient, db):
 async def test_delete_completed_job_cleans_firebase(client: AsyncClient, db):
     """completed 任務可刪 + 掃 production_jobs/{id}/ prefix 把所有 blob 刪光。"""
     from sqlalchemy import update
+
     from production.models import ProductionJob
 
     job_id = await _create_pending_job(client, db)
@@ -671,7 +673,7 @@ async def test_delete_completed_job_cleans_firebase(client: AsyncClient, db):
         f"production_jobs/{job_id}/snapped.png",
         f"production_jobs/{job_id}/mask.png",
         f"production_jobs/{job_id}/intermediate_v1.png",  # 中間檔
-    ]):
+    ], strict=True):
         b.name = name
 
     mock_bucket = MagicMock()
@@ -693,6 +695,7 @@ async def test_delete_completed_job_cleans_firebase(client: AsyncClient, db):
 async def test_delete_processing_job_rejected(client: AsyncClient, db):
     """processing 任務不可刪（worker 在跑）→ 400。"""
     from sqlalchemy import update
+
     from production.models import ProductionJob
 
     job_id = await _create_pending_job(client, db)
@@ -711,6 +714,7 @@ async def test_delete_processing_job_with_force_ok(client: AsyncClient, db):
     """processing 任務 + ?force=true → 允許強制刪除（worker 卡死的 zombie task）+ 排程 90s
     後再清一次 Firebase（防 worker race window 寫新檔）。"""
     from sqlalchemy import select, update
+
     from production.models import ProductionJob
 
     job_id = await _create_pending_job(client, db)
@@ -745,6 +749,7 @@ async def test_delete_processing_job_with_force_ok(client: AsyncClient, db):
 async def test_delete_job_referenced_by_product_rejected(client: AsyncClient, db):
     """job 被 product_variants 引用 → 拒絕 400 + 回傳結構化 references。"""
     from sqlalchemy import update
+
     from product.models import Product, ProductVariant
     from production.models import ProductionJob
 
@@ -777,9 +782,12 @@ async def test_delete_job_referenced_by_product_rejected(client: AsyncClient, db
 
 
 @pytest.mark.asyncio
-async def test_delete_job_cascade_removes_variant_and_offsales_orphan_product(client: AsyncClient, db):
+async def test_delete_job_cascade_removes_variant_and_offsales_orphan_product(
+    client: AsyncClient, db
+):
     """cascade=true → 刪 variant；若為 product 唯一 variant → product 自動 off_sale。"""
     from sqlalchemy import select, update
+
     from product.models import Product, ProductStatusEnum, ProductVariant
     from production.models import ProductionJob
 
@@ -819,8 +827,9 @@ async def test_delete_job_cascade_removes_variant_and_offsales_orphan_product(cl
 async def test_delete_job_cascade_keeps_product_active_with_other_variants(client: AsyncClient, db):
     """product 有其他 variant 時 cascade 刪一個 variant → product 仍 on_sale。"""
     from sqlalchemy import select, update
+
     from product.models import Product, ProductStatusEnum, ProductVariant
-    from production.models import ProductionJob, JobStatusEnum
+    from production.models import JobStatusEnum, ProductionJob
 
     # 兩個 job → 兩個 variant 共用同一個 product
     job_id_1 = await _create_pending_job(client, db)
@@ -843,8 +852,12 @@ async def test_delete_job_cascade_keeps_product_active_with_other_variants(clien
     db.add(prod)
     await db.flush()
     db.add_all([
-        ProductVariant(product_id=prod.id, production_job_id=job_id_1, price=100, price_formula_base=80),
-        ProductVariant(product_id=prod.id, production_job_id=job2.id, price=200, price_formula_base=150),
+        ProductVariant(
+            product_id=prod.id, production_job_id=job_id_1, price=100, price_formula_base=80
+        ),
+        ProductVariant(
+            product_id=prod.id, production_job_id=job2.id, price=200, price_formula_base=150
+        ),
     ])
     await db.commit()
     product_id = prod.id
@@ -866,6 +879,7 @@ async def test_delete_job_cascade_keeps_product_active_with_other_variants(clien
 async def test_delete_job_blocked_by_order_even_with_cascade(client: AsyncClient, db):
     """job 被 order_item 引用 → 即使 cascade=true 也拒絕（code=JOB_BLOCKED_BY_ORDER）。"""
     from sqlalchemy import update
+
     from orders.models import Order, OrderItem, OrderStatusEnum
     from production.models import ProductionJob
 
@@ -917,7 +931,8 @@ async def test_delete_job_blocked_by_order_even_with_cascade(client: AsyncClient
 @pytest.mark.asyncio
 async def test_batch_delete_jobs_cascade_succeeds(client: AsyncClient, db):
     """批次刪除帶 cascade=true → 被 variant 引用的 job 也能成功刪。"""
-    from sqlalchemy import select, update
+    from sqlalchemy import update
+
     from product.models import Product, ProductStatusEnum, ProductVariant
     from production.models import ProductionJob
 
@@ -929,7 +944,9 @@ async def test_batch_delete_jobs_cascade_succeeds(client: AsyncClient, db):
     prod = Product(title="P", cover_image_url="gs://b/c.png", status=ProductStatusEnum.on_sale)
     db.add(prod)
     await db.flush()
-    db.add(ProductVariant(product_id=prod.id, production_job_id=j1, price=100, price_formula_base=80))
+    db.add(
+        ProductVariant(product_id=prod.id, production_job_id=j1, price=100, price_formula_base=80)
+    )
     await db.commit()
 
     with patch("production.service.get_bucket"):
@@ -947,6 +964,7 @@ async def test_batch_delete_jobs_cascade_succeeds(client: AsyncClient, db):
 async def test_batch_delete_jobs_partial_with_references(client: AsyncClient, db):
     """批次刪除無 cascade → 被引用的 job 失敗，response.references 帶回結構化清單。"""
     from sqlalchemy import update
+
     from product.models import Product, ProductVariant
     from production.models import ProductionJob
 
@@ -958,7 +976,9 @@ async def test_batch_delete_jobs_partial_with_references(client: AsyncClient, db
     prod = Product(title="P", cover_image_url="gs://b/c.png")
     db.add(prod)
     await db.flush()
-    db.add(ProductVariant(product_id=prod.id, production_job_id=j2, price=100, price_formula_base=80))
+    db.add(
+        ProductVariant(product_id=prod.id, production_job_id=j2, price=100, price_formula_base=80)
+    )
     await db.commit()
 
     with patch("production.service.get_bucket"):
@@ -1002,7 +1022,8 @@ async def test_delete_job_unauthenticated(client: AsyncClient, db):
 @pytest.mark.asyncio
 async def test_delete_job_firebase_failure_does_not_rollback_db(client: AsyncClient, db):
     """Firebase delete 失敗應只 log，不影響 DB（已 commit）→ 仍回 204。"""
-    from sqlalchemy import update, select
+    from sqlalchemy import select, update
+
     from production.models import ProductionJob
 
     job_id = await _create_pending_job(client, db)
@@ -1037,6 +1058,7 @@ async def test_delete_job_firebase_failure_does_not_rollback_db(client: AsyncCli
 async def test_batch_delete_jobs_all_ok(client: AsyncClient, db):
     """全部成功：兩筆 pending → 都刪除，回 success=2 failed=0。"""
     from sqlalchemy import select
+
     from production.models import ProductionJob
 
     j1 = await _create_pending_job(client, db)
@@ -1067,6 +1089,7 @@ async def test_batch_delete_jobs_partial_failure(client: AsyncClient, db):
     回 success=1 failed=2，各筆 results 帶各自原因，DB 對應狀態正確。
     """
     from sqlalchemy import select, update
+
     from production.models import ProductionJob
 
     j_ok = await _create_pending_job(client, db)
@@ -1110,6 +1133,7 @@ async def test_batch_delete_jobs_partial_failure(client: AsyncClient, db):
 async def test_batch_delete_jobs_force_allows_processing(client: AsyncClient, db):
     """force=true → processing 也可刪。"""
     from sqlalchemy import select, update
+
     from production.models import ProductionJob
 
     j = await _create_pending_job(client, db)
@@ -1227,6 +1251,7 @@ RESET_SUFFIX = "/reset-to-completed"
 
 async def _set_status(db, job_id, status):
     from sqlalchemy import update
+
     from production.models import JobStatusEnum, ProductionJob
     await db.execute(
         update(ProductionJob)
@@ -1238,6 +1263,7 @@ async def _set_status(db, job_id, status):
 
 async def _set_urls(db, job_id, svg_url=None, filled_url=None):
     from sqlalchemy import update
+
     from production.models import ProductionJob
     values = {}
     if svg_url is not None:
@@ -1843,6 +1869,7 @@ async def test_sam_mask_with_polygons_ok(client: AsyncClient, db):
     job = await _create_sam_pending_job(client, db)
 
     mock_blob = MagicMock()
+    mock_blob.generate_signed_url.return_value = "https://signed.url/mask"
     mock_bucket = MagicMock()
     mock_bucket.blob.return_value = mock_blob
     mock_bucket.name = "test-bucket"
@@ -1871,6 +1898,7 @@ async def test_sam_mask_with_only_points(client: AsyncClient, db):
     job = await _create_sam_pending_job(client, db)
 
     mock_blob = MagicMock()
+    mock_blob.generate_signed_url.return_value = "https://signed.url/mask"
     mock_bucket = MagicMock()
     mock_bucket.blob.return_value = mock_blob
     mock_bucket.name = "test-bucket"
@@ -1891,7 +1919,8 @@ async def test_sam_mask_with_only_points(client: AsyncClient, db):
     assert res.status_code == 200
     data = res.json()
     assert data["mask_url"] is not None
-    assert data["mask_url"].startswith("gs://test-bucket/")
+    # 回 client 前 SamMaskResponse 把 gs:// 轉成 signed https URL（<img> 不認 gs://）
+    assert data["mask_url"].startswith("https://")
     assert data["mask_coverage"] is not None
     assert 0 <= data["mask_coverage"] <= 1
 
@@ -1904,6 +1933,7 @@ async def test_sam_mask_union_polygons_and_points(client: AsyncClient, db):
     job = await _create_sam_pending_job(client, db)
 
     mock_blob = MagicMock()
+    mock_blob.generate_signed_url.return_value = "https://signed.url/mask"
     mock_bucket = MagicMock()
     mock_bucket.blob.return_value = mock_blob
     mock_bucket.name = "test-bucket"
@@ -1973,6 +2003,7 @@ async def test_sam_mask_sam_failure_fallback_to_polygons(client: AsyncClient, db
     job = await _create_sam_pending_job(client, db)
 
     mock_blob = MagicMock()
+    mock_blob.generate_signed_url.return_value = "https://signed.url/mask"
     mock_bucket = MagicMock()
     mock_bucket.blob.return_value = mock_blob
     mock_bucket.name = "test-bucket"
@@ -2050,8 +2081,10 @@ async def test_sam_mask_approved_reset(client: AsyncClient, db):
     await db.commit()
     await db.refresh(job)
 
+    mock_blob = MagicMock()
+    mock_blob.generate_signed_url.return_value = "https://signed.url/mask"
     mock_bucket = MagicMock()
-    mock_bucket.blob.return_value = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
     mock_bucket.name = "test-bucket"
     with patch("production.service.get_bucket", return_value=mock_bucket):
         res = await client.post(

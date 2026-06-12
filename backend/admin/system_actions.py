@@ -16,7 +16,6 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-
 CONFIRM_PHRASE = "CLEAR-ALL-TEST-DATA"
 
 
@@ -28,7 +27,7 @@ async def preview_clear_test_data(db: AsyncSession) -> dict:
         "custom_requests", "custom_request_messages",
         "payment_submissions", "shipments", "production_progress",
     ):
-        r = await db.execute(text(f"SELECT COUNT(*) FROM {tbl}"))
+        r = await db.execute(text(f"SELECT COUNT(*) FROM {tbl}"))  # noqa: S608  # nosec B608 — tbl 來自寫死 table 名 tuple
         counts[tbl] = r.scalar() or 0
 
     # 通知只算 order/custom 相關的

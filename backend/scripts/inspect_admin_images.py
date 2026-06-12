@@ -6,7 +6,6 @@
 import json
 import urllib.request
 
-
 PORT = 9222
 
 
@@ -40,12 +39,12 @@ def get_admin_cookie() -> str:
         if not os.path.exists(path):
             continue
         with open(path) as f:
-        for line in f:
-            if "access_token" in line:
-                # netscape cookie format: domain TAB ... TAB name TAB value
-                parts = line.strip().split("\t")
-                if len(parts) >= 7 and parts[5] == "access_token":
-                    return f"access_token={parts[6]}"
+            for line in f:
+                if "access_token" in line:
+                    # netscape cookie format: domain TAB ... TAB name TAB value
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 7 and parts[5] == "access_token":
+                        return f"access_token={parts[6]}"
     return ""
 
 
@@ -96,11 +95,11 @@ def main():
         except Exception as e:
             print(f"  ! detail fetch failed: {e}")
 
-    print(f"\n=== Summary ===")
+    print("\n=== Summary ===")
     print(f"Good URLs: {good_count}")
     print(f"Bad URLs: {bad_count}")
     if samples:
-        print(f"\nFirst broken sample:")
+        print("\nFirst broken sample:")
         for s in samples[:3]:
             print(f"  {s['type']} status={s['status']}: {s['url']}")
 

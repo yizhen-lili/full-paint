@@ -256,7 +256,9 @@ def test_is_image_cached_reflects_state():
     fake_masks = np.array([np.ones((10, 10), dtype=bool)])
     fake_predictor = MagicMock()
     fake_predictor.predict.return_value = (fake_masks, np.array([0.9]), None)
-    sam_runtime.predict_mask(fake_predictor, image_bgr, [{"x": 1, "y": 1, "label": 1}], image_key="img-A")
+    sam_runtime.predict_mask(
+        fake_predictor, image_bgr, [{"x": 1, "y": 1, "label": 1}], image_key="img-A"
+    )
 
     assert sam_runtime.is_image_cached("img-A") is True
     assert sam_runtime.is_image_cached("img-B") is False

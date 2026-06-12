@@ -107,7 +107,8 @@ def calculate_check_mac_value(params: dict[str, str]) -> str:
     encoded = _ecpay_url_encode(raw)
 
     # 4. MD5 + uppercase（物流 API 用 MD5，非金流的 SHA256）
-    return hashlib.md5(encoded.encode("utf-8")).hexdigest().upper()
+    # usedforsecurity=False：ECpay 物流 API 規格指定 MD5，非用於密碼學安全用途
+    return hashlib.md5(encoded.encode("utf-8"), usedforsecurity=False).hexdigest().upper()
 
 
 def verify_check_mac_value(params: dict[str, str]) -> bool:

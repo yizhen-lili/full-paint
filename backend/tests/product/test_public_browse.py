@@ -425,7 +425,9 @@ async def test_list_themes_includes_counts(client, db):
     job = await _make_job(db)
     p1 = await _make_product(db, title="貓 1", series_id=series_a.id)
     await _make_variant(db, p1.id, job.id)
-    p2 = await _make_product(db, title="貓 2 草稿", status=ProductStatusEnum.draft, series_id=series_a.id)
+    p2 = await _make_product(
+        db, title="貓 2 草稿", status=ProductStatusEnum.draft, series_id=series_a.id
+    )
     await _make_variant(db, p2.id, job.id)
     await db.commit()
     _ = series_b   # series_b 沒商品但仍計入 series_count

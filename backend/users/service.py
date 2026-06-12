@@ -86,6 +86,7 @@ async def request_email_change(
     # TOCTOU 防護：用 advisory lock 序列化「同一 new_email」的 concurrent
     # request（避免 user A + user B 同時搶 new@x.com 同 email 兩邊 pass uniqueness check）
     import hashlib  # noqa: PLC0415
+
     from sqlalchemy import text  # noqa: PLC0415
     lock_key = int.from_bytes(
         hashlib.sha256(new_email.lower().encode()).digest()[:8],
@@ -203,18 +204,19 @@ async def resend_email_change_verification(
         raise BadRequestError("目前沒有待驗證的新 Email", code="NO_PENDING_EMAIL")
 
     # Rate limit：查最近的 email_change token，60 秒內 created → 拒絕
-    RESEND_THROTTLE_SEC = 60
+    resend_throttle_sec = 60
+    cutoff = datetime.now(UTC) - timedelta(seconds=resend_throttle_sec)
     recent_token = (await db.execute(
         select(EmailVerificationToken)
         .where(
             EmailVerificationToken.user_id == user.id,
             EmailVerificationToken.token_type == TokenTypeEnum.email_change,
-            EmailVerificationToken.created_at > datetime.now(UTC) - timedelta(seconds=RESEND_THROTTLE_SEC),
+            EmailVerificationToken.created_at > cutoff,
         )
         .order_by(EmailVerificationToken.created_at.desc())
     )).scalars().first()
     if recent_token:
-        wait_sec = RESEND_THROTTLE_SEC - int(
+        wait_sec = resend_throttle_sec - int(
             (datetime.now(UTC) - recent_token.created_at).total_seconds()
         )
         raise BadRequestError(
