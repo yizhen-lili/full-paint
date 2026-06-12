@@ -10,7 +10,12 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from palette.svg_consolidate import _parse_points, _tint_hex, regenerate_merged_svg
+from palette.svg_consolidate import (
+    _number_fits,
+    _parse_points,
+    _tint_hex,
+    regenerate_merged_svg,
+)
 
 _NS = "http://www.w3.org/2000/svg"
 _HEADER = '<?xml version="1.0" encoding="UTF-8"?>'
@@ -589,14 +594,14 @@ def test_speck_merges_into_nearest_any_color():
 
 
 def test_long_thin_strip_not_merged():
-    """長條（短邊<3.5 但面積≥50）不被當碎片合併（交給 Pass C 旋轉放號）；同圖的真碎片才合。"""
+    """長條（短邊窄但沿長軸放得下號）不被當碎片合併（交給 Pass C 旋轉放號）；真碎片才合。"""
     palette_json = [
         {"template_id": 1, "rgb": [240, 240, 240], "pixels": 10},   # 長條
         {"template_id": 2, "rgb": [200, 200, 200], "pixels": 10},   # 真碎片
         {"template_id": 3, "rgb": [220, 220, 220], "pixels": 5000}, # large
     ]
     svg = _make_svg([
-        (_tint(240, 240, 240), [(0, 0), (90, 0), (90, 3), (0, 3)]),       # tid1 長條 90×3 (area270)
+        (_tint(240, 240, 240), [(0, 0), (90, 0), (90, 6), (0, 6)]),       # tid1 長條 90×6 fits
         (_tint(200, 200, 200), [(8, 20), (10, 20), (10, 22), (8, 22)]),   # tid2 碎片 2×2，貼著 tid3
         (_tint(220, 220, 220), [(10, 10), (70, 10), (70, 40), (10, 40)]), # tid3 large
     ])
@@ -611,3 +616,96 @@ def test_long_thin_strip_not_merged():
     merged = {r["tiny_template_id"] for r in records}
     assert 2 in merged, f"speck tid2 should be merged: {records}"
     assert 1 not in merged, f"long strip tid1 should NOT be merged: {records}"
+
+
+# ── _number_fits 單元 + 「碎塊塞得進就塞」整合 ─────────────────────────────
+
+def _box(minx, miny, maxx, maxy):
+    from shapely.geometry import Polygon as ShPolygon
+    return ShPolygon([(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)])
+
+
+def test_number_fits_small_square_single_digit_true():
+    """4×4 小方格 + 一位數 → 塞得進（need_w≈3.1、need_h≈3.6 ≤ 4），不旋轉。"""
+    fits, font, rot = _number_fits(_box(0, 0, 4, 4), 1)
+    assert fits is True
+    assert font >= 5.0
+    assert rot is None   # 方塊不旋轉
+
+
+def test_number_fits_small_square_two_digit_false():
+    """4×4 小方格 + 兩位數 → 塞不進（need_w≈6.2 > 4）→ 該合併。"""
+    fits, _, _ = _number_fits(_box(0, 0, 4, 4), 2)
+    assert fits is False
+
+
+def test_number_fits_long_strip_rotated_true():
+    """200×8 細長條 → 沿長軸塞得進、且回傳旋轉角（沿長軸）。"""
+    fits, _, rot = _number_fits(_box(0, 0, 8, 200), 2)   # 垂直長條
+    assert fits is True
+    assert rot is not None
+    assert abs(abs(rot) - 90) < 5   # 沿垂直長軸 ≈ ±90
+
+
+def test_number_fits_tiny_speck_false():
+    """2×2 真碎片 → 連一位數都塞不進（need_h 3.6 > 2）。"""
+    fits, _, _ = _number_fits(_box(0, 0, 2, 2), 1)
+    assert fits is False
+
+
+def test_small_compact_single_digit_cell_gets_number():
+    """死區修復：非最大塊的小方格（~4.5×4.5）+ 一位數 label → 塞得進就給號（原本孤兒）。
+
+    同 output_label 兩個分離 part：大塊 + 遠處小方格。小方格現在也拿到號（兩個 "7"）。
+    """
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(0, 0), (50, 0), (50, 50), (0, 50)]),       # 大塊
+        (_tint(50, 200, 100),  [(80, 80), (84.5, 80), (84.5, 84.5), (80, 84.5)]),  # 小方格，遠處
+    ])
+    label_map = {1: 7, 3: 7}   # 兩 template 同 output_label 7（一位數）
+    palette_final = [{"output_label": 7, "rgb": [247, 167, 132]}]
+    out, _ = regenerate_merged_svg(svg, label_map, _PALETTE_JSON, palette_final)
+    texts = _parse_texts(out)
+    # 大塊 + 小方格各一個 "7" → 兩個（小方格不再是沒號的孤兒）
+    assert texts.count("7") == 2, f"small compact cell should also be numbered: {texts}"
+    # 小方格水平、不旋轉
+    root = ET.fromstring(out)
+    assert all(t.get("transform") is None for t in root.iter(f"{{{_NS}}}text"))
+
+
+def test_small_compact_two_digit_cell_merges():
+    """非最大塊小方格（~4×4）+ 兩位數 label → 塞不進 → 合進緊鄰的大塊。"""
+    palette_json = [
+        {"template_id": 1, "rgb": [240, 240, 240], "pixels": 10},   # 小方格
+        {"template_id": 2, "rgb": [220, 220, 220], "pixels": 5000}, # 緊鄰大塊
+    ]
+    svg = _make_svg([
+        (_tint(240, 240, 240), [(0, 0), (4, 0), (4, 4), (0, 4)]),         # tid1 4×4
+        (_tint(220, 220, 220), [(4, 0), (54, 0), (54, 50), (4, 50)]),     # tid2 大塊緊鄰
+    ])
+    label_map = {1: 53, 2: 7}   # tid1 兩位數 "53"（4×4 塞不進）
+    palette_final = [
+        {"output_label": 53, "rgb": [240, 240, 240]},
+        {"output_label": 7, "rgb": [100, 50, 200]},
+    ]
+    _, records = regenerate_merged_svg(svg, label_map, palette_json, palette_final)
+    assert len(records) >= 1
+    rec = next(r for r in records if r["tiny_template_id"] == 1)
+    assert rec["target_template_id"] == 2   # 合進緊鄰大塊
+
+
+def test_isolated_same_color_specks_union_then_numbered():
+    """同色兩個各自放不下號的小塊、無大鄰居 → 不合併；union 後整塊放得下 → 給一個號。
+
+    守住「合併跑在 union 前、Pass C 跑在 union 後」的跨層級交互：孤立同色小塊不會在
+    union 前被誤合掉，union 成可放號的 part 後正常給號。
+    """
+    svg = _make_svg([
+        (_tint(247, 167, 132), [(10, 10), (14, 10), (14, 13), (10, 13)]),  # 4×3，個別放不下
+        (_tint(247, 167, 132), [(10, 13), (14, 13), (14, 16), (10, 16)]),  # 4×3 緊貼 → union 4×6
+    ])
+    palette_final = [{"output_label": 5, "rgb": [247, 167, 132]}]
+    out, records = regenerate_merged_svg(svg, {1: 5}, _PALETTE_JSON, palette_final)
+    assert records == []          # 無大鄰居 → 不合併
+    texts = _parse_texts(out)
+    assert texts == ["5"]         # union 4×6 放得下 → 給一個號（個別 4×3 沒被丟掉）
