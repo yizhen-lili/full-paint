@@ -107,7 +107,7 @@ def get_sam_predictor() -> Any:
 
 def predict_mask(
     predictor: Any,
-    image_bgr: "np.ndarray | None",
+    image_bgr: np.ndarray | None,
     sam_points: list[dict],
     *,
     image_key: str | None = None,

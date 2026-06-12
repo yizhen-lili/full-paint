@@ -780,7 +780,10 @@ async def _make_batch_with_item(
 ):
     """快速建一個 batch + 一個 item。回 (batch, item)。"""
     from print_batch.models import (
-        PrintBatch, PrintBatchItem, PrintBatchItemSourceEnum, PrintBatchStatusEnum,
+        PrintBatch,
+        PrintBatchItem,
+        PrintBatchItemSourceEnum,
+        PrintBatchStatusEnum,
     )
 
     batch = PrintBatch(
@@ -812,7 +815,10 @@ async def _make_batch_with_item(
 async def _make_paid_order_with_item(db, user, job):
     """建一筆 paid Order + OrderItem 綁 job，給 print_batch_item.source_order_item_id 用。"""
     from orders.models import (
-        Order, OrderItem, OrderStatusEnum, ShippingTypeEnum,
+        Order,
+        OrderItem,
+        OrderStatusEnum,
+        ShippingTypeEnum,
     )
 
     order = Order(
@@ -956,9 +962,9 @@ async def test_batch_delete_partial(client, db):
 @pytest.mark.asyncio
 async def test_cascade_orphan_batch_removed(client, db):
     """production_job cascade delete 後，孤兒 batch（item count = 0）自動刪。"""
-    from production.models import ProductionJob
     from print_batch.models import PrintBatch
     from product.models import Product, ProductStatusEnum, ProductVariant
+    from production.models import ProductionJob
 
     await _make_admin(db)
     j = await _make_job(db, w=30, h=40)
@@ -986,9 +992,9 @@ async def test_cascade_orphan_batch_removed(client, db):
 @pytest.mark.asyncio
 async def test_cascade_keeps_batch_when_other_items_remain(client, db):
     """同 batch 內還有其他 job 的 item → cascade 刪 job 後 batch 保留。"""
-    from production.models import ProductionJob
     from print_batch.models import PrintBatch, PrintBatchItem, PrintBatchItemSourceEnum
     from product.models import Product, ProductStatusEnum, ProductVariant
+    from production.models import ProductionJob
 
     await _make_admin(db)
     j1 = await _make_job(db, w=30, h=40)

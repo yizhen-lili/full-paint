@@ -222,7 +222,11 @@ async def list_sources(db: AsyncSession) -> dict:
             "canvas_w_cm": float(j.canvas_w_cm),
             "canvas_h_cm": float(j.canvas_h_cm),
             "detail": j.detail.value if hasattr(j.detail, "value") else str(j.detail),
-            "difficulty": j.difficulty.value if hasattr(j.difficulty, "value") else str(j.difficulty),
+            "difficulty": (
+                j.difficulty.value
+                if hasattr(j.difficulty, "value")
+                else str(j.difficulty)
+            ),
             "created_at": j.created_at,
             "preview_url": _public_filled_url(j.filled_template_url),
             "is_finalized": j.finalized_at is not None,

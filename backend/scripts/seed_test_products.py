@@ -33,9 +33,8 @@ import print_batch.models  # noqa: F401
 import product.models  # noqa: F401
 import production.models  # noqa: F401
 import users.models  # noqa: F401
-
 from core.config import settings
-from product.models import Product, ProductSeries, ProductVariant
+from product.models import Product, ProductVariant
 from production.models import (
     DetailEnum,
     DifficultyEnum,
@@ -43,7 +42,6 @@ from production.models import (
     ModeEnum,
     ProductionJob,
 )
-
 
 # 既有的 series ids（從 store/docs/dev_db_operations.md）
 SERIES_KYOTO = UUID("6d3a0dc1-6083-4187-b1ee-7ab640d80a58")  # 京都四季 / 風景

@@ -595,9 +595,14 @@ _SVG_TEMPLATE = (
     b'<?xml version="1.0" encoding="UTF-8"?>'
     b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
     b'<rect x="0" y="0" width="100" height="100" fill="white"/>'
-    b'<polygon id="r0" points="0,0 40,0 0,40" fill="#FDE9E0" stroke="#AAAAAA" stroke-width="0.5"/>'   # tid 1
-    b'<polygon id="r1" points="60,0 100,0 60,40" fill="#D8CBF1" stroke="#AAAAAA" stroke-width="0.5"/>'  # tid 2
-    b'<polygon id="r2" points="0,60 40,60 0,100" fill="#CBF1D8" stroke="#AAAAAA" stroke-width="0.5"/>'  # tid 3
+    # tid 1
+    b'<polygon id="r0" points="0,0 40,0 0,40" fill="#FDE9E0" stroke="#AAAAAA" stroke-width="0.5"/>'
+    # tid 2
+    b'<polygon id="r1" points="60,0 100,0 60,40" fill="#D8CBF1" '
+    b'stroke="#AAAAAA" stroke-width="0.5"/>'
+    # tid 3
+    b'<polygon id="r2" points="0,60 40,60 0,100" fill="#CBF1D8" '
+    b'stroke="#AAAAAA" stroke-width="0.5"/>'
     b'<g id="0"><text x="10" y="10">1</text></g>'
     b'<g id="1"><text x="20" y="20">2</text></g>'
     b'<g id="2"><text x="30" y="30">3</text></g>'
@@ -681,8 +686,9 @@ async def test_finalize_groups_by_physical_color(db):
     """3 個 template 對到 2 個物理色 → output_label 應為 {1: 不重複, 2: 不重複}。
     同物理色的 template 拿到同一 label。"""
     from unittest.mock import patch
-    from palette.service import finalize_template
+
     from palette.models import PaletteColorMapping
+    from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
     # template 1, 3 → COLOR_A；template 2 → COLOR_B
@@ -711,8 +717,9 @@ async def test_finalize_largest_area_gets_label_1(db):
     """COLOR_A 對 template 1+3（pixels 4000+2500=6500），COLOR_B 對 template 2（3500）
     → COLOR_A 面積大 → label 1，COLOR_B → label 2"""
     from unittest.mock import patch
-    from palette.service import finalize_template
+
     from palette.models import PaletteColorMapping
+    from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
     job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
@@ -736,6 +743,7 @@ async def test_finalize_largest_area_gets_label_1(db):
 async def test_finalize_uploads_svg_and_palette_final(db):
     """確認 template_final.svg 與 palette_final.json 都被上傳到正確路徑。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
@@ -779,6 +787,7 @@ async def test_finalize_uploads_svg_and_palette_final(db):
 async def test_finalize_updates_job_columns(db):
     """job.template_final_url / palette_final_url / finalized_at 都該被寫入。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
@@ -800,8 +809,9 @@ async def test_finalize_updates_job_columns(db):
 async def test_finalize_idempotent(db):
     """重跑 finalize → 結果一致、不爆。"""
     from unittest.mock import patch
-    from palette.service import finalize_template
+
     from palette.models import PaletteColorMapping
+    from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
     job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
@@ -852,11 +862,19 @@ async def test_finalize_generates_filled_template_final_png(db):
     db.add(job)
     await db.commit()
     await db.refresh(job)
-    job.svg_url = f"gs://test-bucket/production_jobs/{job.id}/template.svg"
-    job.snapped_rgb_url = f"gs://test-bucket/production_jobs/{job.id}/snapped_rgb.png"
+    job.svg_url = (
+        f"gs://test-bucket/production_jobs/{job.id}/template.svg"
+    )
+    job.snapped_rgb_url = (
+        f"gs://test-bucket/production_jobs/{job.id}/snapped_rgb.png"
+    )
 
-    pc_a = (await db.execute(select(PhysicalColor).where(PhysicalColor.code == "FF-A"))).scalar_one()
-    pc_b = (await db.execute(select(PhysicalColor).where(PhysicalColor.code == "FF-B"))).scalar_one()
+    pc_a = (
+        await db.execute(select(PhysicalColor).where(PhysicalColor.code == "FF-A"))
+    ).scalar_one()
+    pc_b = (
+        await db.execute(select(PhysicalColor).where(PhysicalColor.code == "FF-B"))
+    ).scalar_one()
     # template 1, 3 → custom_a；template 2 → custom_b
     for tid, color in [(1, pc_a), (2, pc_b), (3, pc_a)]:
         # algorithm_rgb 必須跟 palette_json 同步（pixel-replacement 用這個 key 查 mapping）
@@ -928,6 +946,7 @@ async def test_finalize_skips_filled_final_when_no_snapped_url(db):
     """job.snapped_rgb_url=None → 不產 filled_template_final.png（best-effort skip）。
     其他 finalize 產物（template_final.svg、palette_final.json）正常產生。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
@@ -954,8 +973,8 @@ async def test_finalize_skips_filled_final_when_no_snapped_url(db):
 @pytest.mark.asyncio
 async def test_finalize_no_svg_url_raises(db):
     """job.svg_url=None → BadRequestError（呼叫端 complete_mappings 會吞掉）。"""
-    from palette.service import finalize_template
     from core.exceptions import BadRequestError
+    from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
     job = ProductionJob(
@@ -995,11 +1014,12 @@ async def test_complete_mappings_finalize_failure_does_not_break(db, client: Asy
 async def test_update_mapping_after_finalize_clears_finalized_at(client: AsyncClient, db):
     """finalized job 改 physical_color_id → finalized_at 被清，URL 欄位保留。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
 
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
-    color_a = await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_A)
     color_b = await _create_color(db, COLOR_B)
     job = await _setup_job_for_finalize(db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")])
 
@@ -1029,6 +1049,7 @@ async def test_update_mapping_after_finalize_clears_finalized_at(client: AsyncCl
 async def test_update_mapping_with_same_color_is_noop(client: AsyncClient, db):
     """改成同色（no-op）→ finalized_at 不被清。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
 
     await _make_admin(client, db)
@@ -1062,13 +1083,14 @@ async def test_complete_mappings_after_change_reassigns_output_label(
 ):
     """改 mapping 後重跑 complete → output_label 依新 mapping 重排。"""
     from unittest.mock import patch
-    from palette.service import finalize_template
+
     from palette.models import PaletteColorMapping
+    from palette.service import finalize_template
 
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
     color_a = await _create_color(db, COLOR_A)
-    color_b = await _create_color(db, COLOR_B)
+    await _create_color(db, COLOR_B)
     await _seed_settings(db)
     # 初始：template 1+3 → COLOR_A（pixels 4000+2500=6500，label 1），
     # template 2 → COLOR_B（3500，label 2）
@@ -1107,6 +1129,7 @@ async def test_complete_mappings_after_change_reassigns_output_label(
 async def test_finalize_first_time_no_archive(db):
     """全新 job 第一次 finalize → original_* 全部仍是 None；latest URLs 已寫。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
@@ -1130,6 +1153,7 @@ async def test_finalize_first_time_no_archive(db):
 async def test_finalize_second_time_archives_original(db):
     """第二次 finalize → 把上一次的 latest 搬到 archive；original_* 寫入。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
@@ -1174,6 +1198,7 @@ async def test_finalize_second_time_archives_original(db):
 async def test_finalize_third_time_keeps_original_untouched(db):
     """第三次 finalize → original 仍是「第一次」的內容、不被覆蓋。"""
     from unittest.mock import patch
+
     from palette.service import finalize_template
     await _create_color(db, COLOR_A)
     await _create_color(db, COLOR_B)
@@ -1234,8 +1259,14 @@ async def test_consolidate_cross_color_collision_skips_label(db):
         b'<?xml version="1.0" encoding="utf-8"?>'
         b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">'
     )
-    svg += f'<polygon points="0,0 40,0 40,40 0,40" fill="{_tint_hex([255, 0, 0])}" stroke="#AAA" stroke-width="1"/>'.encode()
-    svg += f'<polygon points="40,0 80,0 80,40 40,40" fill="{_tint_hex([0, 0, 255])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += (
+        f'<polygon points="0,0 40,0 40,40 0,40" fill="{_tint_hex([255, 0, 0])}" '
+        f'stroke="#AAA" stroke-width="1"/>'
+    ).encode()
+    svg += (
+        f'<polygon points="40,0 80,0 80,40 40,40" fill="{_tint_hex([0, 0, 255])}" '
+        f'stroke="#AAA" stroke-width="1"/>'
+    ).encode()
     svg += b'</svg>'
 
     out, _ = regenerate_merged_svg(svg, {1: 1, 2: 2}, palette_json, palette_final)
@@ -1253,7 +1284,7 @@ async def test_consolidate_cross_color_collision_skips_label(db):
 @pytest.mark.asyncio
 async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
     """微小色塊（area < 60）且色差小的鄰居 → auto-merge。merge_records 紀錄。"""
-    from palette.svg_consolidate import regenerate_merged_svg, _tint_hex
+    from palette.svg_consolidate import _tint_hex, regenerate_merged_svg
     # tid 1 是大紅色塊；tid 2 是微小淡紅（色差小）緊貼 tid 1；tid 3 是遠處大藍
     palette_json = [
         {"template_id": 1, "rgb": [255, 0, 0], "pixels": 6000, "percent": 60.0},
@@ -1265,12 +1296,25 @@ async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
         {"output_label": 2, "rgb": [240, 30, 30]},
         {"output_label": 3, "rgb": [0, 0, 255]},
     ]
-    svg = b'<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="200" height="100">'
-    svg += f'<polygon id="r1" points="0,0 60,0 60,60 0,60" fill="{_tint_hex([255, 0, 0])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg = (
+        b'<?xml version="1.0" encoding="utf-8"?>'
+        b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" '
+        b'width="200" height="100">'
+    )
+    svg += (
+        f'<polygon id="r1" points="0,0 60,0 60,60 0,60" fill="{_tint_hex([255, 0, 0])}" '
+        f'stroke="#AAA" stroke-width="1"/>'
+    ).encode()
     # 微小淡紅（area=4，緊貼大紅）
-    svg += f'<polygon id="r2" points="60,0 62,0 62,2 60,2" fill="{_tint_hex([240, 30, 30])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += (
+        f'<polygon id="r2" points="60,0 62,0 62,2 60,2" fill="{_tint_hex([240, 30, 30])}" '
+        f'stroke="#AAA" stroke-width="1"/>'
+    ).encode()
     # 遠處大藍
-    svg += f'<polygon id="r3" points="120,0 180,0 180,60 120,60" fill="{_tint_hex([0, 0, 255])}" stroke="#AAA" stroke-width="1"/>'.encode()
+    svg += (
+        f'<polygon id="r3" points="120,0 180,0 180,60 120,60" fill="{_tint_hex([0, 0, 255])}" '
+        f'stroke="#AAA" stroke-width="1"/>'
+    ).encode()
     svg += b'</svg>'
 
     _out, merge_records = regenerate_merged_svg(
@@ -1289,12 +1333,13 @@ async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
 async def test_confirm_pending_merges_dispatches_post_process(client: AsyncClient, db):
     """confirm 把 pending_auto_merges 轉成 per-polygon merge_color batch ops，
     透過 post_process 派給 Celery，**不**直接改 palette_color_mappings。"""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
+
     from palette.service import finalize_template
 
     await _make_admin(client, db)
     await _login(client, ADMIN_USER["email"], ADMIN_USER["password"])
-    color_a = await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_A)
     color_b = await _create_color(db, COLOR_B)
     color_b_id = color_b.id  # cache before session expire
     await _seed_settings(db)

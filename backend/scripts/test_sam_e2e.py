@@ -65,7 +65,7 @@ def main() -> int:
     print(f"    OK，cookie={list(sess.cookies.keys())}")
 
     # ── 2. 上傳圖片到 Firebase（簽名 URL 直傳）────────────────────────────────
-    print(f"[2] 取上傳簽名 URL ...")
+    print("[2] 取上傳簽名 URL ...")
     img = Image.open(image_path)
     img_w, img_h = img.size
     content_type = "image/jpeg" if image_path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
@@ -87,7 +87,7 @@ def main() -> int:
     with open(image_path, "rb") as f:
         r = requests.put(upload_url, data=f.read(), headers={"Content-Type": content_type})
     r.raise_for_status()
-    print(f"    OK")
+    print("    OK")
 
     # ── 3. 註冊圖片到 DB ─────────────────────────────────────────────────────
     print(f"[3] 註冊圖片 {img_w}×{img_h} ...")
@@ -157,7 +157,7 @@ def main() -> int:
             print(f"    [{elapsed:3d}s] status={status}")
             last_status = status
         if status == "completed":
-            print(f"\n[OK] SAM e2e 完成！")
+            print("\n[OK] SAM e2e 完成！")
             print(f"    svg_url             = {job.get('svg_url')}")
             print(f"    filled_template_url = {job.get('filled_template_url')}")
             print(f"    snapped_rgb_url     = {job.get('snapped_rgb_url')}")

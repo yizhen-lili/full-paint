@@ -19,7 +19,7 @@ def _make_svg(labels: list[int]) -> bytes:
         f'<polygon id="r0" points="0,0 10,0 0,10" fill="#ff0000"/>'
         f'{inner}'
         f'</svg>'
-    ).encode("utf-8")
+    ).encode()
 
 
 def _text_contents(svg_bytes: bytes) -> list[str]:
@@ -56,7 +56,7 @@ def test_renumber_preserves_non_numeric_text():
         f'<text x="0" y="10">5</text>'
         f'<text x="0" y="20"> </text>'
         f'</svg>'
-    ).encode("utf-8")
+    ).encode()
     out = renumber_svg_labels(svg, {5: 99})
     contents = _text_contents(out)
     assert contents[0] == "標題"  # 非數字保留

@@ -13,9 +13,8 @@ from custom.models import (
     CustomRequestMessage,
     CustomRequestStatusEnum,
 )
-from custom.service import _hash_token, expire_quotes_async
+from custom.service import expire_quotes_async
 from notifications.models import AdminNotification
-from orders.models import OrderItem
 from product.models import Product
 from production.models import ProductionJob
 

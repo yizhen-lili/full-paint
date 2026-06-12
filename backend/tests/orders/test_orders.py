@@ -919,7 +919,9 @@ async def test_create_shipment_ecpay_mock(client, db):
     data = res.json()
     # dry-run mode: tracking 以 DRY 開頭（13 字 CVSPaymentNo 格式），ecpay_logistics_id 以 MOCK 開頭
     assert data["tracking_number"].startswith("DRY"), f"got tracking: {data['tracking_number']}"
-    assert data["ecpay_logistics_id"].startswith("MOCK"), f"got logistics_id: {data['ecpay_logistics_id']}"
+    assert data["ecpay_logistics_id"].startswith("MOCK"), (
+        f"got logistics_id: {data['ecpay_logistics_id']}"
+    )
 
     order_res = await db.execute(select(Order).where(Order.id == order_id))
     order = order_res.scalar_one()

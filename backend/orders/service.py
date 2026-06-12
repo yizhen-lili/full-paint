@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -629,7 +628,6 @@ async def checkout_preview(
         raise BadRequestError("購物車為空")
 
     subtotal = Decimal(str(cart["subtotal"]))
-    total_qty = sum(i["quantity"] for i in cart["items"])
 
     # 拆「一般商品」與「客製」 — 免運門檻只算一般商品
     non_custom_items = [i for i in cart["items"] if not i.get("is_custom")]
@@ -2594,7 +2592,11 @@ async def handle_ecpay_webhook(db: AsyncSession, payload: dict) -> str:
         hub.publish_to_customer(shipment.order_id, "shipment_status_changed", {
             "order_id": str(shipment.order_id),
             "shipment_id": str(shipment.id),
-            "shipment_status": shipment.status.value if hasattr(shipment.status, "value") else str(shipment.status),
+            "shipment_status": (
+                shipment.status.value
+                if hasattr(shipment.status, "value")
+                else str(shipment.status)
+            ),
             "rtn_code": rtn_code,
             "rtn_msg": rtn_msg,
         })

@@ -34,10 +34,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import core._windows_compat  # noqa: F401, E402
-from sqlalchemy import select, text  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
 
+import core._windows_compat  # noqa: F401, E402
 from core.config import settings  # noqa: E402
 
 

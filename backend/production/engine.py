@@ -739,7 +739,7 @@ __all__ = [
 
 def _smoke_test():
     """快速本機驗證：用 paint-by-number/images/Mom.jpg 跑入門難度 standard。"""
-    sample = _PBN_SRC.parent / "images" / "Mom.jpg"
+    sample = _HERE.parents[2] / "paint-by-number" / "images" / "Mom.jpg"
     if not sample.exists():
         print(f"sample not found: {sample}")
         return
