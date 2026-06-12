@@ -78,9 +78,10 @@ _COLLISION_GRID_PX = max(
 )
 
 # 微小色塊偵測：面積 < 此 OR bbox 短邊 < _TINY_POLYGON_SHORT_EDGE 視為微小、
-# 自動合併到色差最近的鄰居（SVG 層級視覺合併，DB 不動）
-_TINY_POLYGON_AREA = 60.0
-_TINY_POLYGON_SHORT_EDGE = 5.0
+# 自動合併到（同實體色）色差最近的鄰居（SVG 層級視覺合併，DB 不動）。
+# 門檻調嚴（60→25 / 5→3）：原本合併建議吃掉太多小格子，現只有真碎片才建議合併。
+_TINY_POLYGON_AREA = 25.0
+_TINY_POLYGON_SHORT_EDGE = 3.0
 # auto-merge 候選鄰居池：取距離最近的 K 個再用 LAB 色差選最佳
 _MERGE_NEIGHBOR_TOPK = 5
 # LAB 色差超過此值 → 不合（差太多就不該被「自動合進去」）
