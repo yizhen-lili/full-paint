@@ -152,6 +152,12 @@ const filledTemplateUrl = computed(() => {
     ?? null
 })
 
+// 目前顯示的是否已是「實體色版」(filled_template_final.png)。為 true 時 canvas 不可
+// 再做 algo→physical 客戶端替換（會把相近實體色誤併、看起來像色塊被覆蓋）。
+const filledIsPhysical = computed<boolean>(() =>
+  !isFinalStale.value && !!jobData.value?.filled_template_final_url,
+)
+
 // finalize 後合併編號 (output_label) 的「不重複數量」— 給 helper text 顯示「1 ~ N 號」
 const uniqueOutputLabelCount = computed<number>(() => {
   const labels = new Set<number>()
@@ -544,6 +550,7 @@ async function onPostProcessSubmit(operations: BatchOperation[]) {
       <PalettePreviewCanvas
         :image-url="filledTemplateUrl"
         :mappings="mappings"
+        :already-physical="filledIsPhysical"
         @pick-template="onCanvasPick"
       />
     </Card>

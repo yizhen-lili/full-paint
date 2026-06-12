@@ -438,6 +438,34 @@ def test_render_filled_png_uses_template_geometry():
     assert tuple(arr[25, 90]) == (100, 50, 200)
 
 
+def test_font_size_capped_by_inradius_for_thin_region():
+    """細長大面積區塊的編號字級被「內接半徑」上限壓小（避免溢出到鄰格）；
+    同面積的方塊區塊不受此限、字級較大。修「數字偏移到別格」。"""
+    # viewBox 600x200：A=細長(580x10, inradius≈5)、B=方塊(76x76, inradius≈38)，面積相近(~5800)
+    svg = (
+        f'{_HEADER}'
+        f'<svg xmlns="{_NS}" viewBox="0 0 600 200">'
+        f'<rect x="0" y="0" width="600" height="200" fill="white"/>'
+        f'<polygon id="r0" points="10,20 590,20 590,30 10,30" '
+        f'fill="{_tint(247, 167, 132)}" stroke="#AAA" stroke-width="1"/>'
+        f'<polygon id="r1" points="10,60 86,60 86,136 10,136" '
+        f'fill="{_tint(100, 50, 200)}" stroke="#AAA" stroke-width="1"/>'
+        f'</svg>'
+    ).encode()
+    palette_final = [
+        {"output_label": 1, "rgb": [247, 167, 132]},
+        {"output_label": 2, "rgb": [100, 50, 200]},
+    ]
+    out, _ = regenerate_merged_svg(
+        svg, {1: 1, 2: 2}, _PALETTE_JSON, palette_final, enable_tiny_merge=False,
+    )
+    root = ET.fromstring(out)
+    fonts = {t.text: float(t.get("font-size")) for t in root.iter(f"{{{_NS}}}text")}
+    assert "1" in fonts and "2" in fonts, f"both labels should be placed: {fonts}"
+    # 細長 A(label1) 字級 < 方塊 B(label2)（被 inradius 壓小）
+    assert fonts["1"] < fonts["2"], f"thin region font should be capped smaller: {fonts}"
+
+
 def test_text_elements_have_light_font_weight():
     """每個 <text> 都應該有 font-weight=300（Light）讓塗色者讀起來不刺眼。"""
     svg = _make_svg([

@@ -44,6 +44,12 @@ _OUTPUT_TINT_RATIO = 0.10
 _MIN_FONT_SIZE = 5.0
 _MAX_FONT_SIZE = 14.0
 
+# 字級再以「放置點到邊界距離(內接半徑) × 此比例」為上限 —— 確保數字塞得進自己的
+# 區塊、不會溢出到鄰格（原本字級只看面積、不看形狀，細長大面積區塊會放超大字溢出）。
+# 1.6：數字置中(dominant-baseline central)，2 位數半寬/半高 ≈ 0.55×font，需 ≤ inradius
+# → font ≤ ~1.8×inradius；取 1.6 留邊距。極細區塊 floor 在 MIN（不再放超大字）。
+_FONT_FIT_RATIO = 1.6
+
 # 同一 output_label 的小碎片，bbox 短邊 < 此值且不是該色最大塊 → 不放標籤
 # （太細長的區域硬塞標籤會超出邊界；最大塊永遠標，確保每色 ≥ 1 個 label）
 _MIN_EXTRA_PART_BBOX = 6.0
@@ -512,14 +518,20 @@ def regenerate_merged_svg(
             try:
                 tol = max(1.0, (geom.area ** 0.5) / 100.0)
                 pt = polylabel(geom, tolerance=tol)
-                cx, cy = pt.x, pt.y
             except Exception:  # noqa: BLE001
-                centroid = geom.centroid
-                cx, cy = centroid.x, centroid.y
+                pt = geom.centroid
+            cx, cy = pt.x, pt.y
 
-            # 篩選 1：font size cap
+            # 篩選 1：font size cap —— 面積 + MAX + 「內接半徑」上限。
+            # inradius = 放置點到邊界(含洞)的距離 = 該點能容納的最大內接圓半徑；
+            # 字級 ≤ inradius×ratio → 數字塞得進區塊、不溢到鄰格（修「大面積細長區塊放
+            # 超大字、偏移到別格」）。floor 在 MIN：極細區塊頂多用最小字，不再放超大字。
+            inradius = pt.distance(geom.boundary)
             area_sqrt = max(geom.area, 1.0) ** 0.5
-            font_size = max(_MIN_FONT_SIZE, min(area_sqrt / 8.0, _MAX_FONT_SIZE))
+            font_size = max(
+                _MIN_FONT_SIZE,
+                min(area_sqrt / 8.0, _MAX_FONT_SIZE, inradius * _FONT_FIT_RATIO),
+            )
 
             # 篩選 3：碰撞偵測（只比對候選點所在格 + 周圍 8 格，O(1) 均攤）。
             # - 跨編號：font 門檻 + 絕對下限 _COLLISION_MIN_GAP_PX（不同數字不疊字）

@@ -9,6 +9,10 @@ const props = defineProps<{
   /** filled_template 公開 URL（後端產出，無需 signed URL）*/
   imageUrl: string | null
   mappings: PaletteMapping[]
+  /** imageUrl 是否已是「實體色版」(finalize 後的 filled_template_final.png)。
+   * 為 true 時不可再做 algo→physical 客戶端替換 —— 那會把相近的不同實體色用「最近
+   * algorithm 色」誤併到同一色（看起來像色塊被覆蓋）。此時直接顯示原圖、隱藏切換鈕。 */
+  alreadyPhysical?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -123,6 +127,11 @@ function _invalidatePhysicalCache() {
 }
 
 async function applyPhysical() {
+  // 已是實體色版 → 不可再做 algo→physical 替換（會誤併相近實體色）；直接顯示原圖。
+  if (props.alreadyPhysical) {
+    applyOriginal()
+    return
+  }
   if (!canvasRef.value || !originalImageData) return
   const ctx = canvasRef.value.getContext('2d')
   if (!ctx) return
@@ -159,6 +168,15 @@ watch(() => props.imageUrl, () => {
   loadImage()
 }, { immediate: false })
 
+// imageUrl 變成「已是實體色版」時，強制回演算法（=原圖）模式並重繪原圖，避免殘留
+// 的 physical 模式對已是實體色的圖再做替換（會誤併色塊）。
+watch(() => props.alreadyPhysical, (ap) => {
+  if (ap && mode.value === 'physical') {
+    mode.value = 'algorithm'
+    applyOriginal()
+  }
+}, { immediate: false })
+
 onMounted(() => loadImage())
 
 function onClick(e: MouseEvent) {
@@ -187,7 +205,15 @@ function onClick(e: MouseEvent) {
   <div class="space-y-2">
     <div class="flex items-center justify-between">
       <p class="text-[12px] text-ink-muted">點圖片可選色塊</p>
+      <!-- 已是實體色版（finalize 後）→ 不提供客戶端替換（會誤併色塊），只標示 -->
+      <span
+        v-if="alreadyPhysical"
+        class="text-[11px] text-ink-muted inline-flex items-center gap-1"
+      >
+        <Eye :size="12" :stroke-width="1.5" />實體色版
+      </span>
       <button
+        v-else
         type="button"
         class="text-[12px] inline-flex items-center gap-1 text-ink-muted hover:text-ink-strong transition-colors disabled:opacity-50 disabled:cursor-wait"
         :disabled="rendering"
