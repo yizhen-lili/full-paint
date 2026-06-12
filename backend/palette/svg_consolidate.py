@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import xml.etree.ElementTree as ET  # nosec B405 — 僅解析自家 pbn_gen 產生的 SVG
 from collections import defaultdict
 
@@ -77,15 +78,19 @@ _COLLISION_GRID_PX = max(
     2 * _MAX_FONT_SIZE * _COLLISION_TOLERANCE,
 )
 
-# 微小色塊偵測：面積 < 此 OR bbox 短邊 < _TINY_POLYGON_SHORT_EDGE 視為微小、
-# 自動合併到（同實體色）色差最近的鄰居（SVG 層級視覺合併，DB 不動）。
-# 門檻調嚴（60→25 / 5→3）：原本合併建議吃掉太多小格子，現只有真碎片才建議合併。
-_TINY_POLYGON_AREA = 25.0
-_TINY_POLYGON_SHORT_EDGE = 3.0
-# auto-merge 候選鄰居池：取距離最近的 K 個再用 LAB 色差選最佳
-_MERGE_NEIGHBOR_TOPK = 5
-# LAB 色差超過此值 → 不合（差太多就不該被「自動合進去」）
-_MERGE_MAX_LAB_DIST = 30.0
+# 「短邊 < 此值」= 連最小字（置中或沿長軸旋轉）都放不下號。3.5 ≈ 0.7×_MIN_FONT_SIZE
+# （字形高約 0.7×font）。細長區塊用旋轉放號（Feature 1）需 S ≥ 此；真碎片合併需 < 此。
+_NUMBER_MIN_SHORT_EDGE = 3.5
+# 長寬比 ≥ 此 → 視為細長，數字旋轉沿長軸放（字級用短邊算）
+_ELONGATED_ASPECT = 2.0
+# 細長區塊字級 = 短邊 × 此（數字高 ~0.7×font 橫跨短邊 → font ≤ ~1.43×短邊；取 1.2 留邊距）
+_STRIP_FONT_RATIO = 1.2
+# 真碎片合併判定：短邊 < _NUMBER_MIN_SHORT_EDGE（轉了也放不下號）AND 面積 < 此
+# （排除細長條 —— 細長條面積大、改走旋轉放號不合併）。合進幾何最近鄰居，可跨實體色。
+_SPECK_MAX_AREA = 50.0
+# 碎片只在「最近鄰居距離 ≤ 此」時才合（相鄰碎片 distance≈0）。孤立碎片（四周是
+# 背景、最近 large 在遠處）不合，避免合進遠方不相干的錯色 sliver。
+_SPECK_MERGE_MAX_DIST = 5.0
 
 
 def _normalize_hex(s: str | None) -> str | None:
@@ -133,101 +138,101 @@ def _rgb_from_palette(palette_json: list[dict], template_id: int) -> list[int] |
 
 def _merge_tiny_polygons(
     all_polygons: list[dict],
-    label_map: dict[int, int],
 ) -> list[dict]:
-    """微小色塊找鄰居中色差最近者，改 template_id（in-memory only，DB 不動）。
+    """真碎片（短到連旋轉也放不下號 + 面積小）合進「幾何最近」鄰居，改 template_id。
 
-    **只在同實體色（同 output_label）內合併** — 不同實體色的小塊絕不被自動合併，
-    避免「不是同實體色的顏色也被合併」。同實體色相鄰塊本就會被 unary_union 合併，
-    此處的合併是把微小塊歸併到同色較大 template，簡化底層 template 結構。
+    碎片 = `short_edge < _NUMBER_MIN_SHORT_EDGE`（放不下號）AND `area < _SPECK_MAX_AREA`
+    （排除細長條 —— 細長條面積大，改走 Pass C 旋轉放號、不在此合併）。
+    合進**幾何距離最近**的非碎片鄰居，**可跨實體色**（碎片太小、色差可忽略），
+    讓塗色者不再看到「放不下號」的孤兒小點。
 
     Algorithm（O(n²) 對典型 SVG 規模可接受）：
-    1. 收 large_polys = 面積 ≥ _TINY_POLYGON_AREA 且 short_edge ≥ _TINY_POLYGON_SHORT_EDGE
-    2. 對每個 tiny polygon：
-       a. 候選只取「與 tiny 同 output_label（= 同實體色）」的 large
-       b. 計算與候選的 shapely distance（0 = 共享邊界），取最近 _MERGE_NEIGHBOR_TOPK 個
-       c. 在候選池內取與 tiny 色差最小（LAB）的鄰居
-       d. 若色差 < _MERGE_MAX_LAB_DIST → 改 tiny.template_id = neighbor.template_id
-          並紀錄 merge_record
-    3. 回 merge_records list（給 finalize_template 寫進 pending_auto_merges）
+    1. 分 specks（碎片）/ large（非碎片，合併目標池）
+    2. 每個 speck → 取與 large 的 shapely distance 最近者（距離同→面積大破 tie），
+       改 speck.template_id = nearest.template_id 並紀錄 merge_record
+    3. 回 merge_records（給 finalize_template 寫進 pending_auto_merges）
 
     Side effect：直接 mutate all_polygons[i]["template_id"]
     """
-    try:
-        from color.service import lab_distance  # noqa: PLC0415
-    except ImportError:
-        logger.warning("color.service.lab_distance 不可用 — 跳過 tiny merge")
-        return []
-
-    tiny_indexes = []
+    speck_indexes = []
     large_polys = []
     for i, p in enumerate(all_polygons):
         shp = p["shp"]
         minx, miny, maxx, maxy = shp.bounds
         short_edge = min(maxx - minx, maxy - miny)
-        if shp.area < _TINY_POLYGON_AREA or short_edge < _TINY_POLYGON_SHORT_EDGE:
-            tiny_indexes.append(i)
+        if short_edge < _NUMBER_MIN_SHORT_EDGE and shp.area < _SPECK_MAX_AREA:
+            speck_indexes.append(i)
         else:
             large_polys.append(p)
 
-    if not tiny_indexes or not large_polys:
+    if not speck_indexes or not large_polys:
         return []
 
     merge_records: list[dict] = []
-    for idx in tiny_indexes:
-        tiny = all_polygons[idx]
-        tiny_rgb = tiny.get("raw_rgb")
-        if tiny_rgb is None:
-            continue
-        tiny_label = label_map.get(tiny["template_id"])
-        # 只在「同實體色（同 output_label）」內找鄰居 — 不同實體色絕不合併
-        dist_pairs: list[tuple[float, dict]] = []
+    for idx in speck_indexes:
+        speck = all_polygons[idx]
+        # 幾何最近的 large（可跨色）；距離相同用面積大者（較穩定的塗色目標）
+        best = None
+        best_key = (float("inf"), 0.0)
         for large in large_polys:
-            if label_map.get(large["template_id"]) != tiny_label:
-                continue
             try:
-                d = tiny["shp"].distance(large["shp"])
+                d = speck["shp"].distance(large["shp"])
             except Exception:  # noqa: BLE001, S112  # nosec B112 — 個別 polygon 距離失敗就跳過
                 continue
-            dist_pairs.append((d, large))
-        if not dist_pairs:
-            continue
-
-        dist_pairs.sort(key=lambda x: x[0])
-        topk = [c for _, c in dist_pairs[:_MERGE_NEIGHBOR_TOPK]]
-
-        best = None
-        best_lab = float("inf")
-        for cand in topk:
-            cand_rgb = cand.get("raw_rgb")
-            if cand_rgb is None:
-                continue
-            lab = lab_distance(tiny_rgb, cand_rgb)
-            if lab < best_lab:
-                best_lab = lab
-                best = cand
-
-        if best is None or best_lab > _MERGE_MAX_LAB_DIST:
-            continue
-        if best["template_id"] == tiny["template_id"]:
+            key = (d, -large["shp"].area)
+            if key < best_key:
+                best_key = key
+                best = large
+        # 孤立碎片（最近 large 太遠）不合，避免合進遠方錯色；同 template_id 不用合
+        if (
+            best is None
+            or best_key[0] > _SPECK_MERGE_MAX_DIST
+            or best["template_id"] == speck["template_id"]
+        ):
             continue
 
         merge_records.append({
             # polygon_id 是「per-polygon merge」(走既有 post_process merge_color
             # op) 的關鍵 — 沒有它 confirm 只能 fallback 到 per-template_id 邏輯
-            "polygon_id": tiny.get("polygon_id"),
-            "tiny_template_id": int(tiny["template_id"]),
+            "polygon_id": speck.get("polygon_id"),
+            "tiny_template_id": int(speck["template_id"]),
             "target_template_id": int(best["template_id"]),
-            "tiny_area": float(tiny["shp"].area),
+            "tiny_area": float(speck["shp"].area),
         })
-        tiny["template_id"] = best["template_id"]
+        speck["template_id"] = best["template_id"]
 
     if merge_records:
         logger.info(
-            "svg consolidate: auto-merged %d tiny polygons into same-physical-color neighbors",
+            "svg consolidate: auto-merged %d specks into nearest neighbor",
             len(merge_records),
         )
     return merge_records
+
+
+def _oriented_dims(geom) -> tuple[float, float, float]:
+    """用 minimum_rotated_rectangle 回 (長邊長 L, 短邊長 S, 長邊角度 θ 度數 [-90,90])。
+
+    給 Pass C 判斷區塊是否細長 + 把數字旋轉到沿長軸方向。失敗 fallback 用 bbox。
+    """
+    try:
+        coords = list(geom.minimum_rotated_rectangle.exterior.coords)  # 5 點（首尾同）
+        if len(coords) < 4:
+            raise ValueError("degenerate mrr")
+        e1 = (coords[1][0] - coords[0][0], coords[1][1] - coords[0][1])
+        e2 = (coords[2][0] - coords[1][0], coords[2][1] - coords[1][1])
+        l1, l2 = math.hypot(*e1), math.hypot(*e2)
+        (long_len, short_len, edge) = (l1, l2, e1) if l1 >= l2 else (l2, l1, e2)
+        theta = math.degrees(math.atan2(edge[1], edge[0]))
+        # 正規化到 [-90, 90]（避免數字上下顛倒）
+        if theta > 90:
+            theta -= 180
+        elif theta < -90:
+            theta += 180
+        return long_len, short_len, theta
+    except Exception:  # noqa: BLE001 — 幾何退化 → 用 bbox 當 fallback
+        minx, miny, maxx, maxy = geom.bounds
+        w, h = maxx - minx, maxy - miny
+        return (w, h, 0.0) if w >= h else (h, w, 90.0)
 
 
 def _parse_points(pts: str) -> list[tuple[float, float]]:
@@ -364,10 +369,10 @@ def regenerate_merged_svg(
         if sw:
             sample_stroke_width = sw
 
-    # ── Step 3b：微小色塊 auto-merge（in-memory only，只在同實體色內）
+    # ── Step 3b：真碎片 auto-merge（in-memory only，合進幾何最近鄰居、可跨色）
     # enable_tiny_merge=False 時跳過、產「未合併版」給對比 UI 當主版本
     merge_records = (
-        _merge_tiny_polygons(all_polygons, label_map) if enable_tiny_merge else []
+        _merge_tiny_polygons(all_polygons) if enable_tiny_merge else []
     )
 
     # ── Step 3c：建 polygons_by_label（已套用 merge 後的 template_id）
@@ -512,7 +517,22 @@ def regenerate_merged_svg(
             # 篩選 2：bbox 短邊太小且非最大塊 → skip
             minx, miny, maxx, maxy = geom.bounds
             short_edge = min(maxx - minx, maxy - miny)
-            if not is_largest and short_edge < _MIN_EXTRA_PART_BBOX:
+
+            # 方向：min rotated rect → 長邊 L、短邊 S、長軸角度 θ。
+            # elongated（細長）= 長寬比夠大且短邊夠寬放得下旋轉的號 → 數字沿長軸旋轉放。
+            long_dim, short_dim, theta = _oriented_dims(geom)
+            elongated = (
+                long_dim >= _ELONGATED_ASPECT * max(short_dim, 1e-6)
+                and short_dim >= _NUMBER_MIN_SHORT_EDGE
+            )
+
+            # 篩選 2：太細的「非最大塊」跳過；但 elongated（會旋轉放號、不溢出）不跳，
+            # 讓細長條也能拿到一個沿著它的號。
+            if (
+                not is_largest
+                and short_edge < _MIN_EXTRA_PART_BBOX
+                and not elongated
+            ):
                 continue
 
             # polylabel 找穩定的內部點
@@ -523,16 +543,25 @@ def regenerate_merged_svg(
                 pt = geom.centroid
             cx, cy = pt.x, pt.y
 
-            # 篩選 1：font size cap —— 面積 + MAX + 「內接半徑」上限。
-            # inradius = 放置點到邊界(含洞)的距離 = 該點能容納的最大內接圓半徑；
-            # 字級 ≤ inradius×ratio → 數字塞得進區塊、不溢到鄰格（修「大面積細長區塊放
-            # 超大字、偏移到別格」）。floor 在 MIN：極細區塊頂多用最小字，不再放超大字。
-            inradius = pt.distance(geom.boundary)
+            # 篩選 1：font size cap。
             area_sqrt = max(geom.area, 1.0) ** 0.5
-            font_size = max(
-                _MIN_FONT_SIZE,
-                min(area_sqrt / 8.0, _MAX_FONT_SIZE, inradius * _FONT_FIT_RATIO),
-            )
+            if elongated:
+                # 細長 → 數字旋轉沿長軸；字級用短邊（數字高 ~0.7font 橫跨短邊，
+                # 沿長軸方向長度充足）→ 不溢出、放得進細長條。
+                rotate_deg: float | None = theta
+                font_size = max(
+                    _MIN_FONT_SIZE,
+                    min(area_sqrt / 8.0, _MAX_FONT_SIZE, short_dim * _STRIP_FONT_RATIO),
+                )
+            else:
+                # 方塊/compact → 水平，字級用「內接半徑」上限（數字塞得進、不溢到鄰格）。
+                # inradius = 放置點到邊界(含洞)距離 = 該點最大內接圓半徑。
+                rotate_deg = None
+                inradius = pt.distance(geom.boundary)
+                font_size = max(
+                    _MIN_FONT_SIZE,
+                    min(area_sqrt / 8.0, _MAX_FONT_SIZE, inradius * _FONT_FIT_RATIO),
+                )
 
             # 篩選 3：碰撞偵測（只比對候選點所在格 + 周圍 8 格，O(1) 均攤）。
             # - 跨編號：font 門檻 + 絕對下限 _COLLISION_MIN_GAP_PX（不同數字不疊字）
@@ -564,6 +593,9 @@ def regenerate_merged_svg(
             text_el = ET.SubElement(new_root, f"{{{_SVG_NS}}}text")
             text_el.set("x", f"{cx:.1f}")
             text_el.set("y", f"{cy:.1f}")
+            # 細長區塊：把數字旋轉到沿長軸（>1° 才設，避免無意義的 rotate(0)）
+            if rotate_deg is not None and abs(rotate_deg) > 1.0:
+                text_el.set("transform", f"rotate({rotate_deg:.1f} {cx:.1f} {cy:.1f})")
             text_el.set("text-anchor", "middle")
             text_el.set("dominant-baseline", "central")
             text_el.set("font-size", f"{font_size:.1f}")
