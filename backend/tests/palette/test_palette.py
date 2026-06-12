@@ -1122,6 +1122,162 @@ async def test_complete_mappings_after_change_reassigns_output_label(
     assert set(by_tid.values()) == {1}  # 只有一個 label
 
 
+@pytest.mark.asyncio
+async def test_finalize_preserves_existing_labels_when_area_changes(db):
+    """穩定編號：改色號讓面積排名翻轉，已對應過的實體色仍保留原號（不全部跳號）。
+
+    舊行為（依面積全量重排）會把編號翻過來；新行為保留既有號 → 使用者改一格不會
+    動到其他色號。
+    """
+    from unittest.mock import patch
+
+    from palette.service import finalize_template, update_mapping
+
+    await _create_color(db, COLOR_A)
+    color_b = await _create_color(db, COLOR_B)
+    # A={tid2(3500)+tid3(2500)=6000} > B={tid1(4000)} → 首次 A=1, B=2
+    job = await _setup_job_for_finalize(
+        db, [(1, "PAL-002"), (2, "PAL-001"), (3, "PAL-001")]
+    )
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    rows0 = {m.template_id: m.output_label for m in (await db.execute(
+        select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+    )).scalars().all()}
+    assert rows0[2] == 1 and rows0[3] == 1   # A = 1
+    assert rows0[1] == 2                       # B = 2
+
+    # 改 tid3 從 A→B：B={tid1+tid3}=6500 > A={tid2}=3500（面積排名翻轉）
+    await update_mapping(db, job.id, 3, color_b.id)
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, job.id)
+
+    rows1 = {m.template_id: m.output_label for m in (await db.execute(
+        select(PaletteColorMapping).where(PaletteColorMapping.production_job_id == job.id)
+    )).scalars().all()}
+    # 穩定：A 仍是 1、B 仍是 2（舊行為會翻成 B=1, A=2）
+    assert rows1[2] == 1                       # A 保留原號 1
+    assert rows1[1] == 2 and rows1[3] == 2     # B 保留原號 2，tid3 跟到 B 的號
+
+
+@pytest.mark.asyncio
+async def test_generate_filled_final_nearest_fallback(db):
+    """final filled 對「不剛好等於任何 mapping algorithm_rgb」的非白像素補最近實體色，
+    不殘留 algorithm 原色（與實體色預覽 _findNearestPhysical 一致）。"""
+    import io
+    from unittest.mock import MagicMock
+
+    import numpy as np
+    from PIL import Image
+
+    from palette.service import _generate_filled_final
+
+    color_a = await _create_color(db, COLOR_A)  # rgb [247,167,132]
+    color_b = await _create_color(db, COLOR_B)  # rgb [100,50,200]
+    job = ProductionJob(
+        detail="standard", difficulty="beginner", mode="standard",
+        canvas_w_cm=30, canvas_h_cm=40, status=JobStatusEnum.completed,
+        snapped_rgb_url="gs://test-bucket/production_jobs/x/snapped_rgb.png",
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    mappings = [
+        PaletteColorMapping(
+            production_job_id=job.id, template_id=1, algorithm_rgb=[10, 10, 10],
+            physical_color_id=color_a.id, mapped_by=MappedByEnum.system,
+        ),
+        PaletteColorMapping(
+            production_job_id=job.id, template_id=2, algorithm_rgb=[200, 200, 200],
+            physical_color_id=color_b.id, mapped_by=MappedByEnum.system,
+        ),
+    ]
+    colors_by_id = {color_a.id: color_a, color_b.id: color_b}
+
+    # snapped：(0,0)白；(0,1)=[10,10,10] exact→A；(1,0)=[12,12,12] 不精確→最近 A；(1,1)白
+    arr = np.array([
+        [[255, 255, 255], [10, 10, 10]],
+        [[12, 12, 12], [255, 255, 255]],
+    ], dtype=np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(arr, "RGB").save(buf, format="PNG")
+    snapped_png = buf.getvalue()
+
+    captured: dict[str, bytes] = {}
+
+    def make_blob(path):
+        b = MagicMock()
+        b.download_as_bytes = MagicMock(return_value=snapped_png)
+        b.upload_from_string = MagicMock(
+            side_effect=lambda data, content_type=None: captured.__setitem__(path, data)
+        )
+        return b
+
+    bucket = MagicMock()
+    bucket.name = "test-bucket"
+    bucket.blob = MagicMock(side_effect=make_blob)
+
+    await _generate_filled_final(bucket, job, mappings, colors_by_id)
+
+    out_png = captured[f"production_jobs/{job.id}/filled_template_final.png"]
+    out = np.array(Image.open(io.BytesIO(out_png)).convert("RGB"))
+    assert tuple(out[0, 1]) == tuple(COLOR_A["rgb"])   # exact 命中 → A
+    assert tuple(out[1, 0]) == tuple(COLOR_A["rgb"])   # 不精確 → 最近 A（非殘留 [12,12,12]）
+    assert tuple(out[0, 0]) == (255, 255, 255)         # 白維持
+    assert tuple(out[1, 1]) == (255, 255, 255)
+
+
+@pytest.mark.asyncio
+async def test_copy_from_job_change_color_no_label_collision(db):
+    """copy_from_job 換某格的實體色後重跑 finalize：未變動的色保留原號、不撞號。
+
+    回歸 reviewer 必修項：copy 換色未清 output_label 會讓變色格的舊號跟未變動色撞號。
+    """
+    from unittest.mock import patch
+
+    from palette.service import copy_from_job, finalize_template
+
+    color_c_data = {
+        "code": "PAL-003", "name": "GREEN", "color_family": "綠色系",
+        "brand": None, "rgb": [50, 200, 100], "stock_ml": 200.0,
+    }
+    await _create_color(db, COLOR_A)
+    await _create_color(db, COLOR_B)
+    await _create_color(db, color_c_data)
+
+    # target：tid1+tid3→A（label 1）、tid2→B（label 2）
+    target = await _setup_job_for_finalize(
+        db, [(1, "PAL-001"), (2, "PAL-002"), (3, "PAL-001")]
+    )
+    bucket, _ = _mock_bucket_for_finalize()
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, target.id)
+
+    # source：只有 tid1 換成 C，其餘與 target 相同
+    source = await _setup_job_for_finalize(
+        db, [(1, "PAL-003"), (2, "PAL-002"), (3, "PAL-001")]
+    )
+    await copy_from_job(db, target.id, source.id)
+
+    with patch("core.firebase.get_bucket", return_value=bucket):
+        await finalize_template(db, target.id)
+
+    rows = {m.template_id: m.output_label for m in (await db.execute(
+        select(PaletteColorMapping).where(
+            PaletteColorMapping.production_job_id == target.id
+        )
+    )).scalars().all()}
+    # 三個不同實體色 → 三個不同號（無撞號）
+    assert len(set(rows.values())) == 3
+    # 未變動的 A（tid3）保留原號 1；B（tid2）保留 2；變色的 C（tid1）拿新號（非 1）
+    assert rows[3] == 1
+    assert rows[2] == 2
+    assert rows[1] != 1 and rows[1] != 2
+
+
 # ── 「原始版」備份（archive）─────────────────────────────────────────────
 
 
@@ -1283,9 +1439,13 @@ async def test_consolidate_cross_color_collision_skips_label(db):
 
 @pytest.mark.asyncio
 async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
-    """微小色塊（area < 60）且色差小的鄰居 → auto-merge。merge_records 紀錄。"""
+    """微小色塊（area < 60）+ 同實體色的緊貼鄰居 → auto-merge。merge_records 紀錄。
+
+    tid 1、tid 2 同對到 output_label 1（同實體色）→ 微小 tid 2 合進 tid 1；
+    tid 3 是不同實體色（output_label 3），不參與。
+    """
     from palette.svg_consolidate import _tint_hex, regenerate_merged_svg
-    # tid 1 是大紅色塊；tid 2 是微小淡紅（色差小）緊貼 tid 1；tid 3 是遠處大藍
+    # tid 1 是大紅色塊；tid 2 是微小淡紅緊貼 tid 1（同實體色）；tid 3 是遠處大藍
     palette_json = [
         {"template_id": 1, "rgb": [255, 0, 0], "pixels": 6000, "percent": 60.0},
         {"template_id": 2, "rgb": [240, 30, 30], "pixels": 100, "percent": 1.0},  # 微小 + 淡紅
@@ -1293,7 +1453,6 @@ async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
     ]
     palette_final = [
         {"output_label": 1, "rgb": [255, 0, 0]},
-        {"output_label": 2, "rgb": [240, 30, 30]},
         {"output_label": 3, "rgb": [0, 0, 255]},
     ]
     svg = (
@@ -1317,10 +1476,11 @@ async def test_consolidate_tiny_polygon_merged_into_similar_neighbor(db):
     ).encode()
     svg += b'</svg>'
 
+    # tid 1、tid 2 同 output_label 1（同實體色）；tid 3 是 output_label 3
     _out, merge_records = regenerate_merged_svg(
-        svg, {1: 1, 2: 2, 3: 3}, palette_json, palette_final,
+        svg, {1: 1, 2: 1, 3: 3}, palette_json, palette_final,
     )
-    # 預期 tid 2 微小被 merge 到 tid 1（色差小、緊貼）
+    # 預期 tid 2 微小被 merge 到 tid 1（同實體色、緊貼）
     assert len(merge_records) >= 1
     matched = [m for m in merge_records if m["tiny_template_id"] == 2]
     assert len(matched) == 1
