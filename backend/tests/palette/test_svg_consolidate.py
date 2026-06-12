@@ -450,30 +450,38 @@ def test_enable_tiny_merge_false_returns_empty_merge_records():
     assert records_off == []
 
 
-def test_enable_tiny_merge_true_default_still_detects_tiny_polygons():
-    """enable_tiny_merge=True（預設）— 跟既有行為一樣，會偵測 + 合併 tiny polygon。
+def test_tiny_merge_only_within_same_physical_color():
+    """微小色塊只在同實體色（同 output_label）內 auto-merge；不同實體色絕不合併。
 
-    這是 regression test：避免重構動到既有 finalize 雙版本機制的 True 那一邊。
+    修「不是同實體色的顏色也被合併」：same output_label → 合併並回 record；
+    different output_label（不同實體色）→ 即使顏色相近(LAB<30)也不合併、records 為空。
     """
     palette_with_small = [
         {"template_id": 1, "rgb": [240, 240, 240], "pixels": 10},
         {"template_id": 2, "rgb": [220, 220, 220], "pixels": 5000},
     ]
-    palette_final = [
-        {"output_label": 1, "rgb": [240, 240, 240]},
-        {"output_label": 2, "rgb": [220, 220, 220]},
-    ]
     svg = _make_svg([
-        (_tint(240, 240, 240), [(0, 0), (2, 0), (2, 2), (0, 2)]),
-        (_tint(220, 220, 220), [(2, 0), (52, 0), (52, 50), (2, 50)]),
+        (_tint(240, 240, 240), [(0, 0), (2, 0), (2, 2), (0, 2)]),       # tid 1 tiny
+        (_tint(220, 220, 220), [(2, 0), (52, 0), (52, 50), (2, 50)]),   # tid 2 large 緊鄰
     ])
-    # True 路徑（預設）：應偵測到 tiny polygon、回 record（含 polygon_id）
-    _, records_on = regenerate_merged_svg(
-        svg, {1: 1, 2: 2}, palette_with_small, palette_final,
+
+    # 同實體色（tid 1、tid 2 都 output_label 1）→ tiny 合進 large、回 record
+    palette_same = [{"output_label": 1, "rgb": [220, 220, 220]}]
+    _, records_same = regenerate_merged_svg(
+        svg, {1: 1, 2: 1}, palette_with_small, palette_same,
     )
-    # 至少一筆 record（tiny tid 1 合進 tid 2）
-    assert len(records_on) >= 1
-    rec = records_on[0]
+    assert len(records_same) >= 1
+    rec = records_same[0]
     assert rec["tiny_template_id"] == 1
     assert rec["target_template_id"] == 2
     assert "polygon_id" in rec
+
+    # 不同實體色（output_label 1 vs 2）→ 顏色相近仍不合併、records 為空
+    palette_diff = [
+        {"output_label": 1, "rgb": [240, 240, 240]},
+        {"output_label": 2, "rgb": [220, 220, 220]},
+    ]
+    _, records_diff = regenerate_merged_svg(
+        svg, {1: 1, 2: 2}, palette_with_small, palette_diff,
+    )
+    assert records_diff == []

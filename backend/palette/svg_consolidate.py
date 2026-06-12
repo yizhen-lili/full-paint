@@ -126,14 +126,19 @@ def _rgb_from_palette(palette_json: list[dict], template_id: int) -> list[int] |
 
 def _merge_tiny_polygons(
     all_polygons: list[dict],
+    label_map: dict[int, int],
 ) -> list[dict]:
     """微小色塊找鄰居中色差最近者，改 template_id（in-memory only，DB 不動）。
+
+    **只在同實體色（同 output_label）內合併** — 不同實體色的小塊絕不被自動合併，
+    避免「不是同實體色的顏色也被合併」。同實體色相鄰塊本就會被 unary_union 合併，
+    此處的合併是把微小塊歸併到同色較大 template，簡化底層 template 結構。
 
     Algorithm（O(n²) 對典型 SVG 規模可接受）：
     1. 收 large_polys = 面積 ≥ _TINY_POLYGON_AREA 且 short_edge ≥ _TINY_POLYGON_SHORT_EDGE
     2. 對每個 tiny polygon：
-       a. 計算與所有 large 的 shapely distance（0 = 共享邊界）
-       b. 取最近 _MERGE_NEIGHBOR_TOPK 個鄰居
+       a. 候選只取「與 tiny 同 output_label（= 同實體色）」的 large
+       b. 計算與候選的 shapely distance（0 = 共享邊界），取最近 _MERGE_NEIGHBOR_TOPK 個
        c. 在候選池內取與 tiny 色差最小（LAB）的鄰居
        d. 若色差 < _MERGE_MAX_LAB_DIST → 改 tiny.template_id = neighbor.template_id
           並紀錄 merge_record
@@ -167,9 +172,12 @@ def _merge_tiny_polygons(
         tiny_rgb = tiny.get("raw_rgb")
         if tiny_rgb is None:
             continue
-        # 計算與每個 large 的距離
+        tiny_label = label_map.get(tiny["template_id"])
+        # 只在「同實體色（同 output_label）」內找鄰居 — 不同實體色絕不合併
         dist_pairs: list[tuple[float, dict]] = []
         for large in large_polys:
+            if label_map.get(large["template_id"]) != tiny_label:
+                continue
             try:
                 d = tiny["shp"].distance(large["shp"])
             except Exception:  # noqa: BLE001, S112  # nosec B112 — 個別 polygon 距離失敗就跳過
@@ -209,7 +217,7 @@ def _merge_tiny_polygons(
 
     if merge_records:
         logger.info(
-            "svg consolidate: auto-merged %d tiny polygons into nearest similar-color neighbors",
+            "svg consolidate: auto-merged %d tiny polygons into same-physical-color neighbors",
             len(merge_records),
         )
     return merge_records
@@ -349,9 +357,11 @@ def regenerate_merged_svg(
         if sw:
             sample_stroke_width = sw
 
-    # ── Step 3b：微小色塊 auto-merge（in-memory only）
+    # ── Step 3b：微小色塊 auto-merge（in-memory only，只在同實體色內）
     # enable_tiny_merge=False 時跳過、產「未合併版」給對比 UI 當主版本
-    merge_records = _merge_tiny_polygons(all_polygons) if enable_tiny_merge else []
+    merge_records = (
+        _merge_tiny_polygons(all_polygons, label_map) if enable_tiny_merge else []
+    )
 
     # ── Step 3c：建 polygons_by_label（已套用 merge 後的 template_id）
     polygons_by_label: dict[int, list] = defaultdict(list)

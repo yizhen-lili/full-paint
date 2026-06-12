@@ -137,6 +137,11 @@ async def update_mapping(
     mapping.mapped_by = MappedByEnum.manual
     mapping.required_ml = None
 
+    # 換色 → 清掉這格的 output_label（它是舊實體色的編號，已過期）。下次 finalize
+    # 才能正確判斷「此格的新實體色」是既有色（沿用號）還是新色（補號），避免舊號污染。
+    if is_color_change:
+        mapping.output_label = None
+
     # 物理色實際變動 + job 已 finalize → 清 finalized_at（保留 template_final_url
     # 讓前端能區分「曾 finalize 過 stale」vs「從未 finalize」兩種狀態）
     # 同色 no-op 不觸發失效，避免 admin 誤點不變色就被迫重產
@@ -206,9 +211,14 @@ async def copy_from_job(
 
     for template_id, src in source_by_template.items():
         if template_id in existing:
-            existing[template_id].physical_color_id = src.physical_color_id
-            existing[template_id].mapped_by = MappedByEnum.manual
-            existing[template_id].required_ml = None
+            ex = existing[template_id]
+            # 換色 → 清掉舊號（與 update_mapping 一致）。否則 finalize 補號時這個殘存
+            # 舊號會跟別的實體色撞號（兩個不同實體色拿到同一 output_label）。
+            if ex.physical_color_id != src.physical_color_id:
+                ex.output_label = None
+            ex.physical_color_id = src.physical_color_id
+            ex.mapped_by = MappedByEnum.manual
+            ex.required_ml = None
         else:
             new_mapping = PaletteColorMapping(
                 production_job_id=job_id,
@@ -484,17 +494,47 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
     def group_area(pc_id: UUID) -> int:
         return sum(pixels_by_template.get(m.template_id, 0) for m in groups[pc_id])
 
-    # 3. 排序+派 label。同面積時用 physical_color_id 字典序破 tie 保證 deterministic
-    sorted_pc_ids = sorted(
-        groups.keys(),
+    # 3. 派 label — 保留既有編號：已對應過的實體色沿用原號（避免改一格就全部跳號），
+    #    只有「沒有號的新實體色」才補號，取最小未使用整數（填補空號再往後接）。
+    #    新色的補號順序沿用面積由大到小，讓新出現的大色塊拿較小號；同面積用 pc_id 破 tie。
+    #    註：換色時 update_mapping 會把該格 output_label 清成 None，故同組殘存的號都是
+    #    「此實體色上次 finalize 的號」，min() 取其一即可（同組應一致）。
+    label_of_pc: dict[UUID, int] = {}
+    used_labels: set[int] = set()
+    new_pool: list[UUID] = []
+    # 既有色沿用原號；先搶先得（號小者優先）。萬一兩色撞同號（理論上不該發生，
+    # 因換色都會 reset output_label；此為防呆）→ 撞號者丟回新色池重新補號。
+    prev_pairs = []
+    for pc_id, members in groups.items():
+        prev = [m.output_label for m in members if m.output_label is not None]
+        if prev:
+            prev_pairs.append((pc_id, min(prev)))
+        else:
+            new_pool.append(pc_id)
+    for pc_id, lbl in sorted(prev_pairs, key=lambda x: x[1]):
+        if lbl in used_labels:
+            new_pool.append(pc_id)  # 撞號 → 當新色補號
+        else:
+            label_of_pc[pc_id] = lbl
+            used_labels.add(lbl)
+
+    new_pc_ids = sorted(
+        new_pool,
         key=lambda pc_id: (-group_area(pc_id), str(pc_id)),
     )
+    next_label = 1
+    for pc_id in new_pc_ids:
+        while next_label in used_labels:
+            next_label += 1
+        label_of_pc[pc_id] = next_label
+        used_labels.add(next_label)
 
     label_map: dict[int, int] = {}   # template_id → output_label
-    for new_label, pc_id in enumerate(sorted_pc_ids, start=1):
-        for m in groups[pc_id]:
-            m.output_label = new_label
-            label_map[m.template_id] = new_label
+    for pc_id, members in groups.items():
+        lbl = label_of_pc[pc_id]
+        for m in members:
+            m.output_label = lbl
+            label_map[m.template_id] = lbl
 
     # 4. 先建 palette_final（後面 SVG 合併要用它取得實體色 RGB 算新 tint）
     colors_by_id = {
@@ -508,15 +548,16 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
         ).scalars().all()
     }
 
+    # 依最終 output_label 排序輸出，確保 legend 與模板號碼一致
     palette_final = []
-    for new_label, pc_id in enumerate(sorted_pc_ids, start=1):
+    for pc_id in sorted(groups.keys(), key=lambda p: label_of_pc[p]):
         members = groups[pc_id]
         color = colors_by_id.get(pc_id)
         total_pixels = sum(pixels_by_template.get(m.template_id, 0) for m in members)
         total_ml = sum(float(m.required_ml or 0) for m in members)
         rgb = list(color.rgb) if color else [0, 0, 0]
         palette_final.append({
-            "output_label": new_label,
+            "output_label": label_of_pc[pc_id],
             "physical_color_id": str(pc_id),
             "code": color.code if color else "?",
             "name": color.name if color else "?",
@@ -605,10 +646,10 @@ async def finalize_template(db: AsyncSession, job_id: UUID) -> dict:
 
     logger.info(
         "finalize_template: job=%s mappings=%d unique_colors=%d",
-        job_id, len(mapping_rows), len(sorted_pc_ids),
+        job_id, len(mapping_rows), len(groups),
     )
     return {
-        "output_labels_count": len(sorted_pc_ids),
+        "output_labels_count": len(groups),
         "template_final_url": template_final_url,
         "palette_final_url": palette_final_url,
     }
@@ -624,10 +665,14 @@ async def _generate_filled_final(
 
     回傳 Firebase gs:// URL；失敗會 raise，呼叫端用 try/except 視為 best-effort。
 
-    向量化作法（O(num_colors × pixels)，但 num_colors 通常 ≤ 50 所以實際很快）：
+    向量化作法（distinct 色通常 ≤ 50 所以實際很快）：
       1. 讀 snapped_rgb 成 numpy (H, W, 3) uint8
       2. 對每個 mapping，組 algorithm RGB → physical RGB 的對應
-      3. 用 np.all(img == alg, axis=-1) 找該色 pixel mask，整批替換
+      3. 對影像實際出現的每個 distinct 色決定輸出：exact 命中 mapping → 該實體色；
+         未命中（非白）→ 最近 mapping 的實體色（nearest fallback，與前端
+         PalettePreviewCanvas._findNearestPhysical 同邏輯），白底維持白。
+         → 保證每個非白像素都上到「已配置的實體色」，不殘留 algorithm 原色，
+           與「實體色預覽」一致（修「finalize 後 filled 顏色變得不是配好的」）。
     """
     import io  # noqa: PLC0415
 
@@ -661,13 +706,35 @@ async def _generate_filled_final(
     if not alg_to_phys:
         raise ValueError("mapping_rows 內無有效 algorithm→physical 對應")
 
-    # 3. 整批替換像素
-    output = snapped_img.copy()
-    for alg, phys in alg_to_phys.items():
-        if alg == phys:
-            continue  # 已相同，省略一次掃描
-        mask = np.all(snapped_img == np.array(alg, dtype=np.uint8), axis=-1)
-        output[mask] = phys
+    # 3. 對影像實際出現的每個 distinct 色決定輸出色（exact 命中 → 該實體色；
+    #    非白未命中 → 最近 mapping 的實體色；白維持白），再整批套用。
+    flat = snapped_img.reshape(-1, 3)
+    uniq = np.unique(flat, axis=0)  # (U, 3) 影像實際出現的色，U 通常很小
+
+    algs = np.array(list(alg_to_phys.keys()), dtype=np.int32)       # (M, 3)
+    physes = np.array(list(alg_to_phys.values()), dtype=np.uint8)   # (M, 3)
+
+    def _encode(arr: np.ndarray) -> np.ndarray:
+        a = arr.astype(np.int32)
+        return (a[..., 0] << 16) | (a[..., 1] << 8) | a[..., 2]
+
+    out_lut: dict[int, tuple[int, int, int]] = {}
+    for u in uniq:
+        ur, ug, ub = int(u[0]), int(u[1]), int(u[2])
+        code = (ur << 16) | (ug << 8) | ub
+        if ur == 255 and ug == 255 and ub == 255:
+            out_lut[code] = (255, 255, 255)  # 白底維持
+            continue
+        # 平方歐氏距離找最近 alg（exact 命中時距離 0 自然選中）
+        d = np.sum((algs - np.array([ur, ug, ub], dtype=np.int32)) ** 2, axis=1)
+        j = int(np.argmin(d))
+        out_lut[code] = (int(physes[j][0]), int(physes[j][1]), int(physes[j][2]))
+
+    codes = _encode(flat)
+    out_flat = np.empty_like(flat)
+    for code, out_rgb in out_lut.items():
+        out_flat[codes == code] = out_rgb
+    output = out_flat.reshape(snapped_img.shape)
 
     # 4. 編碼 PNG → 上傳
     buf = io.BytesIO()
